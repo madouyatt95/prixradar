@@ -6,7 +6,10 @@ import { deviceDatabaseError, deviceError, deviceJson, readJsonObject, resolveDe
 
 export const dynamic = "force-dynamic";
 
-const VERDICTS = new Set(["useful", "false_positive", "expired"]);
+const VERDICTS = new Set([
+  "useful", "false_positive", "expired", "purchased", "cancelled",
+  "wrong_variant", "coupon_failed", "price_confirmed",
+]);
 
 export async function GET(request: Request) {
   const identity = await resolveDevice(request);

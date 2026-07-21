@@ -105,6 +105,7 @@ export interface PushSubscriptionTarget {
   keys: { p256dh: string; auth: string };
   contentEncoding?: string;
   minScore?: number;
+  tier?: "urgent" | "personal" | "digest";
   preferences?: Record<string, unknown>;
 }
 

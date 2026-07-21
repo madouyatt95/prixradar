@@ -41,9 +41,11 @@ OAI-Sites-Authorization: Bearer <token>
   `Idempotency-Key` et une `VerifiedObservation` versionnée.
 - `GET /api/push/targets?score=…&after=…&limit=…` utilise exclusivement
   `PUSH_DELIVERY_SECRET`. La réponse paginée attendue contient
-  `{ "ok": true, "targets": [{ "id", "endpoint", "keys", "contentEncoding", "minScore" }], "nextAfter": … }`.
+  `{ "ok": true, "targets": [{ "id", "endpoint", "keys", "contentEncoding", "minScore", "tier" }], "nextAfter": … }`.
+- `GET /api/push/digests` prépare à 18 h les résumés des appareils ayant choisi
+  cette cadence, sans exposer leur identifiant dans la réponse publique.
 - `POST /api/push/deliveries` réserve avec
-  `{ "action":"reserve", "alertId", "subscriptionId" }`, puis complète avec
+  `{ "action":"reserve", "alertId", "subscriptionId", "tier" }`, puis complète avec
   `{ "action":"complete", "reservationId", "status":"sent|failed", "errorCode?" }`.
 
 `INGEST_SECRET` et `PUSH_DELIVERY_SECRET` doivent être différents. Les réponses
@@ -95,7 +97,7 @@ commande qui écrit sur Apify est :
 npm run provision
 ```
 
-Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les deux
+Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les quatre
 plannings par nom. Le token Apify n’est pas nécessaire à l’exécution de l’Actor
 et ne doit pas être ajouté à la PWA.
 

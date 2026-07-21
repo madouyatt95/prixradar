@@ -1,4 +1,4 @@
-const CACHE_NAME = "prixradar-shell-v3";
+const CACHE_NAME = "prixradar-shell-v4";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -78,7 +78,7 @@ self.addEventListener("notificationclick", (event) => {
 
   event.notification.close();
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+    Promise.resolve("clearAppBadge" in self.navigator ? self.navigator.clearAppBadge() : undefined).then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true })).then((clients) => {
       const existing = clients.find((client) => client.url.startsWith(self.location.origin));
       if (existing) {
         return existing.navigate(targetUrl).then(() => existing.focus());
@@ -110,15 +110,17 @@ self.addEventListener("push", (event) => {
     typeof payload.url === "string" && payload.url.startsWith("/")
       ? payload.url
       : "/";
+  const tier = payload.tier === "urgent" ? "urgent" : payload.tier === "digest" ? "digest" : "personal";
+  const badgeCount = Number.isSafeInteger(payload.badgeCount) && payload.badgeCount > 0 ? payload.badgeCount : 1;
 
   event.waitUntil(
-    self.registration.showNotification(title, {
+    Promise.resolve("setAppBadge" in self.navigator ? self.navigator.setAppBadge(badgeCount) : undefined).then(() => self.registration.showNotification(title, {
       body,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      tag: `prixradar-${alertId}`,
-      renotify: false,
-      data: { url },
-    }),
+      tag: `prixradar-${tier}-${alertId}`,
+      renotify: tier === "urgent",
+      data: { url, tier },
+    })),
   );
 });

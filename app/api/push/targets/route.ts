@@ -1,10 +1,12 @@
-import { and, asc, eq, gt, lte } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lte } from "drizzle-orm";
 
 import { getDb } from "../../../../db";
 import {
   pushSubscriptions,
+  radarRules,
   userPreferences,
 } from "../../../../db/schema";
+import { radarIntentMatches, type RadarIntent } from "../../../../lib/radar-intent";
 import { authorizePushDelivery, serverJson } from "../server-auth";
 import { isQuietNow } from "../quiet-hours";
 
@@ -35,6 +37,11 @@ export async function GET(request: Request) {
   const deliveryPostalPrefix = search.get("deliveryPostalPrefix")?.trim().toUpperCase() ?? "";
   const deliveryMode = search.get("deliveryMode")?.trim().toLowerCase() ?? "";
   const locationVerified = search.get("locationVerified") === "true";
+  const title = search.get("title")?.trim().slice(0, 300) ?? "";
+  const brand = search.get("brand")?.trim().slice(0, 100) ?? "";
+  const condition = search.get("condition")?.trim().toLowerCase().slice(0, 30) ?? "";
+  const accessibleToAll = search.get("accessibleToAll") !== "false";
+  const tier = search.get("tier") === "urgent" ? "urgent" as const : "personal" as const;
   if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null) {
     return serverJson(
       {
@@ -55,6 +62,7 @@ export async function GET(request: Request) {
       auth: string;
       contentEncoding: string;
       minScore: number;
+      tier: "urgent" | "personal";
     }> = [];
     const now = new Date();
     let cursor = after;
@@ -73,6 +81,8 @@ export async function GET(request: Request) {
           auth: pushSubscriptions.auth,
           contentEncoding: pushSubscriptions.contentEncoding,
           minScore: userPreferences.minScore,
+          deviceOwner: pushSubscriptions.ownerId,
+          notificationSpeed: userPreferences.notificationSpeed,
           quietHours: userPreferences.quietHours,
           quietStart: userPreferences.quietStart,
           quietEnd: userPreferences.quietEnd,
@@ -107,6 +117,23 @@ export async function GET(request: Request) {
         exhausted = true;
         break;
       }
+      const ownerIds = [...new Set(rows.map((row) => row.deviceOwner))];
+      const ruleRows = ownerIds.length === 0 ? [] : await database.select({
+        deviceOwner: radarRules.ownerId,
+        intentJson: radarRules.intentJson,
+      }).from(radarRules).where(and(
+        inArray(radarRules.ownerId, ownerIds),
+        eq(radarRules.enabled, true),
+      ));
+      const rulesByOwner = new Map<string, RadarIntent[]>();
+      for (const rule of ruleRows) {
+        try {
+          const parsed = JSON.parse(rule.intentJson) as RadarIntent;
+          const current = rulesByOwner.get(rule.deviceOwner) ?? [];
+          current.push(parsed);
+          rulesByOwner.set(rule.deviceOwner, current);
+        } catch { /* ignore une règle corrompue */ }
+      }
       for (const row of rows) {
         cursor = row.id;
         scanned += 1;
@@ -133,13 +160,29 @@ export async function GET(request: Request) {
           !compatibleDeliveryMode ||
           (userPostalPrefix !== "" && userPostalPrefix !== deliveryPostalPrefix)
         );
+        const ownerRules = rulesByOwner.get(row.deviceOwner) ?? [];
+        const radarMismatch = ownerRules.length > 0 && !ownerRules.some((intent) => radarIntentMatches(intent, {
+          title,
+          brand,
+          category,
+          market,
+          priceCents,
+          discountPercent: discount,
+          condition,
+          accessibleToAll,
+          deliveryCountry,
+        }));
+        const speedMismatch = tier === "personal" && (
+          row.notificationSpeed === "digest" ||
+          (row.notificationSpeed === "balanced" && score < Math.min(100, row.minScore + 8))
+        );
         const filtered =
           discount < row.minDiscount ||
           (row.maxPriceCents !== null && priceCents > row.maxPriceCents) ||
           (markets.length > 0 && !markets.includes(market)) ||
           (categories.length > 0 && !categories.includes(category)) ||
           (sources.length > 0 && !sources.includes(source)) ||
-          locationMismatch;
+          locationMismatch || radarMismatch || speedMismatch;
         if (isQuietNow(row, now)) {
           suppressedQuietHours += 1;
         } else if (filtered) {
@@ -152,6 +195,7 @@ export async function GET(request: Request) {
             auth: row.auth,
             contentEncoding: row.contentEncoding,
             minScore: row.minScore,
+            tier,
           });
         }
         if (page.length === limit || scanned >= 2_500) break;
@@ -172,6 +216,7 @@ export async function GET(request: Request) {
         keys: { p256dh: row.p256dh, auth: row.auth },
         contentEncoding: row.contentEncoding,
         minScore: row.minScore,
+        tier: row.tier,
       })),
       nextAfter: page.length === limit || !exhausted ? cursor : null,
     });

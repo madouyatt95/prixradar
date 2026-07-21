@@ -10,6 +10,7 @@ import {
   SourceStatusReporter,
 } from "./source-status.js";
 import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
+import { sendDailyDigests } from "./push.js";
 import { privateApiHeaders } from "./sink.js";
 import type { Market, RetailSource } from "./types.js";
 
@@ -18,7 +19,7 @@ interface ActorInput {
   market?: Market;
   markets?: Market[];
   urls?: Array<string | { url: string }>;
-  mode?: "discover" | "verify" | "full" | "fixture";
+  mode?: "discover" | "verify" | "full" | "fixture" | "digest";
   notify?: boolean;
   browserFallback?: boolean;
   limit?: number;
@@ -43,10 +44,11 @@ type RemoteDiscoverySegment = {
   page: number;
 };
 
-type RemotePlan = { urls: string[]; discoverySegments: RemoteDiscoverySegment[] };
+type RemoteRecheck = { id: string; alertId: string; source: RetailSource; market: Market; url: string };
+type RemotePlan = { urls: string[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[] };
 
 async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
-  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { urls: [], discoverySegments: [] };
+  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { urls: [], discoverySegments: [], rechecks: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
@@ -59,6 +61,7 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
   const payload = await response.json() as {
     items?: Array<{ discoveryUrl?: unknown }>;
     discoverySegments?: unknown;
+    rechecks?: unknown;
   };
   const segments = Array.isArray(payload.discoverySegments)
     ? payload.discoverySegments.flatMap((candidate): RemoteDiscoverySegment[] => {
@@ -86,6 +89,16 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
   return {
     urls: (payload.items ?? []).flatMap((item) => typeof item.discoveryUrl === "string" ? [item.discoveryUrl] : []),
     discoverySegments: segments,
+    rechecks: Array.isArray(payload.rechecks) ? payload.rechecks.flatMap((candidate): RemoteRecheck[] => {
+      if (!candidate || typeof candidate !== "object") return [];
+      const value = candidate as Record<string, unknown>;
+      const source = String(value.source ?? "") as RetailSource;
+      const market = String(value.market ?? "") as Market;
+      const url = String(value.url ?? "");
+      if (!["amazon", "boulanger", "darty", "cdiscount"].includes(source) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
+      try { if (new URL(url).protocol !== "https:") return []; } catch { return []; }
+      return [{ id: String(value.id ?? ""), alertId: String(value.alertId ?? ""), source, market, url }];
+    }) : [],
   };
 }
 
@@ -109,6 +122,22 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const statusReporter = new SourceStatusReporter(config);
     const input = (await Actor.getInput<ActorInput>()) ?? {};
     const mode = input.mode ?? "full";
+    if (mode === "digest") {
+      if (!config.priceRadarBaseUrl || !config.pushDeliverySecret || !config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
+        throw new Error("Configuration push incomplète pour le résumé quotidien.");
+      }
+      const summary = await sendDailyDigests({
+        baseUrl: config.priceRadarBaseUrl,
+        deliverySecret: config.pushDeliverySecret,
+        ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+        vapidSubject: config.vapidSubject,
+        vapidPublicKey: config.vapidPublicKey,
+        vapidPrivateKey: config.vapidPrivateKey,
+        timeoutMs: config.httpTimeoutMs,
+      });
+      await Actor.pushData({ dataKind: "daily-digest", ...summary });
+      return;
+    }
     const fixture = mode === "fixture";
     if (fixture && input.notify) {
       throw new Error("notify=true est interdit en mode fixture.");
@@ -133,11 +162,20 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const configuredUrls = inputUrls(input.urls);
     const usesRemotePlan = (configuredUrls.length === 0 && input.useRemoteCoverage !== false)
       || input.useRemoteDiscovery === true;
-    const plan = usesRemotePlan ? await remotePlan(config) : { urls: [], discoverySegments: [] };
+    const plan = usesRemotePlan ? await remotePlan(config) : { urls: [], discoverySegments: [], rechecks: [] };
     const urls = [...new Set(configuredUrls.length > 0 || input.useRemoteCoverage === false
       ? configuredUrls
       : plan.urls)];
     const seenProductUrls = new Set<string>();
+    for (const recheck of plan.rechecks) {
+      const observation = await verifySourceUrl(recheck.url, {
+        ...scanOptions,
+        verifyDelayMs: config.verifyDelayMs,
+      });
+      if (!fixture) await deliverObservation(observation, config, { allowPush: false });
+      seenProductUrls.add(recheck.url);
+      await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
+    }
     for (const url of urls) {
       const connector = connectorForUrl(url);
       if (source !== "all" && source !== connector.source) {

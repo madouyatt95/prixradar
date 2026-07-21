@@ -74,12 +74,14 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
     if (url.pathname === "/api/push/targets") {
       assert.equal(init?.method, "GET");
       assert.equal(url.searchParams.get("score"), "90");
+      assert.equal(url.searchParams.get("tier"), "urgent");
       return Response.json({ ok: true, targets: [{
         id: 1,
         endpoint: "https://push.example/subscription-1",
         keys: { p256dh: "p256dh", auth: "auth" },
         contentEncoding: "aes128gcm",
         minScore: 60,
+        tier: "urgent",
       }], nextAfter: null });
     }
     if (body?.action === "reserve") return Response.json({ ok: true, reserved: true, reservationId: 1 });
@@ -91,7 +93,7 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
   });
   assert.deepEqual(summary, { eligible: true, targets: 1, reserved: 1, sent: 1, failed: 0 });
   assert.deepEqual(actions, [
-    { action: "reserve", alertId: "alert-1", subscriptionId: 1 },
+    { action: "reserve", alertId: "alert-1", subscriptionId: 1, tier: "urgent" },
     { action: "complete", reservationId: 1, status: "sent" },
   ]);
   assert.ok(auth.every((value) => value === "Bearer PUSH_SECRET_TEST"));

@@ -1,8 +1,9 @@
 import { runtimeEnv as env } from "@/lib/runtime-env";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { discoverySegments, sourceConfigurations } from "@/db/schema";
+import { alerts, collectionRuns, discoverySegments, recheckRequests, sourceConfigurations } from "@/db/schema";
+import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,11 @@ export async function GET(request: Request) {
 
   try {
     const database = getDb();
-    const [rows, segments] = await Promise.all([
+    const staleClaim = new Date(Date.now() - 15 * 60_000).toISOString();
+    await database.update(recheckRequests).set({ status: "pending", claimedAt: null, updatedAt: new Date().toISOString() })
+      .where(and(eq(recheckRequests.status, "processing"), sql`${recheckRequests.claimedAt} < ${staleClaim}`));
+    const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const [rows, segments, pendingRechecks, runMetrics, alertMetrics] = await Promise.all([
       database
         .select()
         .from(sourceConfigurations)
@@ -68,7 +73,36 @@ export async function GET(request: Request) {
         .from(discoverySegments)
         .where(eq(discoverySegments.enabled, true))
         .orderBy(desc(discoverySegments.priority), asc(discoverySegments.lastRunAt)),
+      database.select().from(recheckRequests)
+        .where(eq(recheckRequests.status, "pending"))
+        .orderBy(asc(recheckRequests.requestedAt)).limit(25),
+      database.select({
+        source: collectionRuns.source,
+        market: collectionRuns.market,
+        productsSeen: sql<number>`coalesce(sum(${collectionRuns.productsSeen}), 0)`,
+        costMicros: sql<number>`coalesce(sum(${collectionRuns.apifyCostMicros}), 0)`,
+        antiBotBlocks: sql<number>`coalesce(sum(case when ${collectionRuns.antiBotBlocked} = 1 then 1 else 0 end), 0)`,
+      }).from(collectionRuns).where(sql`${collectionRuns.attemptedAt} >= ${since}`).groupBy(collectionRuns.source, collectionRuns.market),
+      database.select({
+        source: alerts.source,
+        market: alerts.market,
+        exploitableAlerts: sql<number>`coalesce(sum(case when ${alerts.status} = 'active' then 1 else 0 end), 0)`,
+      }).from(alerts).where(sql`${alerts.updatedAt} >= ${since}`).groupBy(alerts.source, alerts.market),
     ]);
+    const runByKey = new Map(runMetrics.map((row) => [`${row.source}:${row.market}`, row]));
+    const alertByKey = new Map(alertMetrics.map((row) => [`${row.source}:${row.market}`, row]));
+    const retailRecommendations = new Map(optimizeCoverageBudgets(rows.map((row) => {
+      const key = `${row.source}:${row.market}`;
+      const run = runByKey.get(key);
+      return {
+        id: row.id,
+        currentBudget: row.dailyProductBudget,
+        productsSeen: Number(run?.productsSeen ?? 0),
+        exploitableAlerts: Number(alertByKey.get(key)?.exploitableAlerts ?? 0),
+        costMicros: Number(run?.costMicros ?? 0),
+        antiBotBlocks: Number(run?.antiBotBlocks ?? 0),
+      };
+    })).map((item) => [item.id, item]));
     const now = Date.now();
     const seen = new Set<string>();
     const items = rows.flatMap((row) => {
@@ -79,6 +113,7 @@ export async function GET(request: Request) {
       const normalizedUrl = row.discoveryUrl.toLowerCase().replace(/\/$/u, "");
       if (!due || seen.has(normalizedUrl) || (probeOnly && !cooldownElapsed)) return [];
       seen.add(normalizedUrl);
+      const budget = retailRecommendations.get(row.id);
       return [{
         id: row.id,
         source: row.source,
@@ -89,7 +124,9 @@ export async function GET(request: Request) {
         volatilityScore: row.volatilityScore,
         circuitState: row.circuitState,
         probeOnly,
-        productLimit: probeOnly ? 1 : row.dailyProductBudget,
+        productLimit: probeOnly ? 1 : budget?.recommendedBudget ?? row.dailyProductBudget,
+        budgetAction: budget?.action ?? "hold",
+        yieldPerThousand: budget?.yieldPerThousand ?? 0,
       }];
     });
     const discoveryItems = segments.flatMap((segment) => {
@@ -120,6 +157,21 @@ export async function GET(request: Request) {
           .where(eq(discoverySegments.id, segment.id));
       }
     }
+    const recheckItems = pendingRechecks.map((row) => ({
+      id: row.id,
+      alertId: row.alertId,
+      source: row.source,
+      market: row.market,
+      url: row.url,
+    }));
+    if (recheckItems.length > 0) {
+      const claimedAt = new Date(now).toISOString();
+      await database.update(recheckRequests).set({ status: "processing", claimedAt, updatedAt: claimedAt })
+        .where(and(
+          inArray(recheckRequests.id, recheckItems.map((item) => item.id)),
+          eq(recheckRequests.status, "pending"),
+        ));
+    }
     return json({
       ok: true,
       generatedAt: new Date(now).toISOString(),
@@ -127,6 +179,9 @@ export async function GET(request: Request) {
       items,
       discoveryCount: discoveryItems.length,
       discoverySegments: discoveryItems,
+      budgetRecommendations: [...retailRecommendations.values()],
+      recheckCount: recheckItems.length,
+      rechecks: recheckItems,
     });
   } catch {
     return json({ ok: false, code: "SOURCE_PLAN_UNAVAILABLE" }, 503);

@@ -22,6 +22,13 @@ présenter une remise comme une « erreur certaine ».
 | Découverte Amazon sous budget | actif | rotation EU5 par gamme de prix/catégorie, enveloppe et cadence par segment |
 | Pilotage administrateur | actif côté code | JWT Cloudflare Access + liste blanche d'e-mails ; requiert la configuration Access |
 | Envoi d'alertes | mode prudent | `shadow` par défaut : décisions auditées sans Push réel jusqu'à recette |
+| Radars en langage naturel | actif | règles durables par appareil, appliquées au routage Push |
+| Scan EAN | actif | Barcode Detector, puis ZXing 0.2.1 épinglé sur iPhone, avec saisie manuelle de repli |
+| Vérification immédiate | actif | file prioritaire durable consommée par l'Actor, résultat conservé |
+| Score « Acheter maintenant » | actif | décision séparée du score d'anomalie, cinq facteurs explicables |
+| idealo / Dealabs | contexte actif | recherches externes ; aucune aspiration automatique non autorisée |
+| Notifications à trois vitesses | actif | instantané, équilibré, ou urgent + résumé quotidien à 18 h |
+| Budget auto-adaptatif | actif | rendement par 1 000 produits, coût/alerte et pression anti-bot |
 
 Les six cartes affichées quand aucune source n’est active portent **DÉMO**. Elles
 ne sont jamais ingérées, notifiées ou présentées comme des prix disponibles.
@@ -74,8 +81,8 @@ PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production
 ```
 
 La base D1 utilise le binding `DB` de `.openai/hosting.json`. Les migrations
-Drizzle sont dans `drizzle/`. La migration `0003` ajoute le graphe produit, les
-préférences de livraison, les budgets de découverte et l'état des circuits.
+Drizzle sont dans `drizzle/`. La migration `0004` ajoute les radars naturels, la
+file de revérification, le score d'achat et les trois cadences de notification.
 
 ## Variables serveur de la PWA
 
@@ -135,6 +142,9 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `GET /api/push/targets` : cibles autorisées, sans `ownerId` ;
 - `POST /api/push/deliveries` : réservation/déduplication puis résultat d’envoi ;
 - `GET /api/keepa` : snapshot historique mis en cache et limité par appareil.
+- `GET|POST|DELETE /api/radars` : alertes en langage naturel, durables par appareil ;
+- `GET|POST /api/recheck` : vérification prioritaire et état de son traitement ;
+- `GET /api/push/digests` : résumés quotidiens privés préparés pour le collecteur ;
 - `GET|POST|PATCH /api/admin/sources` : couverture, budgets et réarmement des circuits ;
 - `GET|POST|PATCH /api/admin/discovery` : rotation Amazon EU5 sous budget ;
 - `GET|PATCH /api/admin/products` : contrôle des rapprochements multi-enseignes.
@@ -154,3 +164,8 @@ les connecteurs avec des tests de contrat.
 Amazon Belgique, Pays-Bas, Pologne, Suède et Irlande ne sont pas aliasés vers un
 autre pays : ce projet limite volontairement Keepa aux cinq domaines EU5 dont le
 mapping est validé.
+
+idealo est utilisé comme repère externe : l'accès automatisé aux données attend
+un accord à son programme partenaire/API. Dealabs sert à retrouver une discussion
+ou une validation communautaire ; il n'est ni aspiré automatiquement ni traité
+comme une preuve marchande. La page du vendeur reste l'autorité finale.

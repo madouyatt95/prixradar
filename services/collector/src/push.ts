@@ -32,8 +32,15 @@ interface TargetResponse {
   nextAfter: number | null;
 }
 
+interface DigestTarget extends PushSubscriptionTarget {
+  alertId: string;
+  title: string;
+  body: string;
+  url: string;
+}
+
 type DeliveryAction =
-  | { action: "reserve"; alertId: string; subscriptionId: number }
+  | { action: "reserve"; alertId: string; subscriptionId: number; tier?: "urgent" | "personal" | "digest" }
   | { action: "complete"; reservationId: number; status: "sent" | "failed"; errorCode?: string };
 
 function apiEndpoint(baseUrl: string, path: string): URL {
@@ -112,6 +119,11 @@ export async function fetchPushTargets(
     deliveryPostalPrefix?: string;
     deliveryMode?: string;
     locationVerified?: boolean;
+    title: string;
+    brand?: string | null;
+    condition?: string | null;
+    accessibleToAll: boolean;
+    tier: "urgent" | "personal";
   },
 ): Promise<PushSubscriptionTarget[]> {
   const targets: PushSubscriptionTarget[] = [];
@@ -132,6 +144,11 @@ export async function fetchPushTargets(
         deliveryPostalPrefix: filters.deliveryPostalPrefix ?? "",
         deliveryMode: filters.deliveryMode ?? "",
         locationVerified: String(filters.locationVerified === true),
+        title: filters.title,
+        brand: filters.brand ?? "",
+        condition: filters.condition ?? "",
+        accessibleToAll: String(filters.accessibleToAll),
+        tier: filters.tier,
       } : {}),
     }).toString();
     const payload = await protectedJson<TargetResponse>(config, endpoint, { method: "GET" }, fetchImpl);
@@ -199,6 +216,11 @@ export async function sendPushForObservation(
     deliveryPostalPrefix: observation.offer.deliveryContext?.postalPrefix ?? "",
     deliveryMode: observation.offer.deliveryContext?.mode ?? "",
     locationVerified: observation.offer.deliveryContext?.verified === true,
+    title: observation.offer.product.title,
+    brand: observation.offer.product.brand,
+    condition: observation.offer.condition,
+    accessibleToAll: observation.offer.promotion?.accessibleToAll !== false,
+    tier: backendScore >= 88 && (observation.anomaly.discountPercent ?? 0) >= 35 ? "urgent" : "personal",
   });
   const summary: PushDeliverySummary = { eligible: true, targets: targets.length, reserved: 0, sent: 0, failed: 0 };
   const total = observation.offer.total;
@@ -210,6 +232,8 @@ export async function sendPushForObservation(
     url: observation.offer.product.url,
     source: observation.offer.product.source,
     market: observation.offer.product.market,
+    tier: backendScore >= 88 && (observation.anomaly.discountPercent ?? 0) >= 35 ? "urgent" : "personal",
+    badgeCount: 1,
   });
 
   for (const target of targets) {
@@ -217,6 +241,7 @@ export async function sendPushForObservation(
       action: "reserve",
       alertId,
       subscriptionId: target.id,
+      tier: target.tier ?? "personal",
     }, config, fetchImpl);
     if (!reservation.ok || !reservation.reserved || !reservation.reservationId) continue;
     summary.reserved += 1;
@@ -227,7 +252,7 @@ export async function sendPushForObservation(
         keys: target.keys,
       }, payload, {
         TTL: 900,
-        urgency: "high",
+        urgency: target.tier === "urgent" ? "high" : "normal",
         topic: alertId.slice(0, 32),
         ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm"
           ? { contentEncoding: target.contentEncoding }
@@ -246,6 +271,48 @@ export async function sendPushForObservation(
         status: "failed",
         errorCode: deliveryErrorCode(error),
       }, config, fetchImpl);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+export async function sendDailyDigests(
+  config: PushConfig,
+  dependencies: { fetchImpl?: typeof fetch; sendNotification?: typeof webPush.sendNotification } = {},
+): Promise<PushDeliverySummary> {
+  if (!config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
+    throw new SinkConfigurationError("Clés VAPID absentes: résumés désactivés.");
+  }
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  if (!dependencies.sendNotification) webPush.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
+  const endpoint = apiEndpoint(config.baseUrl, "api/push/digests");
+  const response = await protectedJson<{ ok: boolean; targets?: DigestTarget[] }>(config, endpoint, { method: "GET" }, fetchImpl);
+  const targets = Array.isArray(response.targets) ? response.targets.filter((target) => validTarget(target) && typeof target.alertId === "string") : [];
+  const summary: PushDeliverySummary = { eligible: targets.length > 0, targets: targets.length, reserved: 0, sent: 0, failed: 0 };
+  for (const target of targets) {
+    const reservation = await deliveryAction({ action: "reserve", alertId: target.alertId, subscriptionId: target.id, tier: "digest" }, config, fetchImpl);
+    if (!reservation.ok || !reservation.reserved || !reservation.reservationId) continue;
+    summary.reserved += 1;
+    const payload = JSON.stringify({
+      alertId: target.alertId,
+      title: target.title,
+      body: target.body,
+      url: target.url,
+      tier: "digest",
+      badgeCount: 1,
+    });
+    try {
+      await (dependencies.sendNotification ?? webPush.sendNotification)({ endpoint: target.endpoint, keys: target.keys }, payload, {
+        TTL: 43_200,
+        urgency: "low",
+        topic: `digest-${new Date().toISOString().slice(0, 10)}`.slice(0, 32),
+        ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm" ? { contentEncoding: target.contentEncoding } : {}),
+      });
+      await deliveryAction({ action: "complete", reservationId: reservation.reservationId, status: "sent" }, config, fetchImpl);
+      summary.sent += 1;
+    } catch (error) {
+      await deliveryAction({ action: "complete", reservationId: reservation.reservationId, status: "failed", errorCode: deliveryErrorCode(error) }, config, fetchImpl);
       summary.failed += 1;
     }
   }

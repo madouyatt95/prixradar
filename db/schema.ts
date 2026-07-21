@@ -139,6 +139,8 @@ export const alerts = sqliteTable(
     usualPriceCents: integer("usual_price_cents").notNull(),
     discountPercent: integer("discount_percent").notNull(),
     score: integer("score").notNull(),
+    buyNowScore: integer("buy_now_score").notNull().default(0),
+    buyNowJson: text("buy_now_json").notNull().default("{}"),
     confidence: text("confidence").notNull(),
     status: text("status").notNull(),
     seller: text("seller"),
@@ -214,6 +216,7 @@ export const alerts = sqliteTable(
       sql`${table.discountPercent} BETWEEN 0 AND 100`
     ),
     check("alerts_score_range", sql`${table.score} BETWEEN 0 AND 100`),
+    check("alerts_buy_now_score_range", sql`${table.buyNowScore} BETWEEN 0 AND 100`),
   ]
 );
 
@@ -441,7 +444,52 @@ export const alertFeedback = sqliteTable(
   (table) => [
     uniqueIndex("alert_feedback_owner_alert_unique").on(table.ownerId, table.alertId),
     index("alert_feedback_alert_verdict_idx").on(table.alertId, table.verdict),
-    check("alert_feedback_verdict_allowed", sql`${table.verdict} IN ('useful', 'false_positive', 'expired')`),
+    check("alert_feedback_verdict_allowed", sql`${table.verdict} IN ('useful', 'false_positive', 'expired', 'purchased', 'cancelled', 'wrong_variant', 'coupon_failed', 'price_confirmed')`),
+  ]
+);
+
+export const radarRules = sqliteTable(
+  "radar_rules",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    name: text("name").notNull(),
+    query: text("query").notNull(),
+    intentJson: text("intent_json").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("radar_rules_owner_enabled_idx").on(table.ownerId, table.enabled),
+    index("radar_rules_updated_idx").on(table.updatedAt),
+  ]
+);
+
+export const recheckRequests = sqliteTable(
+  "recheck_requests",
+  {
+    id: text("id").primaryKey(),
+    alertId: text("alert_id").notNull().references(() => alerts.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull(),
+    source: text("source").notNull(),
+    market: text("market").notNull(),
+    url: text("url").notNull(),
+    status: text("status").notNull().default("pending"),
+    resultJson: text("result_json").notNull().default("{}"),
+    requestedAt: text("requested_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    claimedAt: text("claimed_at"),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("recheck_requests_status_requested_idx").on(table.status, table.requestedAt),
+    index("recheck_requests_owner_updated_idx").on(table.ownerId, table.updatedAt),
+    index("recheck_requests_alert_status_idx").on(table.alertId, table.status),
+    check(
+      "recheck_requests_status_allowed",
+      sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`
+    ),
   ]
 );
 
@@ -527,6 +575,7 @@ export const userPreferences = sqliteTable(
     notificationEnabled: integer("notification_enabled", { mode: "boolean" })
       .notNull()
       .default(true),
+    notificationSpeed: text("notification_speed").notNull().default("balanced"),
     minDiscount: integer("min_discount").notNull().default(20),
     maxPriceCents: integer("max_price_cents"),
     marketsJson: text("markets_json").notNull().default("[]"),
@@ -556,6 +605,10 @@ export const userPreferences = sqliteTable(
       "user_preferences_delivery_mode_allowed",
       sql`${table.deliveryMode} IN ('home', 'pickup', 'either')`
     ),
+    check(
+      "user_preferences_notification_speed_allowed",
+      sql`${table.notificationSpeed} IN ('instant', 'balanced', 'digest')`
+    ),
   ]
 );
 
@@ -569,6 +622,7 @@ export const notificationDeliveries = sqliteTable(
       .references(() => pushSubscriptions.id, { onDelete: "cascade" }),
     ownerId: text("owner_id").notNull(),
     channel: text("channel").notNull(),
+    tier: text("tier").notNull().default("personal"),
     status: text("status").notNull(),
     dedupeKey: text("dedupe_key").notNull(),
     attemptedAt: text("attempted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -591,6 +645,10 @@ export const notificationDeliveries = sqliteTable(
     check(
       "notification_deliveries_status_allowed",
       sql`${table.status} IN ('reserved', 'sent', 'failed', 'suppressed')`
+    ),
+    check(
+      "notification_deliveries_tier_allowed",
+      sql`${table.tier} IN ('urgent', 'personal', 'digest')`
     ),
   ]
 );

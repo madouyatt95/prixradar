@@ -2,8 +2,9 @@ import { and, desc, eq, gt, gte, inArray, isNotNull, lte, or, sql, type SQL } fr
 import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
-import { alerts } from "@/db/schema";
+import { alertFeedback, alerts } from "@/db/schema";
 import { ANOMALY_LIMITS, type AnomalyEvaluation } from "@/lib/anomaly";
+import { externalResearchLinks } from "@/lib/external-research";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,29 @@ function parseEvidence(value: string) {
   }
 }
 
-function serializeAlert(row: typeof alerts.$inferSelect) {
+type CommunitySummary = {
+  total: number;
+  positive: number;
+  negative: number;
+  expired: number;
+  purchased: number;
+};
+
+function parseBuyNow(value: string, fallbackScore: number) {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return {
+      score: typeof parsed.score === "number" ? parsed.score : fallbackScore,
+      label: typeof parsed.label === "string" ? parsed.label : "À considérer",
+      factors: Array.isArray(parsed.factors) ? parsed.factors : [],
+      cautions: Array.isArray(parsed.cautions) ? parsed.cautions : [],
+    };
+  } catch {
+    return { score: fallbackScore, label: "À considérer", factors: [], cautions: [] };
+  }
+}
+
+function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySummary) {
   const evidence = parseEvidence(row.evidenceJson);
   const liveEligible =
     row.sourceMode === "live" &&
@@ -74,6 +97,8 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
     url.searchParams.set("tag", tag);
     affiliateUrl = url.toString();
   }
+  const externalResearch = externalResearchLinks(row);
+  const buyNow = parseBuyNow(row.buyNowJson, row.buyNowScore);
 
   return {
     id: row.id,
@@ -100,6 +125,7 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
     usualPriceCents: row.usualPriceCents,
     discountPercent: row.discountPercent,
     score: row.score,
+    buyNow,
     confidence: row.confidence,
     status: row.status,
     notificationEligible: liveEligible,
@@ -118,6 +144,8 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
     observedAt: row.observedAt,
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
+    community: community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 },
+    externalResearch,
     evidence: evidence === null ? null : {
       historyPoints: evidence.historyPoints,
       madCents: evidence.madCents,
@@ -230,6 +258,18 @@ export async function GET(request: Request) {
       database.select({ count: sql<number>`count(*)` }).from(alerts).where(where),
     ]);
     const total = Number(countRows[0]?.count ?? 0);
+    const feedbackRows = rows.length === 0 ? [] : await database.select({
+      alertId: alertFeedback.alertId,
+      total: sql<number>`count(*)`,
+      positive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} in ('useful', 'purchased', 'price_confirmed') then 1 else 0 end), 0)`,
+      negative: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} in ('false_positive', 'cancelled', 'wrong_variant', 'coupon_failed') then 1 else 0 end), 0)`,
+      expired: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'expired' then 1 else 0 end), 0)`,
+      purchased: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'purchased' then 1 else 0 end), 0)`,
+    }).from(alertFeedback).where(inArray(alertFeedback.alertId, rows.map((row) => row.id))).groupBy(alertFeedback.alertId);
+    const community = new Map(feedbackRows.map((row) => [row.alertId, {
+      total: Number(row.total), positive: Number(row.positive), negative: Number(row.negative),
+      expired: Number(row.expired), purchased: Number(row.purchased),
+    }]));
 
     return json(
       {
@@ -237,7 +277,7 @@ export async function GET(request: Request) {
         mode: includeDemo ? "live_and_demo" : "live",
         generatedAt: now,
         count: rows.length,
-        items: rows.map(serializeAlert),
+        items: rows.map((row) => serializeAlert(row, community.get(row.id))),
         pagination: {
           limit,
           offset,

@@ -24,6 +24,7 @@ const DEFAULT_PREFERENCES = {
   quietStart: "22:00",
   quietEnd: "08:00",
   notificationEnabled: true,
+  notificationSpeed: "balanced",
   minDiscount: 20,
   maxPriceCents: null,
   marketsJson: "[]",
@@ -41,6 +42,7 @@ const EDITABLE_FIELDS = new Set([
   "quietStart",
   "quietEnd",
   "notificationEnabled",
+  "notificationSpeed",
   "minDiscount",
   "maxPriceCents",
   "markets",
@@ -58,6 +60,7 @@ type PreferencesPatch = {
   quietStart?: string;
   quietEnd?: string;
   notificationEnabled?: boolean;
+  notificationSpeed?: "instant" | "balanced" | "digest";
   minDiscount?: number;
   maxPriceCents?: number | null;
   marketsJson?: string;
@@ -97,6 +100,7 @@ function serializePreferences(
     quietEnd: value.quietEnd,
     timezone: value.timezone,
     notificationEnabled: value.notificationEnabled,
+    notificationSpeed: value.notificationSpeed,
     minDiscount: value.minDiscount,
     maxPriceCents: value.maxPriceCents,
     markets: parseJsonList(value.marketsJson),
@@ -162,6 +166,12 @@ function parsePatch(body: Record<string, unknown>) {
       }
       patch[field] = body[field];
     }
+  }
+  if (body.notificationSpeed !== undefined) {
+    if (body.notificationSpeed !== "instant" && body.notificationSpeed !== "balanced" && body.notificationSpeed !== "digest") {
+      throw new Error("notificationSpeed doit être instant, balanced ou digest.");
+    }
+    patch.notificationSpeed = body.notificationSpeed;
   }
 
   if (body.quietStart !== undefined) {

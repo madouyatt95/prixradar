@@ -100,6 +100,8 @@ Le plan doit montrer :
 - les enseignes françaises regroupées toutes les 30 minutes ;
 - 1 024 Mo et 15 minutes maximum par exécution ;
 - notification e-mail activée en cas d’échec de planning.
+- le test quotidien des connecteurs à 6 h 17 ;
+- le résumé personnel des utilisateurs en mode `digest` à 18 h 07.
 
 Après contrôle seulement :
 
@@ -129,6 +131,12 @@ Le parcours de recette est :
 7. mesurer pendant au moins sept jours les faux positifs et les alertes expirées ;
 8. passer `ALERT_DELIVERY_MODE=live`, redéployer, puis vérifier une livraison réelle ;
 9. lancer le contrôle public :
+
+Avant la recette fonctionnelle, appliquer la migration D1 `0004` : elle préserve
+les données existantes et initialise les nouveaux scores/canaux avec des valeurs
+prudentes (`0`, `personal`, `balanced`). Tester ensuite : création d'un radar en
+langage naturel, scan/saisie EAN, bouton « Vérifier maintenant », verdict d'achat
+et réception du résumé quotidien.
 
 ```bash
 PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production

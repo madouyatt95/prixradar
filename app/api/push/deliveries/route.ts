@@ -62,6 +62,10 @@ function evidenceEligible(value: string) {
 async function reserve(body: UnknownRecord) {
   const alertId = requiredId(body.alertId, "alertId");
   const subscriptionId = requiredInteger(body.subscriptionId, "subscriptionId");
+  const tier = body.tier === undefined ? "personal" : body.tier;
+  if (tier !== "urgent" && tier !== "personal" && tier !== "digest") {
+    throw new Error("tier doit être urgent, personal ou digest.");
+  }
   const database = getDb();
   const [[subscription], [alert]] = await Promise.all([
     database
@@ -125,7 +129,8 @@ async function reserve(body: UnknownRecord) {
     );
   }
 
-  const dedupeKey = `${alertId}:${subscriptionId}:web_push`;
+  const digestDay = tier === "digest" ? `:${new Date().toISOString().slice(0, 10)}` : "";
+  const dedupeKey = `${alertId}:${subscriptionId}:web_push:${tier}${digestDay}`;
   if (alert.score < subscription.minScore) {
     const [suppressed] = await database
       .insert(notificationDeliveries)
@@ -134,6 +139,7 @@ async function reserve(body: UnknownRecord) {
         subscriptionId,
         ownerId: subscription.ownerId,
         channel: "web_push",
+        tier,
         status: "suppressed",
         dedupeKey,
         errorCode: "MINIMUM_SCORE",
@@ -156,6 +162,7 @@ async function reserve(body: UnknownRecord) {
         subscriptionId,
         ownerId: subscription.ownerId,
         channel: "web_push",
+        tier,
         status: "suppressed",
         dedupeKey,
         errorCode: "QUIET_HOURS",
@@ -178,6 +185,7 @@ async function reserve(body: UnknownRecord) {
       subscriptionId,
       ownerId: subscription.ownerId,
       channel: "web_push",
+      tier,
       status: "reserved",
       dedupeKey,
     })

@@ -19,14 +19,18 @@ test("regroupe Amazon EU5 dans un seul Actor toutes les quinze minutes", () => {
 
 test("récupère la couverture distante et teste les connecteurs chaque jour", () => {
   const remotePlan = buildAutomationPlan("actor", []);
-  assert.equal(remotePlan.length, 3);
+  assert.equal(remotePlan.length, 4);
   const remoteAction = remotePlan[1]?.definition.actions?.[0];
   if (!remoteAction || remoteAction.type !== "RUN_ACTOR") assert.fail("Action retail attendue");
   const remoteInput = JSON.parse(remoteAction.runInput?.body ?? "{}") as Record<string, unknown>;
   assert.equal(remoteInput.useRemoteCoverage, true);
   assert.equal(remoteInput.scanAmazon, false);
   const plan = buildAutomationPlan("actor", ["https://www.boulanger.com/c/electromenager"]);
-  assert.equal(plan.length, 3);
+  assert.equal(plan.length, 4);
   assert.equal(plan[1]?.definition.cronExpression, "7,37 * * * *");
   assert.equal(plan[2]?.definition.cronExpression, "17 6 * * *");
+  assert.equal(plan[3]?.definition.cronExpression, "7 18 * * *");
+  const digestAction = plan[3]?.definition.actions?.[0];
+  if (!digestAction || digestAction.type !== "RUN_ACTOR") assert.fail("Action digest attendue");
+  assert.equal(JSON.parse(digestAction.runInput?.body ?? "{}").mode, "digest");
 });

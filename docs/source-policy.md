@@ -12,6 +12,22 @@ source depuis le centre de pilotage.
 - Darty : `darty.com`
 - Cdiscount : `cdiscount.com`
 
+## Sources de contexte
+
+- **idealo** : lien de recherche actif. Une ingestion de prix ne pourra être
+  activée qu'avec un accès explicite au programme partenaire/API idealo.
+- **Dealabs** : lien de recherche et contexte communautaire. Aucun endpoint
+  interne, contournement anti-bot ou scraper tiers n'est utilisé.
+
+Ces sources n'ont jamais, seules, le poids nécessaire pour rendre une alerte
+éligible. PrixRadar revérifie toujours le prix, le vendeur, la variante, le stock
+et la livraison sur la page marchande autorisée.
+
+Le scan EAN charge uniquement si nécessaire la version UMD épinglée
+`@zxing/browser@0.2.1` depuis un CDN, afin de compenser l'absence de
+`BarcodeDetector` activé par défaut sur iPhone. Ce composant analyse le flux
+caméra localement : aucune image n'est envoyée à PrixRadar, ZXing ou au CDN.
+
 Chaque page ajoutée doit être HTTPS, sans identifiants dans l’URL, et correspondre
 à l’enseigne déclarée. Avant activation, l’administrateur vérifie les conditions
 d’utilisation, `robots.txt`, la fréquence raisonnable et l’absence de données

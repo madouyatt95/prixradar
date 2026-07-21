@@ -103,6 +103,33 @@ test("ships canonical matching, local delivery rules and automatic source circui
   assert.match(migration, /SELECT[\s\S]*'closed', 0, 0, NULL, NULL, NULL, 500/);
 });
 
+test("ships durable game-changer radars, proof, rechecks and three notification speeds", async () => {
+  const [schema, migration, app, radars, recheck, digests, sourcePlan] = await Promise.all([
+    source("../db/schema.ts"),
+    source("../drizzle/0004_grey_luckman.sql"),
+    source("../app/components/price-radar-app.tsx"),
+    source("../app/api/radars/route.ts"),
+    source("../app/api/recheck/route.ts"),
+    source("../app/api/push/digests/route.ts"),
+    source("../app/api/source-plan/route.ts"),
+  ]);
+  assert.match(schema, /radarRules/);
+  assert.match(schema, /recheckRequests/);
+  assert.match(schema, /buyNowScore/);
+  assert.match(schema, /notificationSpeed/);
+  assert.match(migration, /CREATE TABLE `radar_rules`/);
+  assert.match(migration, /CREATE TABLE `recheck_requests`/);
+  assert.match(migration, /SELECT[\s\S]*0, '\{\}', "confidence"/);
+  assert.doesNotMatch(migration, /SELECT[^;]*"score", "buy_now_score"/);
+  assert.match(app, /Scanner un EAN/);
+  assert.match(app, /Passeport de preuve/);
+  assert.match(app, /Comparer sur idealo/);
+  assert.match(radars, /parseRadarIntent/);
+  assert.match(recheck, /status: "pending"/);
+  assert.match(digests, /notificationSpeed, "digest"/);
+  assert.match(sourcePlan, /optimizeCoverageBudgets/);
+});
+
 test("keeps the mobile header clear of the iPhone safe area", async () => {
   const [layout, styles] = await Promise.all([
     source("../app/layout.tsx"),
@@ -113,5 +140,5 @@ test("keeps the mobile header clear of the iPhone safe area", async () => {
   assert.match(styles, /--safe-top:\s*env\(safe-area-inset-top, 0px\)/);
   assert.match(styles, /min-height:\s*calc\(64px \+ var\(--safe-top\)\)/);
   assert.match(styles, /padding:\s*calc\(10px \+ var\(--safe-top\)\)/);
-  assert.match(await source("../public/sw.js"), /prixradar-shell-v3/);
+  assert.match(await source("../public/sw.js"), /prixradar-shell-v4/);
 });

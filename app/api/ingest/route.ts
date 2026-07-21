@@ -1,5 +1,5 @@
 import { runtimeEnv as env } from "@/lib/runtime-env";
-import { and, desc, eq, gte, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
@@ -13,9 +13,11 @@ import {
   notificationDeliveries,
   priceObservations,
   pushSubscriptions,
+  recheckRequests,
   sourceStatuses,
   sourceConfigurations,
 } from "@/db/schema";
+import { evaluateBuyNow } from "@/lib/buy-now";
 import {
   AnomalyInputError,
   evaluatePriceAnomaly,
@@ -662,6 +664,19 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
   const notificationEligible = evaluation.notificationEligible && evaluation.score >= adaptiveMinimumScore;
   const deliveryMode = alertDeliveryMode();
   const deliveryEligible = notificationEligible && deliveryMode === "live";
+  const buyNow = evaluateBuyNow({
+    anomalyScore: evaluation.score,
+    discountPercent: evaluation.discountPercent,
+    robustZ: evaluation.robustZ,
+    marketDiscountPercent: evaluation.marketDiscountPercent,
+    historyPoints: evaluation.historyPoints,
+    verificationCount: parsed.verificationCount,
+    sellerTrusted: parsed.sellerTrusted,
+    available: parsed.available,
+    shippingKnown: parsed.shippingCents !== null,
+    accessibleToAll: parsed.priceAccessibleToAll,
+    expiresAt: parsed.expiresAt,
+  });
   const now = new Date().toISOString();
   const alertStatus = notificationEligible
     ? "active"
@@ -740,6 +755,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       usualPriceCents: evaluation.usualPriceCents ?? parsed.priceCents,
       discountPercent: Math.max(0, Math.round(evaluation.discountPercent)),
       score: evaluation.score,
+      buyNowScore: buyNow.score,
+      buyNowJson: JSON.stringify(buyNow),
       confidence: evaluation.confidence,
       status: alertStatus,
       seller: parsed.seller,
@@ -777,8 +794,9 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         currency: parsed.currency,
         priceCents: parsed.priceCents,
         usualPriceCents: evaluation.usualPriceCents ?? parsed.priceCents,
-        discountPercent: Math.max(0, Math.round(evaluation.discountPercent)),
         score: evaluation.score,
+        buyNowScore: buyNow.score,
+        buyNowJson: JSON.stringify(buyNow),
         confidence: evaluation.confidence,
         status: alertStatus,
         seller: parsed.seller,
@@ -827,8 +845,26 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         })))
         .onConflictDoNothing({ target: [priceObservations.alertId, priceObservations.rawHash] });
 
-  if (historyInsert) await database.batch([eventInsert, alertUpsert, historyInsert, observationInsert]);
-  else await database.batch([eventInsert, alertUpsert, observationInsert]);
+  const completeRechecks = database.update(recheckRequests).set({
+    status: "completed",
+    resultJson: JSON.stringify({
+      priceCents: parsed.priceCents,
+      shippingCents: parsed.shippingCents,
+      available: parsed.available,
+      seller: parsed.seller,
+      score: evaluation.score,
+      buyNowScore: buyNow.score,
+      verifiedAt: parsed.verifiedAt,
+    }),
+    completedAt: now,
+    updatedAt: now,
+  }).where(and(
+    eq(recheckRequests.alertId, parsed.id),
+    inArray(recheckRequests.status, ["pending", "processing"]),
+  ));
+
+  if (historyInsert) await database.batch([eventInsert, alertUpsert, historyInsert, observationInsert, completeRechecks]);
+  else await database.batch([eventInsert, alertUpsert, observationInsert, completeRechecks]);
 
   return json(
     {
@@ -839,6 +875,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         id: parsed.id,
         status: alertStatus,
         score: evaluation.score,
+        buyNowScore: buyNow.score,
         confidence: evaluation.confidence,
         notificationRequested: parsed.notify,
         notificationEligible: deliveryEligible,

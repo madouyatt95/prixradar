@@ -94,5 +94,16 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       }, 1_024)],
     },
   });
+  schedules.push({
+    name: "prixradar-digest-daily",
+    definition: {
+      ...common,
+      name: "prixradar-digest-daily",
+      title: "PrixRadar · Résumés quotidiens",
+      description: "Envoie à 18 h le résumé personnel des meilleures anomalies encore actives.",
+      cronExpression: "7 18 * * *",
+      actions: [actorAction(actorId, { mode: "digest" }, 512)],
+    },
+  });
   return schedules;
 }

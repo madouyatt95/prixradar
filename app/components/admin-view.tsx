@@ -62,6 +62,16 @@ type Metrics = {
   feedback: { total: number; useful: number; falsePositive: number; expired: number; averageLifetimeMinutes?: number };
 };
 
+type BudgetRecommendation = {
+  id: string;
+  currentBudget: number;
+  recommendedBudget: number;
+  yieldPerThousand: number;
+  exploitablePerEuro: number | null;
+  action: "increase" | "hold" | "decrease";
+  reason: string;
+};
+
 const DEFAULT_METRICS: Metrics = {
   productsSeen: 0, antiBotBlocks: 0, keepaRequests: 0, apifyCostEuros: 0, keepaEstimatedCostEuros: 0,
   costPerExploitableAlertEuros: null, exploitableAlerts: 0, alertsInReview: 0,
@@ -75,6 +85,7 @@ export function AdminView() {
   const [segments, setSegments] = useState<DiscoverySegment[]>([]);
   const [reviews, setReviews] = useState<ProductReview[]>([]);
   const [graphMetrics, setGraphMetrics] = useState(DEFAULT_GRAPH_METRICS);
+  const [budgetRecommendations, setBudgetRecommendations] = useState<BudgetRecommendation[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "unauthorized" | "unconfigured" | "error">("loading");
   const [message, setMessage] = useState("");
 
@@ -90,12 +101,13 @@ export function AdminView() {
       if (responses.some((response) => response.status === 503)) return setState("unconfigured");
       if (responses.some((response) => !response.ok)) throw new Error("pilotage");
       const [overview, sourceData, discoveryData, productData] = await Promise.all(responses.map((response) => response.json())) as [
-        { metrics?: Metrics },
+        { metrics?: Metrics; budgetRecommendations?: BudgetRecommendation[] },
         { items?: SourceConfig[] },
         { items?: DiscoverySegment[] },
         { metrics?: typeof graphMetrics; pending?: ProductReview[] },
       ];
       setMetrics(overview.metrics ?? DEFAULT_METRICS);
+      setBudgetRecommendations(overview.budgetRecommendations ?? []);
       setSources(sourceData.items ?? []);
       setSegments(discoveryData.items ?? []);
       setGraphMetrics(productData.metrics ?? DEFAULT_GRAPH_METRICS);
@@ -181,6 +193,7 @@ export function AdminView() {
   if (state === "error") return <section className="admin-empty"><h1>Pilotage indisponible</h1><p>Les contrôles n’ont pas pu être chargés.</p><button className="secondary-button" onClick={() => void refresh()}>Réessayer</button></section>;
 
   const falsePositiveRate = metrics.feedback.total > 0 ? Math.round((metrics.feedback.falsePositive / metrics.feedback.total) * 100) : 0;
+  const budgetById = new Map(budgetRecommendations.map((item) => [item.id, item]));
   return (
     <section className="view-section">
       <div className="page-heading"><div><span className="eyebrow">Administration · production Cloudflare</span><h1>Centre de pilotage</h1><p>Couverture, budgets, coupe-circuits et qualité du référentiel produit.</p></div><button className="secondary-button" onClick={() => void refresh()}>Actualiser</button></div>
@@ -197,7 +210,8 @@ export function AdminView() {
             {sources.map((source) => {
               const underExplored = source.productsSeen < 5 || source.lastRunAt === null;
               const open = source.circuitState !== "closed";
-              return <div className="admin-source-row" key={source.id}><div><strong>{source.displayName} · {source.category}</strong><small>{source.market} · {source.cadenceMinutes} min · budget {source.dailyProductBudget}/jour</small><em className={open || underExplored ? "is-warning" : ""}>{open ? `Circuit ${source.circuitState} · ${source.pausedReason ?? "incident"}` : underExplored ? "Peu explorée" : `${source.productsSeen} produits`} · {source.duplicateUrls} doublons évités</em></div><div className="admin-row-actions">{open ? <button className="secondary-button" onClick={() => void patchSource(source.id, { resetCircuit: true }, "Circuit réarmé.")}>Réarmer</button> : null}<button className={source.enabled ? "danger-button" : "secondary-button"} onClick={() => void patchSource(source.id, { enabled: !source.enabled }, source.enabled ? "Enseigne suspendue." : "Enseigne activée.")}>{source.enabled ? "Suspendre" : "Activer"}</button></div></div>;
+              const budget = budgetById.get(source.id);
+              return <div className="admin-source-row" key={source.id}><div><strong>{source.displayName} · {source.category}</strong><small>{source.market} · {source.cadenceMinutes} min · budget {source.dailyProductBudget}/jour{budget ? ` → ${budget.recommendedBudget} conseillé` : ""}</small><em className={open || underExplored ? "is-warning" : ""}>{open ? `Circuit ${source.circuitState} · ${source.pausedReason ?? "incident"}` : underExplored ? "Peu explorée" : `${source.productsSeen} produits`} · {source.duplicateUrls} doublons évités{budget ? ` · rendement ${budget.yieldPerThousand}/1 000` : ""}</em>{budget && budget.action !== "hold" ? <small>{budget.reason}</small> : null}</div><div className="admin-row-actions">{open ? <button className="secondary-button" onClick={() => void patchSource(source.id, { resetCircuit: true }, "Circuit réarmé.")}>Réarmer</button> : null}<button className={source.enabled ? "danger-button" : "secondary-button"} onClick={() => void patchSource(source.id, { enabled: !source.enabled }, source.enabled ? "Enseigne suspendue." : "Enseigne activée.")}>{source.enabled ? "Suspendre" : "Activer"}</button></div></div>;
             })}
             {state === "ready" && sources.length === 0 ? <p className="admin-muted">Ajoutez une première page catégorie ci-dessous.</p> : null}
           </div>

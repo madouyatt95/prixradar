@@ -4,6 +4,7 @@ import { runtimeEnv as env } from "@/lib/runtime-env";
 import { getDb } from "@/db";
 import { alertFeedback, alerts, collectionRuns, notificationDeliveries, sourceConfigurations } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
+import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
   const database = getDb();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   try {
-    const [runRows, alertRows, feedbackRows, deliveryRows, sources] = await Promise.all([
+    const [runRows, alertRows, feedbackRows, deliveryRows, sources, sourceRunRows, sourceAlertRows] = await Promise.all([
       database.select({
         runs: sql<number>`count(*)`,
         productsSeen: sql<number>`coalesce(sum(${collectionRuns.productsSeen}), 0)`,
@@ -39,6 +40,18 @@ export async function GET(request: Request) {
         failed: sql<number>`coalesce(sum(case when ${notificationDeliveries.status} = 'failed' then 1 else 0 end), 0)`,
       }).from(notificationDeliveries).where(gte(notificationDeliveries.attemptedAt, since)),
       database.select().from(sourceConfigurations).orderBy(desc(sourceConfigurations.updatedAt)),
+      database.select({
+        source: collectionRuns.source,
+        market: collectionRuns.market,
+        productsSeen: sql<number>`coalesce(sum(${collectionRuns.productsSeen}), 0)`,
+        costMicros: sql<number>`coalesce(sum(${collectionRuns.apifyCostMicros}), 0)`,
+        antiBotBlocks: sql<number>`coalesce(sum(case when ${collectionRuns.antiBotBlocked} = 1 then 1 else 0 end), 0)`,
+      }).from(collectionRuns).where(gte(collectionRuns.attemptedAt, since)).groupBy(collectionRuns.source, collectionRuns.market),
+      database.select({
+        source: alerts.source,
+        market: alerts.market,
+        exploitableAlerts: sql<number>`coalesce(sum(case when ${alerts.status} = 'active' then 1 else 0 end), 0)`,
+      }).from(alerts).where(gte(alerts.updatedAt, since)).groupBy(alerts.source, alerts.market),
     ]);
     const runs = runRows[0] ?? { runs: 0, productsSeen: 0, antiBotBlocks: 0, keepaRequests: 0, apifyCostMicros: 0 };
     const alertMetrics = alertRows[0] ?? { accepted: 0, exploitable: 0, review: 0, conditional: 0 };
@@ -49,6 +62,20 @@ export async function GET(request: Request) {
     const keepaEstimatedCostEuros = (monthlyKeepaCents / 100) * (7 / 30);
     const totalCostEuros = costEuros + keepaEstimatedCostEuros;
     const exploitable = Number(alertMetrics.exploitable);
+    const runByKey = new Map(sourceRunRows.map((row) => [`${row.source}:${row.market}`, row]));
+    const alertByKey = new Map(sourceAlertRows.map((row) => [`${row.source}:${row.market}`, row]));
+    const budgetRecommendations = optimizeCoverageBudgets(sources.map((source) => {
+      const key = `${source.source}:${source.market}`;
+      const run = runByKey.get(key);
+      return {
+        id: source.id,
+        currentBudget: source.dailyProductBudget,
+        productsSeen: Number(run?.productsSeen ?? 0),
+        exploitableAlerts: Number(alertByKey.get(key)?.exploitableAlerts ?? 0),
+        costMicros: Number(run?.costMicros ?? 0),
+        antiBotBlocks: Number(run?.antiBotBlocks ?? 0),
+      };
+    }));
     return adminJson({
       ok: true,
       periodDays: 7,
@@ -77,6 +104,7 @@ export async function GET(request: Request) {
         },
       },
       sources,
+      budgetRecommendations,
     });
   } catch {
     return adminJson({ ok: false, code: "ADMIN_OVERVIEW_FAILED", error: "Le pilotage n’est pas encore disponible." }, 503);

@@ -9,6 +9,7 @@ import {
   type FormEvent,
 } from "react";
 import { AdminView } from "./admin-view";
+import { externalResearchLinks } from "@/lib/external-research";
 
 type Tab = "radar" | "watchlist" | "sources" | "admin" | "settings";
 type Confidence = "Très probable" | "Probable" | "À vérifier";
@@ -47,6 +48,26 @@ type AlertItem = {
   marketSources?: number;
   locationLabel?: string;
   locationVerified?: boolean;
+  brand?: string | null;
+  model?: string | null;
+  gtin?: string | null;
+  observedAt?: string | null;
+  expiresAt?: string | null;
+  buyNow?: {
+    score: number;
+    label: string;
+    factors: Array<{ key?: string; label?: string; points?: number; maximum?: number }>;
+    cautions: string[];
+  };
+  community?: { total: number; positive: number; negative: number; expired: number; purchased: number };
+  externalResearch?: { query: string; idealo: string; dealabs: string };
+};
+
+type RadarRule = {
+  id: string;
+  name: string;
+  query: string;
+  enabled: boolean;
 };
 
 type SourceRuntimeStatus = {
@@ -258,6 +279,17 @@ const ALERTS: AlertItem[] = [
   },
 ];
 
+for (const alert of ALERTS) {
+  alert.buyNow = {
+    score: Math.max(35, Math.min(96, Math.round(alert.score * 0.72 + alert.discount * 0.42))),
+    label: alert.score >= 85 ? "Acheter maintenant" : alert.score >= 70 ? "À considérer" : "Attendre",
+    factors: [],
+    cautions: alert.shipping.includes("confirmer") || alert.shipping.includes("Non confirmé") ? ["Livraison à confirmer"] : [],
+  };
+  alert.community = { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 };
+  alert.externalResearch = externalResearchLinks({ title: alert.title, model: alert.sku });
+}
+
 const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "radar", label: "Radar", icon: "◎" },
   { id: "watchlist", label: "Suivis", icon: "◇" },
@@ -351,6 +383,9 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const totalCents = finite(item.totalCents, priceCents);
   const evidence = record(item.evidence);
   const deliveryContext = record(item.deliveryContext);
+  const buyNowRecord = record(item.buyNow);
+  const communityRecord = record(item.community);
+  const externalRecord = record(item.externalResearch);
   let reasons: string[] = [];
   if (Array.isArray(item.reasons)) {
     reasons = item.reasons.filter((reason): reason is string => typeof reason === "string");
@@ -441,7 +476,7 @@ function mapLiveAlert(value: unknown): AlertItem | null {
         : finite(item.shippingCents) === 0
           ? "Incluse dans ce total"
           : `${money(finite(item.shippingCents) / 100, currency)} inclus dans ce total`,
-    sku: typeof item.productId === "string" ? item.productId : item.id,
+    sku: typeof item.gtin === "string" ? item.gtin : typeof item.productId === "string" ? item.productId : item.id,
     category: typeof item.category === "string" ? item.category : "Signal vérifié",
     label: alertLabel(source, item.title),
     accent: alertAccent(source),
@@ -457,6 +492,31 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     locationLabel: deliveryContext?.verified === true
       ? `${typeof deliveryContext.country === "string" ? deliveryContext.country : ""} ${typeof deliveryContext.postalPrefix === "string" ? `${deliveryContext.postalPrefix}…` : ""}`.trim()
       : "Prix national · zone non vérifiée",
+    brand: typeof item.brand === "string" ? item.brand : null,
+    model: typeof item.model === "string" ? item.model : null,
+    gtin: typeof item.gtin === "string" ? item.gtin : null,
+    observedAt: typeof item.observedAt === "string" ? item.observedAt : null,
+    expiresAt: typeof item.expiresAt === "string" ? item.expiresAt : null,
+    buyNow: {
+      score: Math.round(finite(buyNowRecord?.score, finite(item.score, 65))),
+      label: typeof buyNowRecord?.label === "string" ? buyNowRecord.label : "À considérer",
+      factors: Array.isArray(buyNowRecord?.factors)
+        ? buyNowRecord.factors.filter((factor) => record(factor) !== null) as Array<{ key?: string; label?: string; points?: number; maximum?: number }>
+        : [],
+      cautions: Array.isArray(buyNowRecord?.cautions) ? buyNowRecord.cautions.filter((value): value is string => typeof value === "string") : [],
+    },
+    community: {
+      total: finite(communityRecord?.total),
+      positive: finite(communityRecord?.positive),
+      negative: finite(communityRecord?.negative),
+      expired: finite(communityRecord?.expired),
+      purchased: finite(communityRecord?.purchased),
+    },
+    externalResearch: {
+      query: typeof externalRecord?.query === "string" ? externalRecord.query : item.title,
+      idealo: typeof externalRecord?.idealo === "string" ? externalRecord.idealo : externalResearchLinks({ title: item.title }).idealo,
+      dealabs: typeof externalRecord?.dealabs === "string" ? externalRecord.dealabs : externalResearchLinks({ title: item.title }).dealabs,
+    },
   };
 }
 
@@ -514,6 +574,11 @@ export function PriceRadarApp() {
   const [requireLocationMatch, setRequireLocationMatch] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [affiliateConsent, setAffiliateConsent] = useState(false);
+  const [notificationSpeed, setNotificationSpeed] = useState<"instant" | "balanced" | "digest">("balanced");
+  const [radarRules, setRadarRules] = useState<RadarRule[]>([]);
+  const [radarQuery, setRadarQuery] = useState("");
+  const [radarSaving, setRadarSaving] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -635,6 +700,7 @@ export function PriceRadarApp() {
         if (typeof preferences.postalCode === "string") setPostalCode(preferences.postalCode);
         if (preferences.deliveryMode === "home" || preferences.deliveryMode === "pickup" || preferences.deliveryMode === "either") setDeliveryMode(preferences.deliveryMode);
         if (typeof preferences.requireLocationMatch === "boolean") setRequireLocationMatch(preferences.requireLocationMatch);
+        if (preferences.notificationSpeed === "instant" || preferences.notificationSpeed === "balanced" || preferences.notificationSpeed === "digest") setNotificationSpeed(preferences.notificationSpeed);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -662,11 +728,26 @@ export function PriceRadarApp() {
           postalCode,
           deliveryMode,
           requireLocationMatch,
+          notificationSpeed,
         }),
       }).catch(() => undefined);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [deliveryCountry, deliveryMode, maxPriceEuros, minDiscount, minScore, postalCode, preferredCategories, preferredMarkets, preferencesReady, quietHours, requireLocationMatch]);
+  }, [deliveryCountry, deliveryMode, maxPriceEuros, minDiscount, minScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferencesReady, quietHours, requireLocationMatch]);
+
+  useEffect(() => {
+    fetch("/api/radars", { headers: { accept: "application/json" } })
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data: unknown) => {
+        const items = record(data)?.items;
+        if (Array.isArray(items)) setRadarRules(items.flatMap((item): RadarRule[] => {
+          const value = record(item);
+          return value && typeof value.id === "string" && typeof value.query === "string"
+            ? [{ id: value.id, name: typeof value.name === "string" ? value.name : value.query, query: value.query, enabled: value.enabled !== false }]
+            : [];
+        }));
+      }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     fetch("/api/consent", { headers: { accept: "application/json" } }).then(async (response) => response.ok ? response.json() : null).then((data: unknown) => {
@@ -731,6 +812,13 @@ export function PriceRadarApp() {
     return () => window.removeEventListener("keydown", close);
   }, [selected]);
 
+  useEffect(() => {
+    const requested = new URL(window.location.href).searchParams.get("alert");
+    if (!requested || selected) return;
+    const match = [...liveAlerts, ...ALERTS].find((alert) => alert.id === requested);
+    if (match) window.setTimeout(() => setSelected(match), 0);
+  }, [liveAlerts, selected]);
+
   const activeAlerts = useMemo(
     () => (liveAlerts.length ? liveAlerts : ALERTS),
     [liveAlerts],
@@ -758,7 +846,7 @@ export function PriceRadarApp() {
         (filter.startsWith("Catégorie · ") && alert.category === filter.slice("Catégorie · ".length));
       const searchMatch =
         !query ||
-        `${alert.title} ${alert.merchant} ${alert.category}`
+        `${alert.title} ${alert.merchant} ${alert.category} ${alert.sku} ${alert.brand ?? ""} ${alert.model ?? ""}`
           .toLocaleLowerCase("fr")
           .includes(query);
       return filterMatch && searchMatch;
@@ -830,7 +918,7 @@ export function PriceRadarApp() {
     }
   }
 
-  async function submitFeedback(alert: AlertItem, verdict: "useful" | "false_positive" | "expired") {
+  async function submitFeedback(alert: AlertItem, verdict: "useful" | "false_positive" | "expired" | "purchased" | "cancelled" | "wrong_variant" | "coupon_failed" | "price_confirmed") {
     try {
       const response = await fetch("/api/feedback", {
         method: "POST",
@@ -838,10 +926,46 @@ export function PriceRadarApp() {
         body: JSON.stringify({ alertId: alert.id, verdict }),
       });
       if (!response.ok) throw new Error("feedback");
-      setToast(verdict === "useful" ? "Merci, bonne alerte enregistrée" : verdict === "expired" ? "Prix expiré signalé" : "Faux positif enregistré");
+      const labels: Record<typeof verdict, string> = {
+        useful: "Merci, bonne alerte enregistrée", false_positive: "Faux positif enregistré", expired: "Prix expiré signalé",
+        purchased: "Achat confirmé", cancelled: "Annulation signalée", wrong_variant: "Mauvaise variante signalée",
+        coupon_failed: "Coupon inutilisable signalé", price_confirmed: "Prix confirmé sur la page finale",
+      };
+      setToast(labels[verdict]);
     } catch {
       setToast(alert.sourceMode === "live" ? "Impossible d’enregistrer cet avis" : "Les avis concernent les alertes actives");
     }
+  }
+
+  async function createRadar(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = radarQuery.trim();
+    if (query.length < 3) return setToast("Décrivez le produit, le budget ou la remise souhaitée");
+    setRadarSaving(true);
+    try {
+      const response = await fetch("/api/radars", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      const data = await response.json() as { item?: RadarRule; error?: string };
+      if (!response.ok || !data.item) throw new Error(data.error ?? "Radar invalide");
+      setRadarRules((current) => [data.item as RadarRule, ...current]);
+      setRadarQuery("");
+      setToast("Radar personnel activé");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Impossible de créer ce radar");
+    } finally {
+      setRadarSaving(false);
+    }
+  }
+
+  async function deleteRadar(id: string) {
+    const response = await fetch(`/api/radars?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (response.ok) {
+      setRadarRules((current) => current.filter((rule) => rule.id !== id));
+      setToast("Radar supprimé");
+    } else setToast("Suppression impossible");
   }
 
   async function lookupKeepa(event: FormEvent<HTMLFormElement>) {
@@ -1025,6 +1149,8 @@ export function PriceRadarApp() {
           setAnalyticsConsent={setAnalyticsConsent}
           affiliateConsent={affiliateConsent}
           setAffiliateConsent={setAffiliateConsent}
+          notificationSpeed={notificationSpeed}
+          setNotificationSpeed={setNotificationSpeed}
           onInstall={installApp}
           installReady={Boolean(installPrompt)}
         />
@@ -1047,6 +1173,13 @@ export function PriceRadarApp() {
           setTab("sources");
           setLookupOpen(true);
         }}
+        radarRules={radarRules}
+        radarQuery={radarQuery}
+        setRadarQuery={setRadarQuery}
+        radarSaving={radarSaving}
+        onCreateRadar={createRadar}
+        onDeleteRadar={deleteRadar}
+        onScan={() => setScannerOpen(true)}
       />
     );
   }
@@ -1159,6 +1292,14 @@ export function PriceRadarApp() {
         />
       ) : null}
 
+      {scannerOpen ? <BarcodeScanner onClose={() => setScannerOpen(false)} onDetected={(code) => {
+        setSearch(code);
+        setFilter("Tout");
+        setTab("radar");
+        setScannerOpen(false);
+        setToast(`EAN ${code} recherché dans les alertes`);
+      }} /> : null}
+
       {toast ? (
         <div className="toast" role="status">
           {toast}
@@ -1218,6 +1359,13 @@ function RadarView({
   onLookup,
   mode,
   loading,
+  radarRules,
+  radarQuery,
+  setRadarQuery,
+  radarSaving,
+  onCreateRadar,
+  onDeleteRadar,
+  onScan,
 }: {
   alerts: AlertItem[];
   filter: string;
@@ -1231,6 +1379,13 @@ function RadarView({
   onLookup: () => void;
   mode: SourceMode;
   loading: boolean;
+  radarRules: RadarRule[];
+  radarQuery: string;
+  setRadarQuery: (value: string) => void;
+  radarSaving: boolean;
+  onCreateRadar: (event: FormEvent<HTMLFormElement>) => void;
+  onDeleteRadar: (id: string) => void;
+  onScan: () => void;
 }) {
   const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
   const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon · Keepa", "France", ...categories.map((category) => `Catégorie · ${category}`)];
@@ -1256,11 +1411,15 @@ function RadarView({
             : "Ces cartes illustrent le produit final. Elles ne représentent aucun prix actuellement disponible."
         }
         action={
-          <button type="button" className="primary-button" onClick={onLookup}>
-            <span aria-hidden="true">＋</span> Vérifier un ASIN
-          </button>
+          <div className="heading-actions"><button type="button" className="secondary-button" onClick={onScan}><span aria-hidden="true">▦</span> Scanner EAN</button><button type="button" className="primary-button" onClick={onLookup}><span aria-hidden="true">＋</span> Vérifier un ASIN</button></div>
         }
       />
+
+      <section className="natural-radar" aria-labelledby="natural-radar-title">
+        <div><span className="eyebrow">Alerte en langage naturel</span><h2 id="natural-radar-title">Dites simplement ce que vous cherchez</h2><p>Exemple : « un iPhone neuf sous 850 €, livré en France, avec au moins 25 % de remise ».</p></div>
+        <form onSubmit={onCreateRadar}><input value={radarQuery} onChange={(event) => setRadarQuery(event.target.value)} maxLength={300} placeholder="Un OLED 55 pouces sous 800 €…" aria-label="Description du radar personnel" /><button className="dark-button" disabled={radarSaving}>{radarSaving ? "Activation…" : "Activer ce radar"}</button></form>
+        {radarRules.length > 0 ? <div className="radar-rule-list" aria-label="Radars actifs">{radarRules.map((rule) => <span key={rule.id}><i aria-hidden="true" />{rule.name}<button type="button" onClick={() => onDeleteRadar(rule.id)} aria-label={`Supprimer ${rule.name}`}>×</button></span>)}</div> : null}
+      </section>
 
       <div className="metric-row" aria-label="Résumé du radar">
         <div className="metric-card metric-primary">
@@ -1346,6 +1505,7 @@ function RadarView({
           >
             Tout afficher
           </button>
+          {search.trim() ? <div className="empty-external-links"><a href={externalResearchLinks({ title: search.trim(), gtin: /^\d{8,14}$/u.test(search.trim()) ? search.trim() : null }).idealo} target="_blank" rel="noreferrer">Comparer sur idealo</a><a href={externalResearchLinks({ title: search.trim(), gtin: /^\d{8,14}$/u.test(search.trim()) ? search.trim() : null }).dealabs} target="_blank" rel="noreferrer">Chercher sur Dealabs</a></div> : null}
         </div>
       )}
     </section>
@@ -1398,7 +1558,7 @@ function AlertCard({
             <span className={`confidence ${confidenceClass(alert.confidence)}`}>
               <i /> {alert.confidence}
             </span>
-            <span className="score">{alert.score}/100</span>
+            <span className="score">Achat {alert.buyNow?.score ?? alert.score}/100</span>
             <span className={`access-badge ${alert.priceAccessibleToAll === false ? "is-conditional" : ""}`}>
               {alert.priceAccessibleToAll === false ? "Sous condition" : "Prix public"}
             </span>
@@ -1738,6 +1898,22 @@ function SourcesView({
           runtime={runtimeFor("cdiscount")}
           method="Vendeurs tiers séparés, score de fiabilité renforcé"
         />
+        <SourceRow
+          mark="I"
+          name="idealo"
+          detail="Comparateur externe · contexte marché"
+          status="Liens actifs"
+          tone="prepared"
+          method="Recherche directe active ; API uniquement après accord au programme partenaire idealo"
+        />
+        <SourceRow
+          mark="🔥"
+          name="Dealabs"
+          detail="Communauté · discussions et validation"
+          status="Liens actifs"
+          tone="prepared"
+          method="Recherche communautaire sans aspiration automatique ni influence directe sur le score"
+        />
       </div>
 
       <div className="coverage-limit">
@@ -1839,6 +2015,8 @@ function SettingsView({
   setAnalyticsConsent,
   affiliateConsent,
   setAffiliateConsent,
+  notificationSpeed,
+  setNotificationSpeed,
   onInstall,
   installReady,
 }: {
@@ -1868,6 +2046,8 @@ function SettingsView({
   setAnalyticsConsent: (value: boolean) => void;
   affiliateConsent: boolean;
   setAffiliateConsent: (value: boolean) => void;
+  notificationSpeed: "instant" | "balanced" | "digest";
+  setNotificationSpeed: (value: "instant" | "balanced" | "digest") => void;
   onInstall: () => void;
   installReady: boolean;
 }) {
@@ -1921,6 +2101,13 @@ function SettingsView({
           <button type="button" className="secondary-button" onClick={onNotifications}>
             Autoriser et tester
           </button>
+          <div className="notification-speed" role="group" aria-label="Vitesse des notifications">
+            {([
+              ["instant", "Instantané", "Toutes les alertes correspondantes"],
+              ["balanced", "Équilibré", "Urgentes puis personnelles"],
+              ["digest", "Résumé", "Urgentes + synthèse à 18 h"],
+            ] as const).map(([value, label, detail]) => <button key={value} type="button" className={notificationSpeed === value ? "is-active" : ""} onClick={() => setNotificationSpeed(value)}><strong>{label}</strong><small>{detail}</small></button>)}
+          </div>
         </section>
 
         <section className="setting-card personalized-alerts">
@@ -2010,10 +2197,45 @@ function AlertDetail({
   alert: AlertItem;
   watched: boolean;
   onWatch: () => void;
-  onFeedback: (verdict: "useful" | "false_positive" | "expired") => void;
+  onFeedback: (verdict: "useful" | "false_positive" | "expired" | "purchased" | "cancelled" | "wrong_variant" | "coupon_failed" | "price_confirmed") => void;
   useAffiliateLink: boolean;
   onClose: () => void;
 }) {
+  const buyNow = alert.buyNow ?? { score: alert.score, label: "À considérer", factors: [], cautions: [] };
+  const community = alert.community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 };
+  const external = alert.externalResearch ?? externalResearchLinks({ title: alert.title, brand: alert.brand, model: alert.model, gtin: alert.gtin });
+  const [recheck, setRecheck] = useState<"idle" | "pending" | "processing" | "completed" | "failed">("idle");
+  const [recheckMessage, setRecheckMessage] = useState("");
+
+  async function verifyNow() {
+    if (alert.sourceMode !== "live") return setRecheckMessage("La vérification immédiate est réservée aux alertes actives.");
+    setRecheck("pending");
+    setRecheckMessage("Contrôle ajouté à la file prioritaire…");
+    try {
+      const response = await fetch("/api/recheck", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ alertId: alert.id }) });
+      if (!response.ok) throw new Error("La file de vérification est indisponible.");
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+        const statusResponse = await fetch(`/api/recheck?alertId=${encodeURIComponent(alert.id)}`, { headers: { accept: "application/json" } });
+        const payload = await statusResponse.json() as { items?: Array<{ status?: string; result?: Record<string, unknown> }> };
+        const item = payload.items?.[0];
+        if (item?.status === "completed") {
+          setRecheck("completed");
+          const checkedAt = typeof item.result?.verifiedAt === "string" ? relativeTime(item.result.verifiedAt) : "à l’instant";
+          setRecheckMessage(`Prix, stock, vendeur et livraison revérifiés ${checkedAt}.`);
+          return;
+        }
+        if (item?.status === "failed") throw new Error("La page marchande n’a pas pu être relue.");
+        setRecheck("processing");
+        setRecheckMessage("Le collecteur relit la page et compare la variante…");
+      }
+      setRecheckMessage("Contrôle toujours en file : vous pouvez fermer cet écran, le résultat sera conservé.");
+    } catch (error) {
+      setRecheck("failed");
+      setRecheckMessage(error instanceof Error ? error.message : "Vérification impossible.");
+    }
+  }
+
   return (
     <div className="detail-backdrop" onMouseDown={onClose}>
       <aside
@@ -2064,6 +2286,12 @@ function AlertDetail({
               plus le signal est fiable.
             </p>
           </div>
+        </section>
+
+        <section className={`buy-now-box buy-now-${buyNow.score >= 80 ? "go" : buyNow.score >= 60 ? "consider" : "wait"}`}>
+          <div><span className="eyebrow">Décision d’achat</span><h3>{buyNow.label}</h3><p>Un score séparé de la simple remise : historique, marché, vendeur, stock, livraison et accessibilité.</p></div><strong>{buyNow.score}<small>/100</small></strong>
+          {buyNow.factors.length > 0 ? <div className="buy-now-factors">{buyNow.factors.map((factor, index) => <span key={factor.key ?? index}><i style={{ width: `${Math.min(100, Math.round((Number(factor.points ?? 0) / Math.max(1, Number(factor.maximum ?? 1))) * 100))}%` }} /><small>{factor.label ?? factor.key}</small></span>)}</div> : null}
+          {buyNow.cautions.length > 0 ? <p className="buy-now-cautions">{buyNow.cautions.join(" · ")}</p> : null}
         </section>
 
         <section className="detail-section">
@@ -2117,6 +2345,13 @@ function AlertDetail({
           <div><span>Dernier contrôle</span><strong>{alert.verifiedAt}</strong></div>
         </section>
 
+        <section className="detail-section proof-passport">
+          <div className="section-label-row"><h3>Passeport de preuve</h3><span>{alert.sourceMode === "live" ? "Traçable" : "Exemple"}</span></div>
+          <dl><div><dt>Identité exacte</dt><dd>{alert.gtin ? `EAN ${alert.gtin}` : `${alert.brand ?? "Marque non transmise"} · ${alert.model ?? alert.sku}`}</dd></div><div><dt>Observation</dt><dd>{alert.observedAt ? new Date(alert.observedAt).toLocaleString("fr-FR") : alert.freshness}</dd></div><div><dt>Double contrôle</dt><dd>{alert.verifiedAt} · prix, variante, vendeur</dd></div><div><dt>Validité</dt><dd>{alert.expiresAt ? `jusqu’au ${new Date(alert.expiresAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "à revérifier"}</dd></div><div><dt>Comparaison</dt><dd>{alert.marketSources ? `${alert.marketSources} enseignes comparables` : "historique interne ou Keepa"}</dd></div></dl>
+          <button type="button" className="dark-button verify-now" onClick={() => void verifyNow()} disabled={recheck === "pending" || recheck === "processing"}>{recheck === "pending" || recheck === "processing" ? "Vérification en cours…" : recheck === "completed" ? "Revérifier à nouveau" : "Vérifier maintenant"}</button>
+          {recheckMessage ? <p className={`recheck-status is-${recheck}`} role="status">{recheckMessage}</p> : null}
+        </section>
+
         <section className="detail-section">
           <div className="section-label-row"><h3>Accessibilité du prix</h3><span>{alert.priceAccessibleToAll === false ? "Conditionnel" : "Pour tous"}</span></div>
           <p>{alert.priceAccessibleToAll === false ? alert.promotionLabel ?? "Ce montant exige une condition commerciale à vérifier." : "Ce prix ne dépend ni d’une carte, ni d’un coupon, ni d’une reprise détectée."}</p>
@@ -2124,8 +2359,15 @@ function AlertDetail({
         </section>
 
         <section className="detail-section feedback-box">
-          <div className="section-label-row"><h3>Votre verdict</h3><span>Améliore les seuils</span></div>
-          <div className="feedback-actions"><button onClick={() => onFeedback("useful")}>Bonne alerte</button><button onClick={() => onFeedback("false_positive")}>Faux positif</button><button onClick={() => onFeedback("expired")}>Prix expiré</button></div>
+          <div className="section-label-row"><h3>Verdict de la communauté</h3><span>{community.total ? `${community.positive}/${community.total} positifs` : "Premier avis"}</span></div>
+          <p>{community.purchased > 0 ? `${community.purchased} achat${community.purchased > 1 ? "s" : ""} confirmé${community.purchased > 1 ? "s" : ""}. ` : ""}Un appareil ne peut voter qu’une fois par alerte.</p>
+          <div className="feedback-actions feedback-expanded"><button onClick={() => onFeedback("purchased")}>Acheté</button><button onClick={() => onFeedback("price_confirmed")}>Prix confirmé</button><button onClick={() => onFeedback("useful")}>Bonne alerte</button><button onClick={() => onFeedback("expired")}>Expiré</button><button onClick={() => onFeedback("wrong_variant")}>Mauvaise variante</button><button onClick={() => onFeedback("coupon_failed")}>Coupon impossible</button><button onClick={() => onFeedback("cancelled")}>Commande annulée</button><button onClick={() => onFeedback("false_positive")}>Faux positif</button></div>
+        </section>
+
+        <section className="detail-section external-context">
+          <div className="section-label-row"><h3>Comparer ailleurs</h3><span>Contexte externe</span></div>
+          <p>idealo sert de repère de marché ; Dealabs apporte les retours et discussions de la communauté. Ces liens n’entrent pas seuls dans le score.</p>
+          <div><a href={external.idealo} target="_blank" rel="noreferrer">Comparer sur idealo ↗</a><a href={external.dealabs} target="_blank" rel="noreferrer">Chercher sur Dealabs ↗</a></div>
         </section>
 
         <div className="detail-warning">
@@ -2153,12 +2395,111 @@ function AlertDetail({
             Vérifier chez {alert.merchant} ↗
           </a>
           <button type="button" className="secondary-button" onClick={() => {
-            const text = `${alert.title} · ${money(alert.currentPrice, alert.currency)} · vérifié à ${alert.verifiedAt} · ${alert.url}`;
-            if (navigator.share) void navigator.share({ title: "Alerte PrixRadar", text, url: alert.url });
-            else void navigator.clipboard?.writeText(text);
+            const proofUrl = `${window.location.origin}/?alert=${encodeURIComponent(alert.id)}`;
+            const text = `${alert.title} · ${money(alert.currentPrice, alert.currency)} · score achat ${buyNow.score}/100 · vérifié à ${alert.verifiedAt}`;
+            if (navigator.share) void navigator.share({ title: "Preuve PrixRadar", text, url: proofUrl });
+            else void navigator.clipboard?.writeText(`${text} · ${proofUrl}`);
           }}>Partager la preuve</button>
         </footer>
       </aside>
     </div>
   );
+}
+
+let zxingLoader: Promise<void> | null = null;
+function loadZxingFallback() {
+  if ((window as unknown as { ZXingBrowser?: unknown }).ZXingBrowser) return Promise.resolve();
+  if (zxingLoader) return zxingLoader;
+  zxingLoader = new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/@zxing/browser@0.2.1/umd/zxing-browser.min.js";
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.referrerPolicy = "no-referrer";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("ZXing indisponible"));
+    document.head.appendChild(script);
+  });
+  return zxingLoader;
+}
+
+function BarcodeScanner({ onClose, onDetected }: { onClose: () => void; onDetected: (code: string) => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [manual, setManual] = useState("");
+  const [status, setStatus] = useState("Ouverture de la caméra arrière…");
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let fallbackControls: { stop: () => void } | null = null;
+    let frame = 0;
+    let stopped = false;
+    type Detector = { detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>> };
+    type DetectorConstructor = new (options: { formats: string[] }) => Detector;
+    const DetectorClass = (window as unknown as { BarcodeDetector?: DetectorConstructor }).BarcodeDetector;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      window.setTimeout(() => setStatus("La caméra n’est pas disponible dans ce navigateur. Saisissez l’EAN indiqué sous le code-barres."), 0);
+      return;
+    }
+    if (!DetectorClass) {
+      type ZXingResult = { getText?: () => string };
+      type ZXingReader = { decodeFromConstraints: (constraints: MediaStreamConstraints, element: HTMLVideoElement, callback: (result?: ZXingResult) => void) => Promise<{ stop: () => void }> };
+      type ZXingGlobal = { BrowserMultiFormatReader: new () => ZXingReader };
+      void loadZxingFallback().then(async () => {
+        if (stopped || !videoRef.current) return;
+        const library = (window as unknown as { ZXingBrowser?: ZXingGlobal }).ZXingBrowser;
+        if (!library) throw new Error("ZXing absent");
+        const reader = new library.BrowserMultiFormatReader();
+        fallbackControls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+          videoRef.current,
+          (result) => {
+            const code = result?.getText?.() ?? "";
+            if (/^\d{8,14}$/u.test(code)) {
+              stopped = true;
+              fallbackControls?.stop();
+              onDetected(code);
+            }
+          },
+        );
+        setStatus("Placez le code-barres dans le cadre · moteur ZXing iPhone");
+      }).catch(() => setStatus("Le moteur de scan n’a pas pu être chargé. Saisissez l’EAN manuellement."));
+      return () => {
+        stopped = true;
+        fallbackControls?.stop();
+      };
+    }
+    const detector = new DetectorClass({ formats: ["ean_13", "ean_8", "upc_a", "upc_e"] });
+    const scan = async () => {
+      if (stopped || !videoRef.current) return;
+      try {
+        const results = await detector.detect(videoRef.current);
+        const code = results.find((result) => /^\d{8,14}$/u.test(result.rawValue ?? ""))?.rawValue;
+        if (code) {
+          stopped = true;
+          onDetected(code);
+          return;
+        }
+      } catch { /* la vidéo n’est peut-être pas encore prête */ }
+      frame = window.requestAnimationFrame(() => void scan());
+    };
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+      .then((value) => {
+        if (stopped) return value.getTracks().forEach((track) => track.stop());
+        stream = value;
+        if (videoRef.current) {
+          videoRef.current.srcObject = value;
+          void videoRef.current.play().then(() => {
+            setStatus("Placez le code-barres dans le cadre");
+            void scan();
+          });
+        }
+      }).catch(() => setStatus("Caméra refusée. Vous pouvez saisir l’EAN manuellement."));
+    return () => {
+      stopped = true;
+      window.cancelAnimationFrame(frame);
+      stream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [onDetected]);
+
+  return <div className="scanner-backdrop" onMouseDown={onClose}><section className="scanner-panel" role="dialog" aria-modal="true" aria-labelledby="scanner-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="eyebrow">Recherche instantanée</span><h2 id="scanner-title">Scanner un EAN</h2></div><button onClick={onClose} aria-label="Fermer">×</button></header><div className="camera-frame"><video ref={videoRef} playsInline muted /><span aria-hidden="true" /></div><p role="status">{status}</p><form onSubmit={(event) => { event.preventDefault(); const code = manual.replace(/\D/gu, ""); if (/^\d{8,14}$/u.test(code)) onDetected(code); else setStatus("Un EAN contient 8 à 14 chiffres."); }}><label>Ou saisir le numéro<input value={manual} onChange={(event) => setManual(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="3701234567890" maxLength={18} /></label><button className="primary-button">Rechercher</button></form></section></div>;
 }
