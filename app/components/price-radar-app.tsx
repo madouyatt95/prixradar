@@ -11,9 +11,12 @@ import {
 
 type Tab = "radar" | "watchlist" | "sources" | "settings";
 type Confidence = "Très probable" | "Probable" | "À vérifier";
+type SourceMode = "live" | "fixture";
 
 type AlertItem = {
   id: string;
+  sourceKey?: string;
+  sourceMode?: SourceMode;
   title: string;
   merchant: string;
   market: string;
@@ -36,6 +39,19 @@ type AlertItem = {
   url: string;
   reasons: string[];
   history: number[];
+};
+
+type SourceRuntimeStatus = {
+  id?: string;
+  source: string;
+  market?: string;
+  status?: string;
+  reportedStatus?: string;
+  effectiveStatus?: string;
+  mode?: string;
+  lastSuccessAt?: string | null;
+  productsSeen?: number;
+  queueLag?: number;
 };
 
 type WatchItem = {
@@ -267,11 +283,167 @@ function readOnlineState() {
   return navigator.onLine;
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function finite(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function relativeTime(value: unknown) {
+  if (typeof value !== "string") return "à l’instant";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "à l’instant";
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return "à l’instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `il y a ${hours} h` : `il y a ${Math.round(hours / 24)} j`;
+}
+
+function alertAccent(source: string): AlertItem["accent"] {
+  if (source === "amazon" || source === "keepa") return "coral";
+  if (source === "boulanger") return "violet";
+  if (source === "darty") return "mint";
+  if (source === "cdiscount") return "blue";
+  return "gold";
+}
+
+function alertLabel(source: string, title: string) {
+  if (source === "amazon" || source === "keepa") return "AMZ";
+  if (source === "boulanger") return "BLG";
+  if (source === "darty") return "DRT";
+  if (source === "cdiscount") return "CDS";
+  return title.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 4).toUpperCase() || "PRIX";
+}
+
+function mapLiveAlert(value: unknown): AlertItem | null {
+  const item = record(value);
+  if (!item || typeof item.id !== "string" || typeof item.title !== "string") {
+    return null;
+  }
+  const source =
+    typeof item.source === "string" ? item.source.toLowerCase() : "merchant";
+  const market = typeof item.market === "string" ? item.market.toUpperCase() : "FR";
+  const priceCents = finite(item.priceCents);
+  const usualPriceCents = finite(item.usualPriceCents, priceCents);
+  const totalCents = finite(item.totalCents, priceCents);
+  const evidence = record(item.evidence);
+  let reasons: string[] = [];
+  if (Array.isArray(item.reasons)) {
+    reasons = item.reasons.filter((reason): reason is string => typeof reason === "string");
+  } else if (Array.isArray(evidence?.blockingReasons)) {
+    reasons = evidence.blockingReasons.filter(
+      (reason): reason is string => typeof reason === "string",
+    );
+  } else if (typeof item.evidenceJson === "string") {
+    try {
+      const parsed = record(JSON.parse(item.evidenceJson));
+      if (Array.isArray(parsed?.reasons)) {
+        reasons = parsed.reasons.filter(
+          (reason): reason is string => typeof reason === "string",
+        );
+      }
+    } catch {
+      reasons = [];
+    }
+  }
+  if (!reasons.length) {
+    reasons = [
+      "Prix total comparé à son historique récent",
+      "Produit et variante contrôlés par le collecteur",
+      "Seconde vérification requise avant notification",
+    ];
+  }
+  const confidenceRaw = String(item.confidence ?? "Probable").toLowerCase();
+  const confidence: Confidence = confidenceRaw.includes("très") || confidenceRaw.includes("high") || confidenceRaw === "very_likely"
+    ? "Très probable"
+    : confidenceRaw.includes("verify") || confidenceRaw.includes("vérifier") || confidenceRaw.includes("low") || confidenceRaw === "review"
+      ? "À vérifier"
+      : "Probable";
+  const merchant =
+    typeof item.merchant === "string"
+      ? item.merchant
+      : source === "amazon" || source === "keepa"
+        ? `Amazon.${market === "GB" ? "co.uk" : market.toLowerCase()}`
+        : source.charAt(0).toUpperCase() + source.slice(1);
+  const currency = item.currency === "GBP" ? "GBP" : "EUR";
+  const current = Math.max(0, totalCents / 100);
+  const usual = Math.max(current, usualPriceCents / 100);
+  const discount = Math.max(
+    0,
+    finite(
+      item.discountPercent,
+      usual > 0 ? Math.round((1 - current / usual) * 100) : 0,
+    ),
+  );
+  const verified = typeof item.verifiedAt === "string" ? item.verifiedAt : item.observedAt;
+  const history = Array.isArray(item.history)
+    ? item.history.map((point) => finite(point)).filter((point) => point > 0).slice(-12)
+    : [];
+
+  return {
+    id: item.id,
+    sourceKey: source === "keepa" ? "amazon" : source,
+    sourceMode: item.sourceMode === "live" ? "live" : "fixture",
+    title: item.title,
+    merchant,
+    market: source === "amazon" || source === "keepa" ? `Amazon ${market}` : "France",
+    source:
+      source === "amazon" || source === "keepa"
+        ? history.length > 0
+          ? "Historique Keepa · vérifié"
+          : "Signal Keepa · vérifié"
+        : "Collecteur vérifié",
+    currentPrice: current,
+    usualPrice: usual,
+    currency,
+    discount: Math.round(discount),
+    confidence,
+    score: Math.round(finite(item.score, 65)),
+    freshness: relativeTime(item.observedAt),
+    verifiedAt:
+      typeof verified === "string" && Number.isFinite(Date.parse(verified))
+        ? new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(
+            new Date(verified),
+          )
+        : "récent",
+    seller: typeof item.seller === "string" ? item.seller : merchant,
+    condition: typeof item.condition === "string" ? item.condition : "Neuf",
+    shipping:
+      item.shippingCents === null || item.shippingCents === undefined
+        ? "À confirmer"
+        : finite(item.shippingCents) === 0
+          ? "Incluse dans ce total"
+          : `${money(finite(item.shippingCents) / 100, currency)} inclus dans ce total`,
+    sku: typeof item.productId === "string" ? item.productId : item.id,
+    category: typeof item.category === "string" ? item.category : "Signal vérifié",
+    label: alertLabel(source, item.title),
+    accent: alertAccent(source),
+    url: typeof item.url === "string" ? item.url : "#",
+    reasons,
+    history,
+  };
+}
+
+function urlBase64ToBytes(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const decoded = window.atob(base64);
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
 export function PriceRadarApp() {
   const [tab, setTab] = useState<Tab>("radar");
   const [filter, setFilter] = useState("Tout");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AlertItem | null>(null);
+  const [liveAlerts, setLiveAlerts] = useState<AlertItem[]>([]);
+  const [liveLoading, setLiveLoading] = useState(true);
+  const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
   const [watched, setWatched] = useState<Set<string>>(new Set());
   const [watchLoading, setWatchLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -300,6 +472,7 @@ export function PriceRadarApp() {
   });
   const [minScore, setMinScore] = useState(75);
   const [quietHours, setQuietHours] = useState(true);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -317,6 +490,106 @@ export function PriceRadarApp() {
       window.removeEventListener("beforeinstallprompt", installHandler);
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([
+      fetch("/api/alerts?limit=50", { headers: { accept: "application/json" } }).then(
+        async (response) => {
+          if (!response.ok) return [];
+          const data = (await response.json()) as Record<string, unknown>;
+          const items = Array.isArray(data.items)
+            ? data.items
+            : Array.isArray(data.alerts)
+              ? data.alerts
+              : [];
+          return items.map(mapLiveAlert).filter((item): item is AlertItem => item !== null);
+        },
+      ),
+      fetch("/api/sources", { headers: { accept: "application/json" } }).then(
+        async (response) => {
+          if (!response.ok) return [];
+          const data = (await response.json()) as Record<string, unknown>;
+          const items = Array.isArray(data.items)
+            ? data.items
+            : Array.isArray(data.sources)
+              ? data.sources
+              : [];
+          return items
+            .map((item) => record(item))
+            .filter((item): item is Record<string, unknown> => item !== null)
+            .map((item) => ({
+              id: typeof item.id === "string" ? item.id : undefined,
+              source: typeof item.source === "string" ? item.source : "unknown",
+              market: typeof item.market === "string" ? item.market : undefined,
+              status:
+                typeof item.effectiveStatus === "string"
+                  ? item.effectiveStatus
+                  : typeof item.reportedStatus === "string"
+                    ? item.reportedStatus
+                    : typeof item.status === "string"
+                      ? item.status
+                      : undefined,
+              reportedStatus:
+                typeof item.reportedStatus === "string" ? item.reportedStatus : undefined,
+              effectiveStatus:
+                typeof item.effectiveStatus === "string" ? item.effectiveStatus : undefined,
+              mode: typeof item.mode === "string" ? item.mode : undefined,
+              lastSuccessAt:
+                typeof item.lastSuccessAt === "string" ? item.lastSuccessAt : null,
+              productsSeen: finite(item.productsSeen),
+              queueLag: finite(item.queueLag),
+            }));
+        },
+      ),
+    ]).then(([alertsResult, sourcesResult]) => {
+      if (!active) return;
+      if (alertsResult.status === "fulfilled") setLiveAlerts(alertsResult.value);
+      if (sourcesResult.status === "fulfilled") setSourceStatuses(sourcesResult.value);
+      setLiveLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/preferences", { headers: { accept: "application/json" } })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const data = (await response.json()) as Record<string, unknown>;
+        return record(data.preferences) ?? record(data.item) ?? data;
+      })
+      .then((preferences) => {
+        if (!active || !preferences) return;
+        if (typeof preferences.minScore === "number") {
+          setMinScore(Math.max(60, Math.min(95, preferences.minScore)));
+        }
+        if (typeof preferences.quietHours === "boolean") {
+          setQuietHours(preferences.quietHours);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setPreferencesReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    const timer = window.setTimeout(() => {
+      fetch("/api/preferences", {
+        method: "PUT",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ minScore, quietHours }),
+      }).catch(() => undefined);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [minScore, preferencesReady, quietHours]);
 
   useEffect(() => {
     let active = true;
@@ -363,9 +636,22 @@ export function PriceRadarApp() {
     return () => window.removeEventListener("keydown", close);
   }, [selected]);
 
+  const activeAlerts = useMemo(
+    () => (liveAlerts.length ? liveAlerts : ALERTS),
+    [liveAlerts],
+  );
+  const hasLiveSources = useMemo(
+    () =>
+      sourceStatuses.some(
+        (source) =>
+          source.mode === "live" && source.effectiveStatus?.toLowerCase() === "healthy",
+      ),
+    [sourceStatuses],
+  );
+
   const visibleAlerts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("fr");
-    return ALERTS.filter((alert) => {
+    return activeAlerts.filter((alert) => {
       const filterMatch =
         filter === "Tout" ||
         (filter === "Très probable" && alert.confidence === "Très probable") ||
@@ -378,20 +664,31 @@ export function PriceRadarApp() {
           .includes(query);
       return filterMatch && searchMatch;
     });
-  }, [filter, search]);
+  }, [activeAlerts, filter, search]);
 
-  const watchedAlerts = ALERTS.filter((alert) => watched.has(alert.id));
+  const knownAlerts = [...liveAlerts, ...ALERTS].filter(
+    (alert, index, all) => all.findIndex((candidate) => candidate.id === alert.id) === index,
+  );
+  const watchedAlerts = knownAlerts.filter((alert) => watched.has(alert.id));
 
   async function toggleWatch(alert: AlertItem) {
     const isWatched = watched.has(alert.id);
-    const source = alert.merchant.startsWith("Amazon")
-      ? "amazon"
-      : alert.merchant.toLowerCase();
-    const market = alert.merchant.endsWith(".de")
-      ? "DE"
-      : alert.merchant.endsWith(".es")
-        ? "ES"
-        : "FR";
+    const source =
+      alert.sourceKey ??
+      (alert.merchant.startsWith("Amazon")
+        ? "amazon"
+        : alert.merchant.toLowerCase());
+    const marketMatch = alert.market.match(/\b(FR|DE|IT|ES|GB)\b/i);
+    const market = marketMatch?.[1]?.toUpperCase() ??
+      (alert.merchant.endsWith(".de")
+        ? "DE"
+        : alert.merchant.endsWith(".es")
+          ? "ES"
+          : alert.merchant.endsWith(".it")
+            ? "IT"
+            : alert.merchant.endsWith(".co.uk")
+              ? "GB"
+              : "FR");
     setWatched((current) => {
       const next = new Set(current);
       if (isWatched) next.delete(alert.id);
@@ -488,6 +785,47 @@ export function PriceRadarApp() {
     if (permission === "granted") {
       const registration = await navigator.serviceWorker?.ready;
       if (registration) {
+        try {
+          const configResponse = await fetch("/api/push", {
+            headers: { accept: "application/json" },
+          });
+          if (configResponse.ok) {
+            const config = (await configResponse.json()) as Record<string, unknown>;
+            const nestedConfig = record(config.config);
+            const publicKey =
+              (typeof config.publicKey === "string" && config.publicKey) ||
+              (typeof config.vapidPublicKey === "string" && config.vapidPublicKey) ||
+              (typeof nestedConfig?.publicKey === "string" && nestedConfig.publicKey) ||
+              null;
+            if (publicKey && "pushManager" in registration) {
+              const subscription =
+                (await registration.pushManager.getSubscription()) ??
+                (await registration.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: urlBase64ToBytes(publicKey),
+                }));
+              const serialized = subscription.toJSON();
+              const saved = await fetch("/api/push", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  accept: "application/json",
+                },
+                body: JSON.stringify({
+                  endpoint: serialized.endpoint,
+                  expirationTime: serialized.expirationTime,
+                  keys: serialized.keys,
+                  contentEncoding: "aes128gcm",
+                }),
+              });
+              if (saved.ok) setNotificationState("Alertes push actives");
+            } else {
+              setNotificationState("Autorisées · envoi à connecter");
+            }
+          }
+        } catch {
+          setNotificationState("Autorisées · envoi à connecter");
+        }
         await registration.showNotification("PrixRadar est prêt", {
           body: "Vous pourrez recevoir ici les anomalies réellement confirmées.",
           icon: "/icon-192.png",
@@ -538,6 +876,8 @@ export function PriceRadarApp() {
           result={lookupResult}
           error={lookupError}
           onSubmit={lookupKeepa}
+          statuses={sourceStatuses}
+          liveAlertCount={liveAlerts.length}
         />
       );
     }
@@ -566,6 +906,8 @@ export function PriceRadarApp() {
         watched={watched}
         onWatch={toggleWatch}
         onOpen={setSelected}
+        mode={liveAlerts.length ? "live" : "fixture"}
+        loading={liveLoading}
         onLookup={() => {
           setTab("sources");
           setLookupOpen(true);
@@ -598,11 +940,17 @@ export function PriceRadarApp() {
             </button>
           ))}
         </nav>
-        <div className="rail-foot">
+        <div className={`rail-foot ${hasLiveSources ? "is-live" : ""}`}>
           <span className="pulse-dot" />
           <div>
-            <strong>Mode démo</strong>
-            <small>Connecteurs à configurer</small>
+            <strong>{hasLiveSources ? "Surveillance active" : "Mode démo"}</strong>
+            <small>
+              {liveAlerts.length
+                ? `${liveAlerts.length} anomalie${liveAlerts.length > 1 ? "s" : ""} vérifiée${liveAlerts.length > 1 ? "s" : ""}`
+                : hasLiveSources
+                  ? "Aucune anomalie confirmée"
+                  : "Connecteurs à configurer"}
+            </small>
           </div>
         </div>
       </aside>
@@ -629,11 +977,14 @@ export function PriceRadarApp() {
           </div>
         ) : null}
 
-        <div className="demo-banner" role="note">
-          <span className="demo-badge">DÉMO</span>
+        <div className={`demo-banner ${hasLiveSources ? "live-banner" : ""}`} role="note">
+          <span className="demo-badge">{hasLiveSources ? "LIVE" : "DÉMO"}</span>
           <span>
-            Prix illustratifs, aucun achat réel. Branchez les sources pour passer
-            en surveillance active.
+            {liveAlerts.length
+              ? `${liveAlerts.length} anomalie${liveAlerts.length > 1 ? "s" : ""} issue${liveAlerts.length > 1 ? "s" : ""} de collectes réelles et revérifiées.`
+              : hasLiveSources
+                ? "Collecteurs actifs, aucune anomalie confirmée. Les cartes DÉMO restent affichées comme exemples."
+                : "Prix illustratifs, aucun achat réel. Les sources attendent leurs accès pour passer en surveillance active."}
           </span>
         </div>
 
@@ -728,6 +1079,8 @@ function RadarView({
   onWatch,
   onOpen,
   onLookup,
+  mode,
+  loading,
 }: {
   alerts: AlertItem[];
   filter: string;
@@ -739,14 +1092,31 @@ function RadarView({
   onWatch: (alert: AlertItem) => void;
   onOpen: (alert: AlertItem) => void;
   onLookup: () => void;
+  mode: SourceMode;
+  loading: boolean;
 }) {
   const filters = ["Tout", "Très probable", "Amazon · Keepa", "France"];
+  const verifiedCount = alerts.filter((alert) => alert.score >= 75).length;
+  const medianDiscount = alerts.length
+    ? [...alerts].sort((a, b) => a.discount - b.discount)[Math.floor(alerts.length / 2)]
+        .discount
+    : 0;
   return (
     <section className="view-section">
       <PageHeading
-        eyebrow="Mardi 21 juillet · 12:46"
-        title="Le radar a repéré 6 signaux"
-        description="Chaque signal est comparé, expliqué puis classé selon sa fiabilité."
+        eyebrow={mode === "live" ? "Surveillance connectée" : "Aperçu de démonstration"}
+        title={
+          loading
+            ? "Le radar synchronise ses sources"
+            : mode === "live"
+              ? `Le radar a confirmé ${alerts.length} anomalie${alerts.length > 1 ? "s" : ""}`
+              : "Voici comment seront classées vos alertes"
+        }
+        description={
+          mode === "live"
+            ? "Ces prix proviennent des collecteurs, puis passent les contrôles de fraîcheur, variante, vendeur et livraison."
+            : "Ces cartes illustrent le produit final. Elles ne représentent aucun prix actuellement disponible."
+        }
         action={
           <button type="button" className="primary-button" onClick={onLookup}>
             <span aria-hidden="true">＋</span> Vérifier un ASIN
@@ -756,18 +1126,18 @@ function RadarView({
 
       <div className="metric-row" aria-label="Résumé du radar">
         <div className="metric-card metric-primary">
-          <span>Candidats aujourd’hui</span>
-          <strong>17</strong>
-          <small>sur 4 enseignes + Amazon</small>
+          <span>{mode === "live" ? "Anomalies actives" : "Exemples de signaux"}</span>
+          <strong>{loading ? "…" : alerts.length}</strong>
+          <small>{mode === "live" ? "après seconde vérification" : "sur 4 enseignes + Amazon"}</small>
         </div>
         <div className="metric-card">
           <span>Doublement vérifiés</span>
-          <strong>5</strong>
+          <strong>{loading ? "…" : verifiedCount}</strong>
           <small>prêts à être notifiés</small>
         </div>
         <div className="metric-card">
           <span>Économie médiane</span>
-          <strong>−38 %</strong>
+          <strong>{loading ? "…" : `−${medianDiscount} %`}</strong>
           <small>sur les signaux affichés</small>
         </div>
       </div>
@@ -807,7 +1177,7 @@ function RadarView({
       </div>
 
       <div className="section-label-row">
-        <h2>Signaux récents</h2>
+        <h2>{mode === "live" ? "Anomalies en cours" : "Signaux de démonstration"}</h2>
         <span>{alerts.length} résultats</span>
       </div>
       {alerts.length ? (
@@ -871,7 +1241,12 @@ function AlertCard({
         </div>
         <div className="card-content">
           <div className="card-meta">
-            <span className="merchant-pill">{alert.merchant}</span>
+            <span className="card-meta-left">
+              <span className="merchant-pill">{alert.merchant}</span>
+              <span className={`signal-mode ${alert.sourceMode === "live" ? "is-live" : ""}`}>
+                {alert.sourceMode === "live" ? "LIVE" : "DÉMO"}
+              </span>
+            </span>
             <span>{alert.freshness}</span>
           </div>
           <h3>{alert.title}</h3>
@@ -991,6 +1366,8 @@ function SourcesView({
   result,
   error,
   onSubmit,
+  statuses,
+  liveAlertCount,
 }: {
   lookupOpen: boolean;
   setLookupOpen: (value: boolean) => void;
@@ -1002,6 +1379,8 @@ function SourcesView({
   result: Record<string, unknown> | null;
   error: string;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  statuses: SourceRuntimeStatus[];
+  liveAlertCount: number;
 }) {
   const normalized = result
     ? (result.data as Record<string, unknown> | undefined) ?? result
@@ -1023,12 +1402,50 @@ function SourcesView({
       (market === "GB" ? "GBP" : "EUR"),
   ) as "EUR" | "GBP";
 
+  function runtimeFor(...sources: string[]) {
+    return statuses.find((item) => sources.includes(item.source.toLowerCase()));
+  }
+
+  function presentation(
+    runtime: SourceRuntimeStatus | undefined,
+    fallbackStatus: string,
+    fallbackTone: "pending" | "prepared",
+  ) {
+    const effectiveStatus = runtime?.effectiveStatus?.toLowerCase();
+    const reportedStatus = (runtime?.reportedStatus ?? runtime?.status)?.toLowerCase();
+    if (runtime?.mode === "live" && effectiveStatus === "healthy") {
+      return { status: "Actif", tone: "live" as const };
+    }
+    if (
+      runtime &&
+      (effectiveStatus === "degraded" ||
+        effectiveStatus === "error" ||
+        effectiveStatus === "stale" ||
+        effectiveStatus === "offline" ||
+        reportedStatus === "degraded" ||
+        reportedStatus === "error" ||
+        reportedStatus === "offline")
+    ) {
+      return { status: "À surveiller", tone: "pending" as const };
+    }
+    return { status: fallbackStatus, tone: fallbackTone };
+  }
+
+  const keepaState = presentation(runtimeFor("keepa", "amazon"), "À connecter", "pending");
+  const boulangerState = presentation(runtimeFor("boulanger"), "Prêt à déployer", "prepared");
+  const dartyState = presentation(runtimeFor("darty"), "Prêt à déployer", "prepared");
+  const cdiscountState = presentation(runtimeFor("cdiscount"), "Prêt à déployer", "prepared");
+
   return (
     <section className="view-section">
       <PageHeading
         eyebrow="État des connecteurs"
         title="Sources & couverture"
-        description="Une vue honnête de ce qui est prêt, à connecter ou hors couverture."
+        description={
+          liveAlertCount
+            ? `${liveAlertCount} anomalie${liveAlertCount > 1 ? "s" : ""} active${liveAlertCount > 1 ? "s" : ""}, avec l’état réel de chaque connecteur.`
+            : "Une vue honnête de ce qui est prêt, à connecter ou hors couverture."
+        }
         action={
           <button
             type="button"
@@ -1121,32 +1538,36 @@ function SourcesView({
           mark="K"
           name="Amazon via Keepa"
           detail="FR · DE · IT · ES · UK"
-          status="À connecter"
-          tone="pending"
+          status={keepaState.status}
+          tone={keepaState.tone}
+          runtime={runtimeFor("keepa", "amazon")}
           method="Historique 90 jours, Buy Box, deuxième vérification avant alerte"
         />
         <SourceRow
           mark="B"
           name="Boulanger"
           detail="France · flux catalogue + contrôle page"
-          status="Préparé"
-          tone="prepared"
+          status={boulangerState.status}
+          tone={boulangerState.tone}
+          runtime={runtimeFor("boulanger")}
           method="Flux partenaire prioritaire, navigateur uniquement en repli"
         />
         <SourceRow
           mark="D"
           name="Darty"
           detail="France · flux affilié + contrôle page"
-          status="Préparé"
-          tone="prepared"
+          status={dartyState.status}
+          tone={dartyState.tone}
+          runtime={runtimeFor("darty")}
           method="Référence exacte, vendeur et frais de livraison normalisés"
         />
         <SourceRow
           mark="C"
           name="Cdiscount"
           detail="France · marketplace"
-          status="À brancher"
-          tone="pending"
+          status={cdiscountState.status}
+          tone={cdiscountState.tone}
+          runtime={runtimeFor("cdiscount")}
           method="Vendeurs tiers séparés, score de fiabilité renforcé"
         />
       </div>
@@ -1192,13 +1613,15 @@ function SourceRow({
   status,
   tone,
   method,
+  runtime,
 }: {
   mark: string;
   name: string;
   detail: string;
   status: string;
-  tone: "pending" | "prepared";
+  tone: "pending" | "prepared" | "live";
   method: string;
+  runtime?: SourceRuntimeStatus;
 }) {
   return (
     <article className="source-row">
@@ -1206,6 +1629,12 @@ function SourceRow({
       <div className="source-identity">
         <h3>{name}</h3>
         <p>{detail}</p>
+        {runtime?.lastSuccessAt ? (
+          <small>
+            Dernier passage {relativeTime(runtime.lastSuccessAt)}
+            {runtime.productsSeen ? ` · ${runtime.productsSeen} produits` : ""}
+          </small>
+        ) : null}
       </div>
       <p className="source-method">{method}</p>
       <span className={`source-status status-${tone}`}>
@@ -1306,7 +1735,7 @@ function SettingsView({
             <div>
               <span className="eyebrow">Tranquillité</span>
               <h2>Silence de 22 h à 8 h</h2>
-              <p>Les alertes attendent le matin, sauf signal critique expirant vite.</p>
+              <p>Aucune alerte n’est envoyée pendant cette plage, même si le signal expire.</p>
             </div>
             <button
               type="button"
@@ -1360,7 +1789,9 @@ function AlertDetail({
         <header className="detail-header">
           <div>
             <span className="merchant-pill">{alert.merchant}</span>
-            <span className="demo-inline">EXEMPLE</span>
+            <span className={`demo-inline ${alert.sourceMode === "live" ? "is-live" : ""}`}>
+              {alert.sourceMode === "live" ? "DONNÉE ACTIVE" : "EXEMPLE"}
+            </span>
           </div>
           <button type="button" onClick={onClose} aria-label="Fermer l’analyse">
             ×
@@ -1411,21 +1842,34 @@ function AlertDetail({
           </ul>
         </section>
 
-        <section className="detail-section">
-          <div className="section-label-row">
-            <h3>Historique 90 jours</h3>
-            <span>{alert.source.includes("Keepa") ? "Keepa" : "Interne"}</span>
-          </div>
-          <div className="price-chart" aria-label="Historique de prix simplifié">
-            {alert.history.map((value, index) => (
-              <i key={`${value}-${index}`} style={{ height: `${value}%` }} />
-            ))}
-          </div>
-          <div className="chart-legend">
-            <span>Il y a 90 jours</span>
-            <span>Maintenant</span>
-          </div>
-        </section>
+        {alert.history.length > 0 ? (
+          <section className="detail-section">
+            <div className="section-label-row">
+              <h3>Historique 90 jours</h3>
+              <span>{alert.source.includes("Keepa") ? "Keepa" : "Interne"}</span>
+            </div>
+            <div className="price-chart" aria-label="Historique de prix simplifié">
+              {alert.history.map((value, index) => (
+                <i key={`${value}-${index}`} style={{ height: `${value}%` }} />
+              ))}
+            </div>
+            <div className="chart-legend">
+              <span>Il y a 90 jours</span>
+              <span>Maintenant</span>
+            </div>
+          </section>
+        ) : (
+          <section className="detail-section">
+            <div className="section-label-row">
+              <h3>Historique non disponible</h3>
+              <span>Signal actuel</span>
+            </div>
+            <p>
+              Aucune série de prix vérifiée n’a été transmise pour cette alerte.
+              Aucun graphique historique n’est donc affiché.
+            </p>
+          </section>
+        )}
 
         <section className="detail-section verified-grid">
           <div><span>Vendeur</span><strong>{alert.seller}</strong></div>

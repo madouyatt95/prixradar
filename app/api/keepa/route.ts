@@ -1,4 +1,9 @@
 import { env } from "cloudflare:workers";
+import { eq, lt, sql } from "drizzle-orm";
+
+import { getDb } from "@/db";
+import { keepaCache, keepaUsage } from "@/db/schema";
+import { resolveDevice } from "@/app/api/push/device";
 
 import {
   KEEPA_MARKETS,
@@ -13,6 +18,8 @@ export const dynamic = "force-dynamic";
 
 const KEEPA_PRODUCT_ENDPOINT = "https://api.keepa.com/product";
 const KEEPA_TIMEOUT_MS = 12_000;
+const KEEPA_CACHE_TTL_MS = 15 * 60_000;
+const KEEPA_DEVICE_HOURLY_LIMIT = 20;
 
 type ApiErrorCode =
   | "INVALID_ASIN"
@@ -20,20 +27,27 @@ type ApiErrorCode =
   | "KEEPA_NOT_CONFIGURED"
   | "KEEPA_TIMEOUT"
   | "KEEPA_RATE_LIMITED"
+  | "KEEPA_GUARD_UNAVAILABLE"
   | "KEEPA_AUTH_ERROR"
   | "KEEPA_PRODUCT_NOT_FOUND"
   | "KEEPA_UPSTREAM_ERROR";
 
-function json(body: unknown, status = 200) {
+function json(body: unknown, status = 200, extraHeaders?: HeadersInit) {
+  const headers = new Headers(extraHeaders);
+  headers.set("Cache-Control", "no-store");
   return Response.json(body, {
     status,
-    headers: {
-      "Cache-Control": "no-store",
-    },
+    headers,
   });
 }
 
-function errorResponse(status: number, code: ApiErrorCode, message: string, mode: "off" | "keepa") {
+function errorResponse(
+  status: number,
+  code: ApiErrorCode,
+  message: string,
+  mode: "off" | "keepa",
+  headers?: HeadersInit,
+) {
   return json(
     {
       ok: false,
@@ -42,7 +56,56 @@ function errorResponse(status: number, code: ApiErrorCode, message: string, mode
       message,
     },
     status,
+    headers,
   );
+}
+
+async function cachedResponse(cacheId: string, nowIso: string) {
+  const [cached] = await getDb()
+    .select({ responseJson: keepaCache.responseJson, expiresAt: keepaCache.expiresAt })
+    .from(keepaCache)
+    .where(eq(keepaCache.id, cacheId))
+    .limit(1);
+  if (!cached || cached.expiresAt <= nowIso) return null;
+  try {
+    const parsed = JSON.parse(cached.responseJson) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return {
+      ...(parsed as Record<string, unknown>),
+      cache: { hit: true, expiresAt: cached.expiresAt },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function consumeQuota(ownerId: string, now: Date) {
+  const windowStart = new Date(now);
+  windowStart.setUTCMinutes(0, 0, 0);
+  const windowIso = windowStart.toISOString();
+  const id = `${ownerId}:${windowIso}`;
+  const database = getDb();
+  const [current] = await database
+    .select({ requests: keepaUsage.requests })
+    .from(keepaUsage)
+    .where(eq(keepaUsage.id, id))
+    .limit(1);
+  if ((current?.requests ?? 0) >= KEEPA_DEVICE_HOURLY_LIMIT) {
+    const retryAfter = Math.max(1, Math.ceil((windowStart.getTime() + 3_600_000 - now.getTime()) / 1_000));
+    return { allowed: false as const, retryAfter };
+  }
+
+  await database
+    .insert(keepaUsage)
+    .values({ id, ownerId, windowStart: windowIso, requests: 1 })
+    .onConflictDoUpdate({
+      target: keepaUsage.id,
+      set: {
+        requests: sql`${keepaUsage.requests} + 1`,
+        updatedAt: now.toISOString(),
+      },
+    });
+  return { allowed: true as const };
 }
 
 function serverKeepaApiKey(): string | null {
@@ -121,6 +184,34 @@ export async function GET(request: Request) {
     );
   }
 
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const cacheId = `${market}:${asin}`;
+
+  try {
+    const cached = await cachedResponse(cacheId, nowIso);
+    if (cached !== null) return json(cached);
+    const quota = await consumeQuota(identity.device.ownerId, now);
+    if (!quota.allowed) {
+      return errorResponse(
+        429,
+        "KEEPA_RATE_LIMITED",
+        "Limite de vérifications Keepa atteinte pour cet appareil. Réessayez plus tard.",
+        "keepa",
+        { "Retry-After": String(quota.retryAfter) },
+      );
+    }
+  } catch {
+    return errorResponse(
+      503,
+      "KEEPA_GUARD_UNAVAILABLE",
+      "Le cache et le contrôle de quota Keepa sont temporairement indisponibles.",
+      "off",
+    );
+  }
+
   const upstreamUrl = new URL(KEEPA_PRODUCT_ENDPOINT);
   upstreamUrl.search = new URLSearchParams({
     key: apiKey,
@@ -162,14 +253,43 @@ export async function GET(request: Request) {
     const normalized = normalizeKeepaResponse(payload, asin, market);
     if (normalized === null) return upstreamErrorResponse("not_found");
 
-    return json({
+    const fetchedAt = new Date().toISOString();
+    const expiresAt = new Date(Date.parse(fetchedAt) + KEEPA_CACHE_TTL_MS).toISOString();
+    const responseBody = {
       ok: true,
       mode: "keepa",
       dataKind: "historical-snapshot",
       isLiveRetailerPrice: false,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt,
       ...normalized,
-    });
+      cache: { hit: false, expiresAt },
+    };
+
+    const database = getDb();
+    try {
+      await database.batch([
+        database
+          .insert(keepaCache)
+          .values({
+            id: cacheId,
+            market,
+            asin,
+            responseJson: JSON.stringify(responseBody),
+            fetchedAt,
+            expiresAt,
+          })
+          .onConflictDoUpdate({
+            target: keepaCache.id,
+            set: { responseJson: JSON.stringify(responseBody), fetchedAt, expiresAt },
+          }),
+        database.delete(keepaCache).where(lt(keepaCache.expiresAt, new Date(Date.now() - 86_400_000).toISOString())),
+        database.delete(keepaUsage).where(lt(keepaUsage.windowStart, new Date(Date.now() - 48 * 3_600_000).toISOString())),
+      ]);
+    } catch {
+      console.error("[keepa] Cache write failed");
+    }
+
+    return json(responseBody);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return errorResponse(

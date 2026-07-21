@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - prixradar-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  collector:
+    build: .
+    command: ["worker"]
+    profiles: ["worker"]
+    init: true
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      ENABLE_BROWSER_FALLBACK: ${ENABLE_BROWSER_FALLBACK:-false}
+      PRICE_RADAR_BASE_URL: ${PRICE_RADAR_BASE_URL:-}
+      INGEST_SECRET: ${INGEST_SECRET:-}
+      PUSH_DELIVERY_SECRET: ${PUSH_DELIVERY_SECRET:-}
+      OAI_SITES_AUTH_TOKEN: ${OAI_SITES_AUTH_TOKEN:-}
+      KEEPA_API_KEY: ${KEEPA_API_KEY:-}
+      KEEPA_MARKETS: ${KEEPA_MARKETS:-FR,DE,IT,ES,GB}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  prixradar-redis:

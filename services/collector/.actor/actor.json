@@ -1,0 +1,14 @@
+{
+  "actorSpecification": 1,
+  "name": "prixradar-collector",
+  "title": "PrixRadar Collector",
+  "description": "Discovery et vérification de prix Boulanger, Darty, Cdiscount et Amazon Europe.",
+  "version": "0.2",
+  "buildTag": "latest",
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

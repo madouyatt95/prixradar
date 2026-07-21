@@ -1,9 +1,13 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { watchlistItems } from "../../../db/schema";
+import {
+  deviceError,
+  deviceJson,
+  resolveDevice,
+  type DeviceContext,
+} from "../push/device";
 
-const DEVICE_COOKIE = "prixradar_device";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const SUPPORTED_SOURCES = new Set([
   "amazon",
   "boulanger",
@@ -11,11 +15,6 @@ const SUPPORTED_SOURCES = new Set([
   "darty",
 ]);
 const KEEPA_MARKETS = new Set(["DE", "ES", "FR", "GB", "IT"]);
-
-type DeviceContext = {
-  ownerId: string;
-  setCookie?: string;
-};
 
 type WatchlistPayload = {
   productId?: unknown;
@@ -27,57 +26,11 @@ type WatchlistPayload = {
   url?: unknown;
 };
 
-function readDevice(request: Request): DeviceContext {
-  const rawCookie = request.headers.get("cookie") ?? "";
-  const cookies = rawCookie.split(";");
-
-  for (const cookie of cookies) {
-    const separator = cookie.indexOf("=");
-    if (separator === -1) continue;
-    const name = cookie.slice(0, separator).trim();
-    if (name !== DEVICE_COOKIE) continue;
-
-    try {
-      const ownerId = decodeURIComponent(cookie.slice(separator + 1).trim());
-      if (/^[a-f0-9-]{16,64}$/i.test(ownerId)) return { ownerId };
-    } catch {
-      // A malformed cookie is safely replaced below.
-    }
-  }
-
-  const ownerId = crypto.randomUUID();
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
-
-  return {
-    ownerId,
-    setCookie: `${DEVICE_COOKIE}=${encodeURIComponent(ownerId)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; HttpOnly; SameSite=Lax${secure}`,
-  };
-}
-
-function json(
-  device: DeviceContext,
-  body: unknown,
-  init: ResponseInit = {}
-) {
-  const headers = new Headers(init.headers);
-  if (device.setCookie) headers.set("Set-Cookie", device.setCookie);
-  return Response.json(body, { ...init, headers });
-}
-
-function apiError(
-  device: DeviceContext,
-  status: number,
-  code: string,
-  message: string
-) {
-  return json(device, { ok: false, code, error: message }, { status });
-}
-
 function databaseError(device: DeviceContext, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
 
   if (message.includes("no such table") || message.includes("watchlist_items")) {
-    return apiError(
+    return deviceError(
       device,
       503,
       "watchlist_not_ready",
@@ -86,7 +39,7 @@ function databaseError(device: DeviceContext, error: unknown) {
   }
 
   if (message.includes("D1 binding") || message.includes("env.DB")) {
-    return apiError(
+    return deviceError(
       device,
       503,
       "database_unavailable",
@@ -94,8 +47,8 @@ function databaseError(device: DeviceContext, error: unknown) {
     );
   }
 
-  console.error("[watchlist] D1 request failed", error);
-  return apiError(
+  console.error("[watchlist] D1 request failed");
+  return deviceError(
     device,
     500,
     "watchlist_failed",
@@ -202,7 +155,9 @@ function serializeItem(item: typeof watchlistItems.$inferSelect) {
 }
 
 export async function GET(request: Request) {
-  const device = readDevice(request);
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const device = identity.device;
 
   try {
     const items = await getDb()
@@ -211,7 +166,7 @@ export async function GET(request: Request) {
       .where(eq(watchlistItems.ownerId, device.ownerId))
       .orderBy(desc(watchlistItems.updatedAt), desc(watchlistItems.id));
 
-    return json(device, {
+    return deviceJson(device, {
       ok: true,
       count: items.length,
       items: items.map(serializeItem),
@@ -222,20 +177,22 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const device = readDevice(request);
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const device = identity.device;
   let rawPayload: WatchlistPayload;
 
   try {
     rawPayload = (await request.json()) as WatchlistPayload;
   } catch {
-    return apiError(device, 400, "invalid_json", "Le corps JSON est invalide.");
+    return deviceError(device, 400, "invalid_json", "Le corps JSON est invalide.");
   }
 
   let payload: ReturnType<typeof parsePayload>;
   try {
     payload = parsePayload(rawPayload);
   } catch (error) {
-    return apiError(
+    return deviceError(
       device,
       400,
       "invalid_watchlist_item",
@@ -263,7 +220,7 @@ export async function POST(request: Request) {
       })
       .returning();
 
-    return json(
+    return deviceJson(
       device,
       { ok: true, saved: true, item: serializeItem(item) },
       { status: 201 }
@@ -274,7 +231,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const device = readDevice(request);
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const device = identity.device;
   const search = new URL(request.url).searchParams;
   let body: Record<string, unknown> = {};
 
@@ -282,7 +241,7 @@ export async function DELETE(request: Request) {
     try {
       const parsed = await request.json();
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return apiError(
+        return deviceError(
           device,
           400,
           "invalid_json",
@@ -291,7 +250,7 @@ export async function DELETE(request: Request) {
       }
       body = parsed as Record<string, unknown>;
     } catch {
-      return apiError(device, 400, "invalid_json", "Le corps JSON est invalide.");
+      return deviceError(device, 400, "invalid_json", "Le corps JSON est invalide.");
     }
   }
 
@@ -327,7 +286,7 @@ export async function DELETE(request: Request) {
           market: cleanRequiredString(market, "market", 8).toUpperCase(),
         };
       } catch (error) {
-        return apiError(
+        return deviceError(
           device,
           400,
           "missing_watchlist_identity",
@@ -338,7 +297,7 @@ export async function DELETE(request: Request) {
       }
 
       if (!SUPPORTED_SOURCES.has(identity.source)) {
-        return apiError(
+        return deviceError(
           device,
           400,
           "invalid_watchlist_identity",
@@ -346,7 +305,7 @@ export async function DELETE(request: Request) {
         );
       }
       if (!/^[\p{L}\p{N}._:/-]+$/u.test(identity.productId)) {
-        return apiError(
+        return deviceError(
           device,
           400,
           "invalid_watchlist_identity",
@@ -354,7 +313,7 @@ export async function DELETE(request: Request) {
         );
       }
       if (!/^[A-Z]{2,8}$/.test(identity.market)) {
-        return apiError(
+        return deviceError(
           device,
           400,
           "invalid_watchlist_identity",
@@ -365,7 +324,7 @@ export async function DELETE(request: Request) {
         (identity.source === "amazon" && !KEEPA_MARKETS.has(identity.market)) ||
         (identity.source !== "amazon" && identity.market !== "FR")
       ) {
-        return apiError(
+        return deviceError(
           device,
           400,
           "invalid_watchlist_identity",
@@ -386,7 +345,7 @@ export async function DELETE(request: Request) {
         .returning({ id: watchlistItems.id });
     }
 
-    return json(device, {
+    return deviceJson(device, {
       ok: true,
       removed: removed.length,
       removedIds: removed.map((item) => item.id),

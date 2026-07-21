@@ -15,7 +15,7 @@ test("ships the complete PrixRadar application shell", async () => {
   assert.match(page, /PrixRadar — Les vraies anomalies de prix, vérifiées/);
   assert.match(page, /<PriceRadarApp \/>/);
   assert.match(layout, /<html lang="fr">/);
-  assert.match(application, /Le radar a repéré 6 signaux/);
+  assert.match(application, /Voici comment seront classées vos alertes/);
   assert.match(application, /Prix illustratifs, aucun achat réel/);
   assert.match(application, /Amazon · Keepa/);
   assert.match(application, /Navigation principale/);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "prixradar-shell-v1";
+const CACHE_NAME = "prixradar-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -64,12 +64,61 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("notificationclick", (event) => {
+  const requestedUrl =
+    event.notification.data && typeof event.notification.data.url === "string"
+      ? event.notification.data.url
+      : "/";
+  let targetUrl = "/";
+  try {
+    const parsed = new URL(requestedUrl, self.location.origin);
+    if (parsed.origin === self.location.origin) targetUrl = `${parsed.pathname}${parsed.search}`;
+  } catch {
+    targetUrl = "/";
+  }
+
   event.notification.close();
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((client) => client.url.startsWith(self.location.origin));
-      if (existing) return existing.focus();
-      return self.clients.openWindow("/");
+      if (existing) {
+        return existing.navigate(targetUrl).then(() => existing.focus());
+      }
+      return self.clients.openWindow(targetUrl);
+    }),
+  );
+});
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { body: event.data ? event.data.text() : "" };
+  }
+
+  const title =
+    typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.slice(0, 120)
+      : "PrixRadar · anomalie confirmée";
+  const body =
+    typeof payload.body === "string" && payload.body.trim()
+      ? payload.body.slice(0, 300)
+      : "Un signal vérifié correspond à vos critères.";
+  const alertId =
+    typeof payload.alertId === "string" ? payload.alertId.slice(0, 160) : "nouveau";
+  const url =
+    typeof payload.url === "string" && payload.url.startsWith("/")
+      ? payload.url
+      : "/";
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: `prixradar-${alertId}`,
+      renotify: false,
+      data: { url },
     }),
   );
 });

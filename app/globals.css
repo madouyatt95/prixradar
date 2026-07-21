@@ -256,6 +256,16 @@ a {
   box-shadow: 0 0 0 4px rgb(217 154 43 / 16%);
 }
 
+.rail-foot.is-live {
+  border-color: #b9dccc;
+  background: #edf7f2;
+}
+
+.rail-foot.is-live .pulse-dot {
+  background: var(--mint);
+  box-shadow: 0 0 0 4px rgb(46 157 120 / 16%);
+}
+
 .rail-foot strong,
 .rail-foot small {
   display: block;
@@ -296,6 +306,16 @@ a {
   font-size: 12px;
   font-weight: 590;
   text-align: center;
+}
+
+.demo-banner.live-banner {
+  border-color: #bfdccb;
+  color: #285f4d;
+  background: #e4f3ec;
+}
+
+.live-banner .demo-badge {
+  background: var(--mint);
 }
 
 .demo-badge,
@@ -727,6 +747,31 @@ a {
   justify-content: space-between;
   gap: 8px;
   padding-right: 34px;
+}
+
+.card-meta-left {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.signal-mode {
+  display: inline-flex;
+  min-height: 21px;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #7b652f;
+  background: #f1e5c3;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.signal-mode.is-live {
+  color: #23785c;
+  background: #dff3e9;
 }
 
 .card-meta > span:last-child {
@@ -1352,6 +1397,14 @@ a {
   margin: 0;
 }
 
+.source-identity small {
+  display: block;
+  margin-top: 5px;
+  color: var(--mint);
+  font-size: 8px;
+  font-weight: 650;
+}
+
 .source-identity h3 {
   font-size: 12px;
 }
@@ -1396,6 +1449,16 @@ a {
 
 .status-prepared i {
   background: var(--mint);
+}
+
+.status-live {
+  color: #23785c;
+  background: #dff3e9;
+}
+
+.status-live i {
+  background: var(--mint);
+  box-shadow: 0 0 0 3px rgb(46 157 120 / 14%);
 }
 
 .coverage-limit {
@@ -1684,6 +1747,11 @@ a {
   min-height: 23px;
   color: #785f29;
   background: #f3e5bc;
+}
+
+.demo-inline.is-live {
+  color: #23785c;
+  background: #dff3e9;
 }
 
 .detail-hero {

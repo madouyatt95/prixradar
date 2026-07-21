@@ -1,0 +1,38 @@
+{
+  "name": "@prixradar/collector",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Collecteur autonome PrixRadar: discovery, double verification, ingestion et push.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit && npm test",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "scan-source": "tsx src/cli.ts scan-source",
+    "scan-keepa": "tsx src/cli.ts scan-keepa",
+    "worker": "tsx src/cli.ts worker",
+    "actor": "tsx src/cli.ts actor",
+    "start": "node dist/cli.js worker"
+  },
+  "dependencies": {
+    "apify": "3.7.2",
+    "bullmq": "5.80.9",
+    "cheerio": "1.1.2",
+    "crawlee": "3.17.0",
+    "ioredis": "5.7.0",
+    "playwright": "1.61.1",
+    "web-push": "3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "@types/web-push": "3.6.4",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "adm-zip": "0.6.0"
+  }
+}

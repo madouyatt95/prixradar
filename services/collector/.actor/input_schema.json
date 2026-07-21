@@ -1,0 +1,67 @@
+{
+  "title": "PrixRadar Collector input",
+  "description": "Les fixtures servent uniquement à valider l'extraction et ne sont jamais ingérées ni notifiées.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "source": {
+      "title": "Source",
+      "type": "string",
+      "description": "Source attendue. 'all' autorise les trois marchands et Keepa.",
+      "editor": "select",
+      "default": "all",
+      "enum": ["all", "boulanger", "darty", "cdiscount", "amazon"],
+      "enumTitles": ["Toutes", "Boulanger", "Darty", "Cdiscount", "Amazon Europe"]
+    },
+    "market": {
+      "title": "Marché Amazon",
+      "type": "string",
+      "editor": "select",
+      "default": "FR",
+      "enum": ["FR", "DE", "IT", "ES", "GB"],
+      "enumTitles": ["France", "Allemagne", "Italie", "Espagne", "Royaume-Uni"]
+    },
+    "urls": {
+      "title": "URLs autorisées",
+      "type": "array",
+      "description": "Pages produit, catégorie ou recherche Boulanger, Darty ou Cdiscount.",
+      "editor": "requestListSources",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "mode": {
+      "title": "Mode",
+      "type": "string",
+      "editor": "select",
+      "default": "full",
+      "enum": ["discover", "verify", "full", "fixture"],
+      "enumTitles": ["Discovery seule", "Vérification", "Complet", "Fixture sans notification"]
+    },
+    "notify": {
+      "title": "Autoriser les notifications",
+      "type": "boolean",
+      "description": "Refusé lorsque mode=fixture. L'envoi nécessite aussi les secrets serveur.",
+      "default": false
+    },
+    "browserFallback": {
+      "title": "Autoriser le repli Playwright",
+      "type": "boolean",
+      "description": "HTTP/JSON-LD reste toujours prioritaire.",
+      "default": false
+    },
+    "limit": {
+      "title": "Limite",
+      "type": "integer",
+      "description": "Maximum de produits par exécution et marché.",
+      "default": 25,
+      "minimum": 1,
+      "maximum": 100
+    }
+  }
+}
