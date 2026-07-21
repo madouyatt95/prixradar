@@ -56,6 +56,8 @@ export interface AlertIngestEnvelope {
     deliveryPostalCode?: string;
     deliveryMode?: "home" | "pickup" | "either";
     locationVerified?: boolean;
+    cartProbe?: NonNullable<VerifiedObservation["offer"]["cartProbe"]>;
+    sellerSignals?: NonNullable<VerifiedObservation["offer"]["sellerSignals"]>;
     historicalPrices?: Array<{
       provider: "keepa";
       priceCents: number;
@@ -219,6 +221,8 @@ export function toAlertIngestEnvelope(
         deliveryMode: observation.offer.deliveryContext.mode,
         locationVerified: observation.offer.deliveryContext.verified,
       } : {}),
+      ...(observation.offer.cartProbe ? { cartProbe: observation.offer.cartProbe } : {}),
+      ...(observation.offer.sellerSignals ? { sellerSignals: observation.offer.sellerSignals } : {}),
       ...(historicalPrices && historicalPrices.length > 0 ? { historicalPrices } : {}),
     },
   };
@@ -338,4 +342,24 @@ export async function postSourceStatus(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: boolean; accepted?: boolean; duplicate?: boolean }> {
   return postEnvelope(toSourceStatusEnvelope(status), config, fetchImpl);
+}
+
+export async function postFrontierItems(
+  items: Array<{ url: string; discoveredFrom: string | null; depth: number }>,
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean; accepted: number }> {
+  if (items.length === 0) return { ok: true, accepted: 0 };
+  const endpoint = new URL("api/frontier", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    body: JSON.stringify({ items: items.slice(0, 100) }),
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Frontière refusée par PrixRadar (HTTP ${response.status}).`, response.status);
+  return response.json() as Promise<{ ok: boolean; accepted: number }>;
 }

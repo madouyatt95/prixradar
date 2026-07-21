@@ -50,6 +50,24 @@ export interface OfferSnapshot {
     mode: "home" | "pickup" | "either";
     verified: boolean;
   };
+  cartProbe?: {
+    status: "confirmed" | "product_page" | "blocked" | "unavailable";
+    itemCents: number | null;
+    shippingCents: number | null;
+    totalCents: number | null;
+    stockConfirmed: boolean;
+    addToCartAvailable: boolean;
+    couponApplied: boolean;
+    checkedAt: string | null;
+  };
+  sellerSignals?: {
+    ratingPercent: number | null;
+    reviewCount: number | null;
+    fulfillment: "direct" | "platform" | "merchant" | "unknown";
+    country: string | null;
+    warranty: boolean | null;
+    returns: boolean | null;
+  };
 }
 
 export interface VerificationEvidence {

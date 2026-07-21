@@ -41,7 +41,7 @@ test("ships an installable PWA without caching private APIs", async () => {
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /request\.mode === "navigate"/);
   assert.match(layout, /appleWebApp/);
-  assert.match(layout, /og-v2\.png/);
+  assert.match(layout, /og-v3\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   const hostingConfig = JSON.parse(hosting);
   assert.equal(hostingConfig.d1, "DB");

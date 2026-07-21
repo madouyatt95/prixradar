@@ -4,6 +4,7 @@ import { and, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   alerts,
+  alertIntelligence,
   alertFeedback,
   collectionRuns,
   discoverySegments,
@@ -14,9 +15,22 @@ import {
   priceObservations,
   pushSubscriptions,
   recheckRequests,
+  inspectionRequests,
+  sentinelFrontier,
   sourceStatuses,
   sourceConfigurations,
 } from "@/db/schema";
+import {
+  buildPriceRadarIndex,
+  buildVariantFingerprint,
+  classifyOffer,
+  evaluateShadowCart,
+  predictOpportunityLifetime,
+  scoreSeller,
+  sentinelPriority,
+  type CartProbeInput,
+  type SellerSignalsInput,
+} from "@/lib/autonomy";
 import { evaluateBuyNow } from "@/lib/buy-now";
 import {
   AnomalyInputError,
@@ -45,6 +59,8 @@ const SOURCE_MODES = new Set<SourceMode>(["live", "demo", "fixture"]);
 const CONDITIONS = new Set<ProductCondition>(["new", "used", "refurbished", "unknown"]);
 const SOURCE_STATUSES = new Set(["healthy", "degraded", "offline", "not_configured"]);
 const PROMOTION_TYPES = new Set(["public_price", "coupon", "membership", "cashback", "trade_in", "bundle", "unknown"]);
+const CART_PROBE_STATUSES = new Set(["confirmed", "product_page", "blocked", "unavailable"]);
+const FULFILLMENT_TYPES = new Set(["direct", "platform", "merchant", "unknown"]);
 
 type Source = (typeof SOURCES)[number];
 type UnknownRecord = Record<string, unknown>;
@@ -94,6 +110,8 @@ type ParsedAlert = {
   deliveryPostalPrefix: string | null;
   deliveryMode: DeliveryMode | null;
   locationVerified: boolean;
+  cartProbe: CartProbeInput;
+  sellerSignals: SellerSignalsInput;
 };
 
 type ParsedHistoricalPrice = {
@@ -180,6 +198,11 @@ function nullableMoney(value: unknown, field: string) {
   return integerInRange(value, field, 0, MAX_MONEY_CENTS);
 }
 
+function nullableInteger(value: unknown, field: string, minimum: number, maximum: number) {
+  if (value === null || value === undefined) return null;
+  return integerInRange(value, field, minimum, maximum);
+}
+
 function isoTimestamp(value: unknown, field: string, nullable = false): string | null {
   if ((value === null || value === undefined) && nullable) return null;
   const raw = requiredString(value, field, 40);
@@ -226,6 +249,12 @@ function validateProductUrl(source: Source, market: string, value: unknown) {
   return parsed.toString();
 }
 
+function productUrlKey(source: Source, raw: string) {
+  const url = new URL(raw);
+  const asin = source === "amazon" ? /\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/iu.exec(url.pathname)?.[1]?.toUpperCase() : null;
+  return asin ? `asin:${asin}` : url.pathname.replace(/\/+$/u, "").toLowerCase();
+}
+
 function parseSource(value: unknown): Source {
   const source = requiredString(value, "source", 24).toLowerCase();
   if (!SOURCES.includes(source as Source)) throw new Error("source n’est pas prise en charge.");
@@ -245,6 +274,54 @@ function parseEnvelope(value: unknown): IngestEnvelope {
   if (!isRecord(value.payload)) throw new Error("payload doit être un objet JSON.");
 
   return { idempotencyKey, source, eventType: value.eventType, payload: value.payload };
+}
+
+function parseCartProbe(value: unknown): CartProbeInput {
+  if (value === undefined) {
+    return {
+      status: "product_page",
+      itemCents: null,
+      shippingCents: null,
+      totalCents: null,
+      stockConfirmed: false,
+      addToCartAvailable: false,
+      couponApplied: false,
+      checkedAt: null,
+    };
+  }
+  if (!isRecord(value)) throw new Error("cartProbe doit être un objet.");
+  ensureOnlyKeys(value, ["status", "itemCents", "shippingCents", "totalCents", "stockConfirmed", "addToCartAvailable", "couponApplied", "checkedAt"], "cartProbe");
+  const status = requiredString(value.status, "cartProbe.status", 24) as CartProbeInput["status"];
+  if (!CART_PROBE_STATUSES.has(status)) throw new Error("cartProbe.status est invalide.");
+  return {
+    status,
+    itemCents: nullableMoney(value.itemCents, "cartProbe.itemCents"),
+    shippingCents: nullableMoney(value.shippingCents, "cartProbe.shippingCents"),
+    totalCents: nullableMoney(value.totalCents, "cartProbe.totalCents"),
+    stockConfirmed: optionalBoolean(value.stockConfirmed, "cartProbe.stockConfirmed", false),
+    addToCartAvailable: optionalBoolean(value.addToCartAvailable, "cartProbe.addToCartAvailable", false),
+    couponApplied: optionalBoolean(value.couponApplied, "cartProbe.couponApplied", false),
+    checkedAt: isoTimestamp(value.checkedAt, "cartProbe.checkedAt", true),
+  };
+}
+
+function parseSellerSignals(value: unknown, trusted: boolean): SellerSignalsInput {
+  if (value === undefined) {
+    return { trusted, ratingPercent: null, reviewCount: null, fulfillment: trusted ? "direct" : "unknown", country: null, warranty: null, returns: null };
+  }
+  if (!isRecord(value)) throw new Error("sellerSignals doit être un objet.");
+  ensureOnlyKeys(value, ["ratingPercent", "reviewCount", "fulfillment", "country", "warranty", "returns"], "sellerSignals");
+  const fulfillment = requiredString(value.fulfillment ?? "unknown", "sellerSignals.fulfillment", 16) as SellerSignalsInput["fulfillment"];
+  if (!FULFILLMENT_TYPES.has(fulfillment)) throw new Error("sellerSignals.fulfillment est invalide.");
+  return {
+    trusted,
+    ratingPercent: nullableInteger(value.ratingPercent, "sellerSignals.ratingPercent", 0, 100),
+    reviewCount: nullableInteger(value.reviewCount, "sellerSignals.reviewCount", 0, 1_000_000_000),
+    fulfillment,
+    country: optionalString(value.country, "sellerSignals.country", 80),
+    warranty: value.warranty === null || value.warranty === undefined ? null : requiredBoolean(value.warranty, "sellerSignals.warranty"),
+    returns: value.returns === null || value.returns === undefined ? null : requiredBoolean(value.returns, "sellerSignals.returns"),
+  };
 }
 
 function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
@@ -286,6 +363,8 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "deliveryPostalCode",
     "deliveryMode",
     "locationVerified",
+    "cartProbe",
+    "sellerSignals",
   ]);
 
   const id = requiredString(value.id, "id", 160);
@@ -304,6 +383,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
   const expectedVariantId = optionalString(value.expectedVariantId, "expectedVariantId", 160);
   const observedVariantId = optionalString(value.observedVariantId, "observedVariantId", 160);
   const seller = optionalString(value.seller, "seller", 160);
+  const sellerTrusted = requiredBoolean(value.sellerTrusted, "sellerTrusted");
   const rawHash = optionalString(value.rawHash, "rawHash", 64);
   if (rawHash !== null && !/^[a-f0-9]{64}$/i.test(rawHash)) throw new Error("rawHash doit être un SHA-256 hexadécimal.");
 
@@ -360,7 +440,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     shippingCents: nullableMoney(value.shippingCents, "shippingCents"),
     available: requiredBoolean(value.available, "available"),
     seller,
-    sellerTrusted: requiredBoolean(value.sellerTrusted, "sellerTrusted"),
+    sellerTrusted,
     condition,
     expectedVariantId,
     observedVariantId,
@@ -380,6 +460,8 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     deliveryPostalPrefix: postalPrefix(deliveryPostalCode, deliveryCountry ?? "FR"),
     deliveryMode,
     locationVerified,
+    cartProbe: parseCartProbe(value.cartProbe),
+    sellerSignals: parseSellerSignals(value.sellerSignals, sellerTrusted),
   };
   if (!PROMOTION_TYPES.has(parsed.promotionType)) throw new Error("promotionType est invalide.");
   if (parsed.priceAccessibleToAll && parsed.publicPriceCents === null) parsed.publicPriceCents = parsed.priceCents;
@@ -564,7 +646,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     variantKey: parsed.observedVariantId,
     observedAt: parsed.observedAt,
   });
-  const [priorRows, existingAlerts, comparableRows, feedbackRows] = await Promise.all([
+  const [priorRows, existingAlerts, comparableRows, feedbackRows, durationRows] = await Promise.all([
     database
       .select({
         priceCents: priceObservations.priceCents,
@@ -602,6 +684,14 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       falsePositive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'false_positive' then 1 else 0 end), 0)`,
     }).from(alertFeedback).innerJoin(alerts, eq(alerts.id, alertFeedback.alertId)).where(and(
       eq(alerts.source, envelope.source),
+      ...(parsed.category ? [eq(alerts.category, parsed.category)] : []),
+    )),
+    database.select({
+      averageMinutes: sql<number | null>`avg(max(1, min(360, (julianday(${alerts.updatedAt}) - julianday(${alerts.observedAt})) * 1440)))`,
+    }).from(alerts).where(and(
+      eq(alerts.source, envelope.source),
+      eq(alerts.status, "expired"),
+      gte(alerts.observedAt, new Date(Date.parse(parsed.observedAt) - 30 * 86_400_000).toISOString()),
       ...(parsed.category ? [eq(alerts.category, parsed.category)] : []),
     )),
   ]);
@@ -658,10 +748,61 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       })),
     ],
   );
+  const variant = buildVariantFingerprint({
+    title: parsed.title,
+    brand: parsed.brand,
+    model: parsed.model,
+    gtin: parsed.gtin,
+    expectedVariantId: parsed.expectedVariantId,
+    observedVariantId: parsed.observedVariantId,
+    condition: parsed.condition,
+  });
+  const shadowCart = evaluateShadowCart(parsed.cartProbe, {
+    itemCents: parsed.priceCents,
+    shippingCents: parsed.shippingCents,
+    available: parsed.available,
+  });
+  const priceIndex = buildPriceRadarIndex(
+    shadowCart.finalTotalCents ?? evaluation.currentTotalCents ?? parsed.priceCents,
+    [...comparableBySource.values()],
+  );
+  const sellerAssessment = scoreSeller(parsed.sellerSignals);
+  const origin = classifyOffer({
+    anomalyScore: evaluation.score,
+    discountPercent: evaluation.discountPercent,
+    priceAccessibleToAll: parsed.priceAccessibleToAll,
+    promotionType: parsed.promotionType,
+    condition: parsed.condition,
+    shippingKnown: shadowCart.shippingCents !== null,
+    variant,
+    sellerScore: sellerAssessment.score,
+    cartStatus: shadowCart.status,
+    historyPoints: evaluation.historyPoints,
+    merchantCount: priceIndex.merchantCount,
+  });
+  const learnedDuration = durationRows[0]?.averageMinutes;
+  const lifetime = predictOpportunityLifetime({
+    observedAt: parsed.observedAt,
+    sourceMedianMinutes: typeof learnedDuration === "number" && Number.isFinite(learnedDuration)
+      ? learnedDuration
+      : null,
+    anomalyScore: evaluation.score,
+    discountPercent: evaluation.discountPercent,
+    available: parsed.available,
+    cartConfirmed: shadowCart.verified,
+  });
   const feedback = feedbackRows[0] ?? { useful: 0, falsePositive: 0 };
   const adaptiveScoreAdjustment = Math.max(0, Math.min(15, (Number(feedback.falsePositive) - Number(feedback.useful)) * 2));
   const adaptiveMinimumScore = 65 + adaptiveScoreAdjustment;
-  const notificationEligible = evaluation.notificationEligible && evaluation.score >= adaptiveMinimumScore;
+  const autonomyEligible = origin.actionable
+    && origin.evidenceStrength >= 55
+    && variant.comparable
+    && sellerAssessment.score >= 55
+    && shadowCart.usable
+    && shadowCart.consistent;
+  const notificationEligible = evaluation.notificationEligible
+    && evaluation.score >= adaptiveMinimumScore
+    && autonomyEligible;
   const deliveryMode = alertDeliveryMode();
   const deliveryEligible = notificationEligible && deliveryMode === "live";
   const buyNow = evaluateBuyNow({
@@ -673,7 +814,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     verificationCount: parsed.verificationCount,
     sellerTrusted: parsed.sellerTrusted,
     available: parsed.available,
-    shippingKnown: parsed.shippingCents !== null,
+    shippingKnown: shadowCart.shippingCents !== null,
     accessibleToAll: parsed.priceAccessibleToAll,
     expiresAt: parsed.expiresAt,
   });
@@ -683,8 +824,19 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     : existingAlert?.status === "active" && (!evaluation.checks.materialDiscount || !parsed.available)
       ? "expired"
       : evaluation.score >= 40 ? "review" : "monitoring";
+  const pendingInspectionRows = await database.select({ id: inspectionRequests.id, url: inspectionRequests.url })
+    .from(inspectionRequests)
+    .where(and(
+      eq(inspectionRequests.source, envelope.source),
+      eq(inspectionRequests.market, parsed.market),
+      inArray(inspectionRequests.status, ["pending", "processing"]),
+    )).limit(50);
+  const currentUrlKey = productUrlKey(envelope.source, parsed.url);
+  const matchingInspectionIds = pendingInspectionRows
+    .filter((row) => productUrlKey(envelope.source, row.url) === currentUrlKey)
+    .map((row) => row.id);
   const evidenceJson = JSON.stringify({
-    version: 1,
+    version: 2,
     provider: envelope.source === "amazon" ? "keepa" : envelope.source,
     notificationRequested: parsed.notify,
     notificationEligible,
@@ -708,6 +860,15 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       postalPrefix: parsed.deliveryPostalPrefix,
       mode: parsed.deliveryMode,
       verified: parsed.locationVerified,
+    },
+    autonomy: {
+      eligible: autonomyEligible,
+      variant,
+      shadowCart,
+      priceIndex,
+      origin,
+      seller: sellerAssessment,
+      lifetime,
     },
     analysis: evaluation,
   });
@@ -822,8 +983,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     .values({
       alertId: parsed.id,
       priceCents: parsed.priceCents,
-      shippingCents: parsed.shippingCents,
-      totalCents: parsed.shippingCents === null ? null : evaluation.currentTotalCents,
+      shippingCents: shadowCart.shippingCents,
+      totalCents: shadowCart.finalTotalCents,
       available: parsed.available,
       observedAt: parsed.observedAt,
       rawHash,
@@ -845,6 +1006,48 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         })))
         .onConflictDoNothing({ target: [priceObservations.alertId, priceObservations.rawHash] });
 
+  const intelligenceUpsert = database.insert(alertIntelligence).values({
+    alertId: parsed.id,
+    variantFingerprint: variant.key,
+    variantJson: JSON.stringify(variant),
+    variantConfidence: variant.confidence,
+    shadowCartStatus: shadowCart.status,
+    shadowCartJson: JSON.stringify(shadowCart),
+    finalTotalCents: shadowCart.finalTotalCents,
+    priceIndexCents: priceIndex.medianCents,
+    priceIndexJson: JSON.stringify(priceIndex),
+    marketPosition: priceIndex.marketPosition,
+    anomalyKind: origin.kind,
+    anomalyJson: JSON.stringify(origin),
+    sellerScore: sellerAssessment.score,
+    sellerJson: JSON.stringify(sellerAssessment),
+    urgencyScore: lifetime.urgencyScore,
+    predictedLifetimeMinutes: lifetime.predictedLifetimeMinutes,
+    predictedExpiresAt: lifetime.predictedExpiresAt,
+    updatedAt: now,
+  }).onConflictDoUpdate({
+    target: alertIntelligence.alertId,
+    set: {
+      variantFingerprint: variant.key,
+      variantJson: JSON.stringify(variant),
+      variantConfidence: variant.confidence,
+      shadowCartStatus: shadowCart.status,
+      shadowCartJson: JSON.stringify(shadowCart),
+      finalTotalCents: shadowCart.finalTotalCents,
+      priceIndexCents: priceIndex.medianCents,
+      priceIndexJson: JSON.stringify(priceIndex),
+      marketPosition: priceIndex.marketPosition,
+      anomalyKind: origin.kind,
+      anomalyJson: JSON.stringify(origin),
+      sellerScore: sellerAssessment.score,
+      sellerJson: JSON.stringify(sellerAssessment),
+      urgencyScore: lifetime.urgencyScore,
+      predictedLifetimeMinutes: lifetime.predictedLifetimeMinutes,
+      predictedExpiresAt: lifetime.predictedExpiresAt,
+      updatedAt: now,
+    },
+  });
+
   const completeRechecks = database.update(recheckRequests).set({
     status: "completed",
     resultJson: JSON.stringify({
@@ -863,8 +1066,35 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     inArray(recheckRequests.status, ["pending", "processing"]),
   ));
 
-  if (historyInsert) await database.batch([eventInsert, alertUpsert, historyInsert, observationInsert, completeRechecks]);
-  else await database.batch([eventInsert, alertUpsert, observationInsert, completeRechecks]);
+  const inspectionResult = JSON.stringify({
+    alertId: parsed.id,
+    title: parsed.title,
+    status: alertStatus,
+    score: evaluation.score,
+    anomalyKind: origin.kind,
+    finalTotalCents: shadowCart.finalTotalCents,
+    verifiedAt: parsed.verifiedAt,
+  });
+  const completeInspections = database.update(inspectionRequests).set({
+    status: "completed",
+    resultJson: inspectionResult,
+    completedAt: now,
+    updatedAt: now,
+  }).where(matchingInspectionIds.length > 0
+    ? inArray(inspectionRequests.id, matchingInspectionIds)
+    : eq(inspectionRequests.url, parsed.url));
+  const updateFrontier = database.update(sentinelFrontier).set({
+    status: shadowCart.status === "blocked" ? "blocked" : "active",
+    lastSeenAt: now,
+    lastScannedAt: now,
+    nextScanAt: new Date(Date.parse(now) + (origin.actionable ? 15 : 180) * 60_000).toISOString(),
+    priority: sentinelPriority({ depth: 0, anomalyHits: origin.actionable ? 1 : 0, duplicates: 0, blocked: shadowCart.status === "blocked", ageMinutes: 0 }),
+    hits: sql`${sentinelFrontier.hits} + ${origin.actionable ? 1 : 0}`,
+    updatedAt: now,
+  }).where(eq(sentinelFrontier.url, parsed.url));
+
+  if (historyInsert) await database.batch([eventInsert, alertUpsert, intelligenceUpsert, historyInsert, observationInsert, completeRechecks, completeInspections, updateFrontier]);
+  else await database.batch([eventInsert, alertUpsert, intelligenceUpsert, observationInsert, completeRechecks, completeInspections, updateFrontier]);
 
   return json(
     {
@@ -880,6 +1110,12 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         notificationRequested: parsed.notify,
         notificationEligible: deliveryEligible,
         deliveryMode,
+        autonomyEligible,
+        anomalyKind: origin.kind,
+        sellerScore: sellerAssessment.score,
+        variantConfidence: variant.confidence,
+        shadowCartStatus: shadowCart.status,
+        predictedLifetimeMinutes: lifetime.predictedLifetimeMinutes,
         blockingReasons: evaluation.blockingReasons,
       },
     },

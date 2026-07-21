@@ -2,7 +2,7 @@ import { desc, eq, gte, sql } from "drizzle-orm";
 import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
-import { alertFeedback, alerts, collectionRuns, notificationDeliveries, sourceConfigurations } from "@/db/schema";
+import { alertFeedback, alertIntelligence, alerts, collectionRuns, inspectionRequests, notificationDeliveries, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   const database = getDb();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   try {
-    const [runRows, alertRows, feedbackRows, deliveryRows, sources, sourceRunRows, sourceAlertRows] = await Promise.all([
+    const [runRows, alertRows, feedbackRows, deliveryRows, sources, sourceRunRows, sourceAlertRows, autonomyRows, frontierRows, inspectionRows] = await Promise.all([
       database.select({
         runs: sql<number>`count(*)`,
         productsSeen: sql<number>`coalesce(sum(${collectionRuns.productsSeen}), 0)`,
@@ -52,6 +52,24 @@ export async function GET(request: Request) {
         market: alerts.market,
         exploitableAlerts: sql<number>`coalesce(sum(case when ${alerts.status} = 'active' then 1 else 0 end), 0)`,
       }).from(alerts).where(gte(alerts.updatedAt, since)).groupBy(alerts.source, alerts.market),
+      database.select({
+        analyzed: sql<number>`count(*)`,
+        cartsConfirmed: sql<number>`coalesce(sum(case when ${alertIntelligence.shadowCartStatus} = 'confirmed' then 1 else 0 end), 0)`,
+        trueAnomalies: sql<number>`coalesce(sum(case when ${alertIntelligence.anomalyKind} = 'true_anomaly' then 1 else 0 end), 0)`,
+        riskySellers: sql<number>`coalesce(sum(case when ${alertIntelligence.sellerScore} < 55 then 1 else 0 end), 0)`,
+        averageVariantConfidence: sql<number>`coalesce(avg(${alertIntelligence.variantConfidence}), 0)`,
+        averageUrgency: sql<number>`coalesce(avg(${alertIntelligence.urgencyScore}), 0)`,
+      }).from(alertIntelligence).where(gte(alertIntelligence.updatedAt, since)),
+      database.select({
+        total: sql<number>`count(*)`,
+        active: sql<number>`coalesce(sum(case when ${sentinelFrontier.status} in ('queued', 'processing', 'active') then 1 else 0 end), 0)`,
+        blocked: sql<number>`coalesce(sum(case when ${sentinelFrontier.status} = 'blocked' then 1 else 0 end), 0)`,
+        duplicates: sql<number>`coalesce(sum(${sentinelFrontier.duplicateCount}), 0)`,
+      }).from(sentinelFrontier),
+      database.select({
+        requested: sql<number>`count(*)`,
+        completed: sql<number>`coalesce(sum(case when ${inspectionRequests.status} = 'completed' then 1 else 0 end), 0)`,
+      }).from(inspectionRequests).where(gte(inspectionRequests.requestedAt, since)),
     ]);
     const runs = runRows[0] ?? { runs: 0, productsSeen: 0, antiBotBlocks: 0, keepaRequests: 0, apifyCostMicros: 0 };
     const alertMetrics = alertRows[0] ?? { accepted: 0, exploitable: 0, review: 0, conditional: 0 };
@@ -101,6 +119,20 @@ export async function GET(request: Request) {
           falsePositive: Number(feedback.falsePositive),
           expired: Number(feedback.expired),
           averageLifetimeMinutes: Math.max(0, Math.round(Number(feedback.averageLifetimeMinutes ?? 0))),
+        },
+        autonomy: {
+          analyzed: Number(autonomyRows[0]?.analyzed ?? 0),
+          cartsConfirmed: Number(autonomyRows[0]?.cartsConfirmed ?? 0),
+          trueAnomalies: Number(autonomyRows[0]?.trueAnomalies ?? 0),
+          riskySellers: Number(autonomyRows[0]?.riskySellers ?? 0),
+          averageVariantConfidence: Math.round(Number(autonomyRows[0]?.averageVariantConfidence ?? 0)),
+          averageUrgency: Math.round(Number(autonomyRows[0]?.averageUrgency ?? 0)),
+          frontierTotal: Number(frontierRows[0]?.total ?? 0),
+          frontierActive: Number(frontierRows[0]?.active ?? 0),
+          frontierBlocked: Number(frontierRows[0]?.blocked ?? 0),
+          duplicatesAvoided: Number(frontierRows[0]?.duplicates ?? 0),
+          inspectionsRequested: Number(inspectionRows[0]?.requested ?? 0),
+          inspectionsCompleted: Number(inspectionRows[0]?.completed ?? 0),
         },
       },
       sources,

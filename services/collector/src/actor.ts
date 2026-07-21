@@ -11,7 +11,7 @@ import {
 } from "./source-status.js";
 import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
 import { sendDailyDigests } from "./push.js";
-import { privateApiHeaders } from "./sink.js";
+import { postFrontierItems, privateApiHeaders } from "./sink.js";
 import type { Market, RetailSource } from "./types.js";
 
 interface ActorInput {
@@ -30,6 +30,7 @@ interface ActorInput {
   useRemoteCoverage?: boolean;
   useRemoteDiscovery?: boolean;
   scanAmazon?: boolean;
+  shadowCart?: boolean;
 }
 
 type RemoteDiscoverySegment = {
@@ -45,10 +46,25 @@ type RemoteDiscoverySegment = {
 };
 
 type RemoteRecheck = { id: string; alertId: string; source: RetailSource; market: Market; url: string };
-type RemotePlan = { urls: string[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[] };
+type RemotePriority = { id: string; source: RetailSource; market: Market; url: string; kind: "inspection" | "frontier"; shadowCart: boolean };
+type RemotePlan = { urls: string[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[] };
+
+function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePriority[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate): RemotePriority[] => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const item = candidate as Record<string, unknown>;
+    const source = String(item.source ?? "") as RetailSource;
+    const market = String(item.market ?? "") as Market;
+    const url = String(item.url ?? "");
+    if (!["amazon", "boulanger", "darty", "cdiscount"].includes(source) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
+    try { connectorForUrl(url); } catch { return []; }
+    return [{ id: String(item.id ?? ""), source, market, url, kind, shadowCart: item.shadowCart !== false }];
+  });
+}
 
 async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
-  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { urls: [], discoverySegments: [], rechecks: [] };
+  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { urls: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
@@ -62,6 +78,8 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
     items?: Array<{ discoveryUrl?: unknown }>;
     discoverySegments?: unknown;
     rechecks?: unknown;
+    inspections?: unknown;
+    frontier?: unknown;
   };
   const segments = Array.isArray(payload.discoverySegments)
     ? payload.discoverySegments.flatMap((candidate): RemoteDiscoverySegment[] => {
@@ -99,6 +117,10 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
       try { if (new URL(url).protocol !== "https:") return []; } catch { return []; }
       return [{ id: String(value.id ?? ""), alertId: String(value.alertId ?? ""), source, market, url }];
     }) : [],
+    priorityTasks: [
+      ...priorityItems(payload.inspections, "inspection"),
+      ...priorityItems(payload.frontier, "frontier"),
+    ],
   };
 }
 
@@ -162,15 +184,27 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const configuredUrls = inputUrls(input.urls);
     const usesRemotePlan = (configuredUrls.length === 0 && input.useRemoteCoverage !== false)
       || input.useRemoteDiscovery === true;
-    const plan = usesRemotePlan ? await remotePlan(config) : { urls: [], discoverySegments: [], rechecks: [] };
+    const plan = usesRemotePlan ? await remotePlan(config) : { urls: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
     const urls = [...new Set(configuredUrls.length > 0 || input.useRemoteCoverage === false
       ? configuredUrls
       : plan.urls)];
     const seenProductUrls = new Set<string>();
+    for (const task of plan.priorityTasks) {
+      if (seenProductUrls.has(task.url)) continue;
+      const observation = await verifySourceUrl(task.url, {
+        ...scanOptions,
+        shadowCart: task.shadowCart,
+        verifyDelayMs: config.verifyDelayMs,
+      });
+      if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
+      seenProductUrls.add(task.url);
+      await Actor.pushData({ dataKind: `autonomous-${task.kind}`, requestId: task.id, ...observation });
+    }
     for (const recheck of plan.rechecks) {
       const observation = await verifySourceUrl(recheck.url, {
         ...scanOptions,
         verifyDelayMs: config.verifyDelayMs,
+        shadowCart: input.shadowCart ?? true,
       });
       if (!fixture) await deliverObservation(observation, config, { allowPush: false });
       seenProductUrls.add(recheck.url);
@@ -188,11 +222,27 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           if (mode === "discover") {
             const result = await scanSourceUrl(url, scanOptions);
             await Actor.pushData({ dataKind: "discovery", fixture, ...result });
+            if (!fixture && config.priceRadarBaseUrl && config.ingestSecret) {
+              await postFrontierItems(result.discoveredUrls.map((productUrl) => ({ url: productUrl, discoveredFrom: result.loadedUrl, depth: 1 })), {
+                baseUrl: config.priceRadarBaseUrl,
+                ingestSecret: config.ingestSecret,
+                ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+                timeoutMs: config.httpTimeoutMs,
+              });
+            }
             const unseen = result.discoveredUrls.filter((productUrl) => !seenProductUrls.has(productUrl));
             unseen.forEach((productUrl) => seenProductUrls.add(productUrl));
             return { productsSeen: unseen.length, duplicatesSkipped: result.discoveredUrls.length - unseen.length };
           }
           const initialScan = mode === "full" ? await scanSourceUrl(url, scanOptions) : null;
+          if (initialScan && !fixture && config.priceRadarBaseUrl && config.ingestSecret && initialScan.discoveredUrls.length > 0) {
+            await postFrontierItems(initialScan.discoveredUrls.map((productUrl) => ({ url: productUrl, discoveredFrom: initialScan.loadedUrl, depth: 1 })), {
+              baseUrl: config.priceRadarBaseUrl,
+              ingestSecret: config.ingestSecret,
+              ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+              timeoutMs: config.httpTimeoutMs,
+            });
+          }
           const targetUrls = initialScan
             ? (initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, limit))
             : [url];
@@ -206,6 +256,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             const observation = await verifySourceUrl(targetUrl, {
               ...scanOptions,
               verifyDelayMs: config.verifyDelayMs,
+              shadowCart: input.shadowCart ?? mode === "verify",
             });
             if (!fixture) {
               await deliverObservation(observation, config, { allowPush: input.notify === true });

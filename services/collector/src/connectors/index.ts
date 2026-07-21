@@ -219,6 +219,46 @@ function trustedSeller(source: RetailSource, value: string | null): boolean {
   return /(?:vendu(?: et expedie)? par|sold(?: and dispatched)? by|verkauf(?: und versand)? durch|venduto(?: e spedito)? da|vendido(?: y enviado)? por)\s*amazon\b/iu.test(value);
 }
 
+function sellerSignalsFromPage($: cheerio.CheerioAPI, seller: string | null, trusted: boolean): NonNullable<OfferSnapshot["sellerSignals"]> {
+  const signalText = selectorValue($, [
+    "#seller-feedback-summary",
+    "[data-testid*='seller-rating']",
+    "[class*='sellerRating']",
+    "[class*='seller-rating']",
+    "[class*='merchant-rating']",
+  ]) ?? "";
+  const normalized = signalText.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+  const percentMatch = /(\d{1,3})\s*%/u.exec(normalized);
+  const starsMatch = /(\d(?:[.,]\d)?)\s*(?:\/\s*5|sur\s*5|out of 5)/u.exec(normalized);
+  const rawRating = percentMatch ? Number(percentMatch[1]!) : starsMatch ? Number(starsMatch[1]!.replace(",", ".")) * 20 : null;
+  const countMatch = /([\d\s.,]{1,16})\s*(?:avis|evaluations?|ratings?|reviews?)/u.exec(normalized);
+  const reviewCount = countMatch ? Number.parseInt(countMatch[1]!.replace(/\D/gu, ""), 10) : null;
+  const pageText = cleanText($("body").text(), 20_000)?.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase() ?? "";
+  const platformFulfilled = /expedie par amazon|fulfilled by amazon|versand durch amazon|expedido por amazon|expedie par cdiscount/u.test(pageText);
+  return {
+    ratingPercent: rawRating === null ? null : Math.max(0, Math.min(100, Math.round(rawRating))),
+    reviewCount: Number.isFinite(reviewCount) ? reviewCount : null,
+    fulfillment: trusted ? "direct" : platformFulfilled ? "platform" : seller ? "merchant" : "unknown",
+    country: null,
+    warranty: /garantie\s*(?:legale|2\s*ans)|warranty|garanzia|garantia|gewahrleistung/u.test(pageText) ? true : null,
+    returns: /retours?\s*(?:gratuit|sous|dans)|free returns?|ruckgabe|reso gratuito|devolucion/u.test(pageText) ? true : null,
+  };
+}
+
+function cartProbeFromPage($: cheerio.CheerioAPI, offer: Pick<OfferSnapshot, "price" | "shipping" | "total" | "availability" | "promotion">): NonNullable<OfferSnapshot["cartProbe"]> {
+  const addToCartAvailable = $("#add-to-cart-button, [data-testid*='add-to-cart'], button[name='addToCart'], button[class*='cart']").length > 0;
+  return {
+    status: offer.availability === "out_of_stock" ? "unavailable" : "product_page",
+    itemCents: offer.price.amountMinor,
+    shippingCents: offer.shipping?.amountMinor ?? null,
+    totalCents: offer.total?.amountMinor ?? null,
+    stockConfirmed: offer.availability === "in_stock",
+    addToCartAvailable,
+    couponApplied: offer.promotion?.type === "coupon" ? false : true,
+    checkedAt: null,
+  };
+}
+
 function fallbackOffer(
   html: string,
   pageUrl: string,
@@ -241,7 +281,8 @@ function fallbackOffer(
   const offerAvailability = availability(selectorValue($, connector.selectors.availability));
   const offerCondition = condition(selectorValue($, connector.selectors.condition));
 
-  return {
+  const sellerTrusted = trustedSeller(connector.source, seller);
+  const offer: OfferSnapshot = {
     product: {
       productKey: productKey({ source: connector.source, market: connector.market, externalId }),
       source: connector.source,
@@ -262,7 +303,7 @@ function fallbackOffer(
       ? { amountMinor: referenceMinor, currency: connector.currency }
       : null,
     seller,
-    sellerTrusted: trustedSeller(connector.source, seller),
+    sellerTrusted,
     condition: offerCondition,
     availability: offerAvailability,
     observedAt: options.observedAt ?? new Date().toISOString(),
@@ -270,6 +311,9 @@ function fallbackOffer(
     fixture: options.fixture ?? false,
     promotion: promotionFromPage($),
   };
+  offer.cartProbe = cartProbeFromPage($, offer);
+  offer.sellerSignals = sellerSignalsFromPage($, seller, sellerTrusted);
+  return offer;
 }
 
 export function extractRetailOffers(
@@ -290,11 +334,16 @@ export function extractRetailOffers(
     const $ = cheerio.load(html);
     const promotion = promotionFromPage($);
     const category = selectorValue($, ["meta[property='product:category']", "[itemprop='category']"]);
-    return structured.map((offer) => ({
-      ...offer,
-      product: { ...offer.product, category },
-      promotion,
-    }));
+    return structured.map((offer) => {
+      const enriched: OfferSnapshot = {
+        ...offer,
+        product: { ...offer.product, category },
+        promotion,
+      };
+      enriched.cartProbe = cartProbeFromPage($, enriched);
+      enriched.sellerSignals = sellerSignalsFromPage($, enriched.seller, enriched.sellerTrusted);
+      return enriched;
+    });
   }
   const fallback = fallbackOffer(html, pageUrl, connector, options);
   return fallback ? [fallback] : [];

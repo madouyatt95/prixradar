@@ -259,6 +259,100 @@ export const priceObservations = sqliteTable(
   ]
 );
 
+export const alertIntelligence = sqliteTable(
+  "alert_intelligence",
+  {
+    alertId: text("alert_id").primaryKey().references(() => alerts.id, { onDelete: "cascade" }),
+    variantFingerprint: text("variant_fingerprint").notNull(),
+    variantJson: text("variant_json").notNull().default("{}"),
+    variantConfidence: integer("variant_confidence").notNull().default(0),
+    shadowCartStatus: text("shadow_cart_status").notNull().default("product_page"),
+    shadowCartJson: text("shadow_cart_json").notNull().default("{}"),
+    finalTotalCents: integer("final_total_cents"),
+    priceIndexCents: integer("price_index_cents").notNull(),
+    priceIndexJson: text("price_index_json").notNull().default("{}"),
+    marketPosition: text("market_position").notNull().default("market"),
+    anomalyKind: text("anomaly_kind").notNull().default("insufficient_evidence"),
+    anomalyJson: text("anomaly_json").notNull().default("{}"),
+    sellerScore: integer("seller_score").notNull().default(0),
+    sellerJson: text("seller_json").notNull().default("{}"),
+    urgencyScore: integer("urgency_score").notNull().default(0),
+    predictedLifetimeMinutes: integer("predicted_lifetime_minutes").notNull().default(0),
+    predictedExpiresAt: text("predicted_expires_at"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("alert_intelligence_kind_score_idx").on(table.anomalyKind, table.urgencyScore),
+    index("alert_intelligence_cart_updated_idx").on(table.shadowCartStatus, table.updatedAt),
+    index("alert_intelligence_variant_idx").on(table.variantFingerprint),
+    check("alert_intelligence_variant_confidence_range", sql`${table.variantConfidence} BETWEEN 0 AND 100`),
+    check("alert_intelligence_seller_score_range", sql`${table.sellerScore} BETWEEN 0 AND 100`),
+    check("alert_intelligence_urgency_score_range", sql`${table.urgencyScore} BETWEEN 0 AND 100`),
+    check("alert_intelligence_lifetime_nonnegative", sql`${table.predictedLifetimeMinutes} >= 0`),
+    check("alert_intelligence_total_nonnegative", sql`${table.finalTotalCents} >= 0`),
+    check("alert_intelligence_index_positive", sql`${table.priceIndexCents} > 0`),
+    check("alert_intelligence_cart_allowed", sql`${table.shadowCartStatus} IN ('confirmed', 'product_page', 'blocked', 'unavailable')`),
+    check("alert_intelligence_position_allowed", sql`${table.marketPosition} IN ('best', 'below_market', 'market', 'above_market')`),
+    check("alert_intelligence_kind_allowed", sql`${table.anomalyKind} IN ('true_anomaly', 'promotion', 'wrong_variant', 'seller_risk', 'conditional_price', 'shipping_unknown', 'refurbished', 'insufficient_evidence')`),
+  ]
+);
+
+export const inspectionRequests = sqliteTable(
+  "inspection_requests",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    url: text("url").notNull(),
+    source: text("source").notNull(),
+    market: text("market").notNull(),
+    status: text("status").notNull().default("pending"),
+    resultJson: text("result_json").notNull().default("{}"),
+    requestedAt: text("requested_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    claimedAt: text("claimed_at"),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("inspection_requests_status_requested_idx").on(table.status, table.requestedAt),
+    index("inspection_requests_owner_updated_idx").on(table.ownerId, table.updatedAt),
+    index("inspection_requests_url_status_idx").on(table.url, table.status),
+    check("inspection_requests_status_allowed", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`),
+    check("inspection_requests_source_allowed", sql`${table.source} IN ('amazon', 'boulanger', 'cdiscount', 'darty')`),
+  ]
+);
+
+export const sentinelFrontier = sqliteTable(
+  "sentinel_frontier",
+  {
+    id: text("id").primaryKey(),
+    url: text("url").notNull(),
+    source: text("source").notNull(),
+    market: text("market").notNull(),
+    discoveredFrom: text("discovered_from"),
+    discoveryType: text("discovery_type").notNull().default("link"),
+    depth: integer("depth").notNull().default(0),
+    status: text("status").notNull().default("queued"),
+    priority: integer("priority").notNull().default(50),
+    lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    lastScannedAt: text("last_scanned_at"),
+    nextScanAt: text("next_scan_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    hits: integer("hits").notNull().default(0),
+    duplicateCount: integer("duplicate_count").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("sentinel_frontier_url_unique").on(table.url),
+    index("sentinel_frontier_due_priority_idx").on(table.status, table.nextScanAt, table.priority),
+    index("sentinel_frontier_source_market_idx").on(table.source, table.market),
+    check("sentinel_frontier_status_allowed", sql`${table.status} IN ('queued', 'processing', 'active', 'blocked')`),
+    check("sentinel_frontier_priority_range", sql`${table.priority} BETWEEN 0 AND 100`),
+    check("sentinel_frontier_depth_nonnegative", sql`${table.depth} >= 0`),
+    check("sentinel_frontier_hits_nonnegative", sql`${table.hits} >= 0`),
+    check("sentinel_frontier_duplicates_nonnegative", sql`${table.duplicateCount} >= 0`),
+  ]
+);
+
 export const sourceStatuses = sqliteTable(
   "source_statuses",
   {

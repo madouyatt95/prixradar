@@ -2,7 +2,7 @@ import { runtimeEnv as env } from "@/lib/runtime-env";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { alerts, collectionRuns, discoverySegments, recheckRequests, sourceConfigurations } from "@/db/schema";
+import { alerts, collectionRuns, discoverySegments, inspectionRequests, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 
 export const dynamic = "force-dynamic";
@@ -61,8 +61,12 @@ export async function GET(request: Request) {
     const staleClaim = new Date(Date.now() - 15 * 60_000).toISOString();
     await database.update(recheckRequests).set({ status: "pending", claimedAt: null, updatedAt: new Date().toISOString() })
       .where(and(eq(recheckRequests.status, "processing"), sql`${recheckRequests.claimedAt} < ${staleClaim}`));
+    await database.update(inspectionRequests).set({ status: "pending", claimedAt: null, updatedAt: new Date().toISOString() })
+      .where(and(eq(inspectionRequests.status, "processing"), sql`${inspectionRequests.claimedAt} < ${staleClaim}`));
+    await database.update(sentinelFrontier).set({ status: "queued", updatedAt: new Date().toISOString() })
+      .where(and(eq(sentinelFrontier.status, "processing"), sql`${sentinelFrontier.updatedAt} < ${staleClaim}`));
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const [rows, segments, pendingRechecks, runMetrics, alertMetrics] = await Promise.all([
+    const [rows, segments, pendingRechecks, pendingInspections, dueFrontier, runMetrics, alertMetrics] = await Promise.all([
       database
         .select()
         .from(sourceConfigurations)
@@ -76,6 +80,15 @@ export async function GET(request: Request) {
       database.select().from(recheckRequests)
         .where(eq(recheckRequests.status, "pending"))
         .orderBy(asc(recheckRequests.requestedAt)).limit(25),
+      database.select().from(inspectionRequests)
+        .where(eq(inspectionRequests.status, "pending"))
+        .orderBy(asc(inspectionRequests.requestedAt)).limit(25),
+      database.select().from(sentinelFrontier)
+        .where(and(
+          inArray(sentinelFrontier.status, ["queued", "active"]),
+          sql`${sentinelFrontier.nextScanAt} <= ${new Date().toISOString()}`,
+        ))
+        .orderBy(desc(sentinelFrontier.priority), asc(sentinelFrontier.nextScanAt)).limit(50),
       database.select({
         source: collectionRuns.source,
         market: collectionRuns.market,
@@ -172,6 +185,35 @@ export async function GET(request: Request) {
           eq(recheckRequests.status, "pending"),
         ));
     }
+    const inspectionItems = pendingInspections.map((row) => ({
+      id: row.id,
+      source: row.source,
+      market: row.market,
+      url: row.url,
+      shadowCart: true,
+    }));
+    if (inspectionItems.length > 0) {
+      const claimedAt = new Date(now).toISOString();
+      await database.update(inspectionRequests).set({ status: "processing", claimedAt, updatedAt: claimedAt })
+        .where(and(
+          inArray(inspectionRequests.id, inspectionItems.map((item) => item.id)),
+          eq(inspectionRequests.status, "pending"),
+        ));
+    }
+    const frontierItems = dueFrontier.map((row) => ({
+      id: row.id,
+      source: row.source,
+      market: row.market,
+      url: row.url,
+      priority: row.priority,
+      depth: row.depth,
+      shadowCart: row.priority >= 70,
+    }));
+    if (frontierItems.length > 0) {
+      const claimedAt = new Date(now).toISOString();
+      await database.update(sentinelFrontier).set({ status: "processing", updatedAt: claimedAt })
+        .where(inArray(sentinelFrontier.id, frontierItems.map((item) => item.id)));
+    }
     return json({
       ok: true,
       generatedAt: new Date(now).toISOString(),
@@ -182,6 +224,10 @@ export async function GET(request: Request) {
       budgetRecommendations: [...retailRecommendations.values()],
       recheckCount: recheckItems.length,
       rechecks: recheckItems,
+      inspectionCount: inspectionItems.length,
+      inspections: inspectionItems,
+      frontierCount: frontierItems.length,
+      frontier: frontierItems,
     });
   } catch {
     return json({ ok: false, code: "SOURCE_PLAN_UNAVAILABLE" }, 503);

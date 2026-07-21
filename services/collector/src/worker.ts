@@ -69,6 +69,7 @@ export async function liveVerifyKeepaObservation(
       timeoutMs: config.httpTimeoutMs,
       maxDiscoveredUrls: 1,
       proxyUrls: config.proxyUrls,
+      shadowCart: true,
       verifyDelayMs: config.verifyDelayMs,
       baselineMinor: observation.offer.referencePrice?.amountMinor ?? null,
     });
@@ -114,6 +115,7 @@ export async function processCollectorJob(
   if (job.kind === "verify-source") {
     const observation = await verifySourceUrl(job.url, {
       ...scanOptions,
+      shadowCart: !job.fixture,
       verifyDelayMs: config.verifyDelayMs,
     });
     await deliverObservation(observation, config);

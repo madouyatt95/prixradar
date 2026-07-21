@@ -63,6 +63,12 @@
       "description": "HTTP/JSON-LD reste toujours prioritaire.",
       "default": false
     },
+    "shadowCart": {
+      "title": "Vérifier le panier final",
+      "type": "boolean",
+      "description": "Ajoute l'article dans une session isolée pour confirmer stock, frais et total, sans commander ni payer.",
+      "default": true
+    },
     "limit": {
       "title": "Limite",
       "type": "integer",

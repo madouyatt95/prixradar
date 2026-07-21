@@ -6,6 +6,7 @@ import {
   log,
 } from "crawlee";
 import { chromium } from "playwright";
+import type { Page } from "playwright";
 
 import {
   connectorForUrl,
@@ -14,6 +15,7 @@ import {
 } from "./connectors/index.js";
 import { verifyWithSecondRead } from "./verify.js";
 import type { OfferSnapshot, VerifiedObservation } from "./types.js";
+import { parseMoneyMinor } from "./normalize.js";
 
 export interface ScanOptions {
   browserFallback?: boolean;
@@ -21,6 +23,43 @@ export interface ScanOptions {
   timeoutMs?: number;
   maxDiscoveredUrls?: number;
   proxyUrls?: readonly string[];
+  shadowCart?: boolean;
+}
+
+async function probeShadowCart(page: Page, offer: OfferSnapshot): Promise<NonNullable<OfferSnapshot["cartProbe"]>> {
+  const base = offer.cartProbe ?? {
+    status: offer.availability === "out_of_stock" ? "unavailable" as const : "product_page" as const,
+    itemCents: offer.price.amountMinor,
+    shippingCents: offer.shipping?.amountMinor ?? null,
+    totalCents: offer.total?.amountMinor ?? null,
+    stockConfirmed: offer.availability === "in_stock",
+    addToCartAvailable: false,
+    couponApplied: offer.promotion?.type !== "coupon",
+    checkedAt: null,
+  };
+  if (offer.availability === "out_of_stock") return { ...base, status: "unavailable", checkedAt: new Date().toISOString() };
+  const addButton = page.locator("#add-to-cart-button, [data-testid*='add-to-cart'], button[name='addToCart'], button[class*='add'][class*='cart']").first();
+  try {
+    if (!(await addButton.isVisible({ timeout: 2_000 }))) return { ...base, checkedAt: new Date().toISOString() };
+    await addButton.click({ timeout: 4_000 });
+    await page.waitForTimeout(900);
+    const visibleText = (await page.locator("body").innerText({ timeout: 3_000 })).slice(0, 50_000);
+    const normalized = visibleText.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+    const cartConfirmed = /ajoute au panier|dans votre panier|added to (?:your )?(?:basket|cart)|zum warenkorb hinzugefugt|aggiunto al carrello|anadido a la cesta/u.test(normalized)
+      || /\/(?:cart|basket|panier|warenkorb|carrello|cesta)(?:[/?]|$)/u.test(page.url());
+    const totalMatch = /(?:total|sous-total|subtotal|gesamt|totale|totales)[^\d]{0,24}([\d\s.,]+\s*(?:€|eur|£|gbp))/iu.exec(visibleText);
+    const totalCents = totalMatch ? parseMoneyMinor(totalMatch[1]) : base.totalCents;
+    return {
+      ...base,
+      status: cartConfirmed ? "confirmed" : "product_page",
+      totalCents,
+      stockConfirmed: cartConfirmed || base.stockConfirmed,
+      addToCartAvailable: true,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch {
+    return { ...base, status: "blocked", addToCartAvailable: true, checkedAt: new Date().toISOString() };
+  }
 }
 
 export interface ScanResult {
@@ -119,7 +158,11 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
     requestHandler: async ({ page, request, response }) => {
       await page.waitForLoadState("domcontentloaded");
       const loadedUrl = request.loadedUrl ?? page.url() ?? request.url;
-      result = analyzeHtml(await page.content(), url, loadedUrl, "browser", response?.status() ?? null, options);
+      const analyzed = analyzeHtml(await page.content(), url, loadedUrl, "browser", response?.status() ?? null, options);
+      if (options.shadowCart && analyzed.offers[0]) {
+        analyzed.offers[0] = { ...analyzed.offers[0], cartProbe: await probeShadowCart(page, analyzed.offers[0]) };
+      }
+      result = analyzed;
     },
     failedRequestHandler: async ({ error }) => {
       failureMessage = error instanceof Error ? error.message : "Échec navigateur du collecteur.";
@@ -132,6 +175,7 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
 
 export async function scanSourceUrl(url: string, options: ScanOptions = {}): Promise<ScanResult> {
   connectorForUrl(url);
+  if (options.shadowCart) return scanBrowser(url, { ...options, browserFallback: true });
   try {
     const result = await scanHttp(url, options);
     if (result.offers.length > 0 || result.discoveredUrls.length > 0 || !options.browserFallback) return result;

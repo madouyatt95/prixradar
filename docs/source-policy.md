@@ -12,16 +12,13 @@ source depuis le centre de pilotage.
 - Darty : `darty.com`
 - Cdiscount : `cdiscount.com`
 
-## Sources de contexte
+## Indice interne et panier fantôme
 
-- **idealo** : lien de recherche actif. Une ingestion de prix ne pourra être
-  activée qu'avec un accès explicite au programme partenaire/API idealo.
-- **Dealabs** : lien de recherche et contexte communautaire. Aucun endpoint
-  interne, contournement anti-bot ou scraper tiers n'est utilisé.
-
-Ces sources n'ont jamais, seules, le poids nécessaire pour rendre une alerte
-éligible. PrixRadar revérifie toujours le prix, le vendeur, la variante, le stock
-et la livraison sur la page marchande autorisée.
+PrixRadar ne dépend d’aucun comparateur externe. Son indice de marché rapproche
+uniquement des offres collectées par ses connecteurs, avec une empreinte de
+variante suffisamment fiable. Le panier fantôme peut ajouter un article dans une
+session technique isolée pour relire stock, frais et total ; il ne saisit aucune
+donnée personnelle et ne clique jamais sur commander, payer ou confirmer.
 
 Le scan EAN charge uniquement si nécessaire la version UMD épinglée
 `@zxing/browser@0.2.1` depuis un CDN, afin de compenser l'absence de
@@ -32,6 +29,9 @@ Chaque page ajoutée doit être HTTPS, sans identifiants dans l’URL, et corres
 à l’enseigne déclarée. Avant activation, l’administrateur vérifie les conditions
 d’utilisation, `robots.txt`, la fréquence raisonnable et l’absence de données
 personnelles. Les URL sont dédupliquées et la cadence est adaptée à la volatilité.
+Les liens découverts alimentent une frontière persistante : priorité plus forte
+après une anomalie, plus faible après des doublons ou un blocage, et coupe-circuit
+immédiat si une protection anti-bot se déclenche.
 
 ## Données et preuve
 

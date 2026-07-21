@@ -51,6 +51,11 @@ OAI-Sites-Authorization: Bearer <token>
 `INGEST_SECRET` et `PUSH_DELIVERY_SECRET` doivent être différents. Les réponses
 d'erreur, journaux structurés et sorties CLI n'incluent jamais les clés.
 
+`GET /api/source-plan` livre aussi les inspections issues du partage PWA et les
+URL dues de la sentinelle. `POST /api/frontier` renvoie les fiches découvertes.
+Une inspection peut activer Playwright et un panier fantôme isolé : ajout au
+panier seulement, sans identification, adresse, commande ni paiement.
+
 ## Files et débit
 
 BullMQ déduplique les scans, place les vérifications en priorité haute, applique

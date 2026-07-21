@@ -2,9 +2,8 @@ import { and, desc, eq, gt, gte, inArray, isNotNull, lte, or, sql, type SQL } fr
 import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
-import { alertFeedback, alerts } from "@/db/schema";
+import { alertFeedback, alertIntelligence, alerts } from "@/db/schema";
 import { ANOMALY_LIMITS, type AnomalyEvaluation } from "@/lib/anomaly";
-import { externalResearchLinks } from "@/lib/external-research";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +82,31 @@ function parseBuyNow(value: string, fallbackScore: number) {
   }
 }
 
-function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySummary) {
+function parseJsonObject(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+function serializeIntelligence(row?: typeof alertIntelligence.$inferSelect) {
+  if (!row) return null;
+  return {
+    variant: { ...parseJsonObject(row.variantJson), fingerprint: row.variantFingerprint, confidence: row.variantConfidence },
+    shadowCart: { ...parseJsonObject(row.shadowCartJson), status: row.shadowCartStatus, finalTotalCents: row.finalTotalCents },
+    priceIndex: { ...parseJsonObject(row.priceIndexJson), medianCents: row.priceIndexCents, marketPosition: row.marketPosition },
+    anomaly: { ...parseJsonObject(row.anomalyJson), kind: row.anomalyKind },
+    seller: { ...parseJsonObject(row.sellerJson), score: row.sellerScore },
+    lifetime: {
+      urgencyScore: row.urgencyScore,
+      predictedLifetimeMinutes: row.predictedLifetimeMinutes,
+      predictedExpiresAt: row.predictedExpiresAt,
+    },
+    updatedAt: row.updatedAt,
+  };
+}
+
+function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySummary, intelligence?: typeof alertIntelligence.$inferSelect) {
   const evidence = parseEvidence(row.evidenceJson);
   const liveEligible =
     row.sourceMode === "live" &&
@@ -97,7 +120,6 @@ function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySu
     url.searchParams.set("tag", tag);
     affiliateUrl = url.toString();
   }
-  const externalResearch = externalResearchLinks(row);
   const buyNow = parseBuyNow(row.buyNowJson, row.buyNowScore);
 
   return {
@@ -145,7 +167,7 @@ function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySu
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
     community: community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 },
-    externalResearch,
+    intelligence: serializeIntelligence(intelligence),
     evidence: evidence === null ? null : {
       historyPoints: evidence.historyPoints,
       madCents: evidence.madCents,
@@ -258,18 +280,22 @@ export async function GET(request: Request) {
       database.select({ count: sql<number>`count(*)` }).from(alerts).where(where),
     ]);
     const total = Number(countRows[0]?.count ?? 0);
-    const feedbackRows = rows.length === 0 ? [] : await database.select({
-      alertId: alertFeedback.alertId,
-      total: sql<number>`count(*)`,
-      positive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} in ('useful', 'purchased', 'price_confirmed') then 1 else 0 end), 0)`,
-      negative: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} in ('false_positive', 'cancelled', 'wrong_variant', 'coupon_failed') then 1 else 0 end), 0)`,
-      expired: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'expired' then 1 else 0 end), 0)`,
-      purchased: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'purchased' then 1 else 0 end), 0)`,
-    }).from(alertFeedback).where(inArray(alertFeedback.alertId, rows.map((row) => row.id))).groupBy(alertFeedback.alertId);
+    const [feedbackRows, intelligenceRows] = rows.length === 0 ? [[], []] : await Promise.all([
+      database.select({
+        alertId: alertFeedback.alertId,
+        total: sql<number>`count(*)`,
+        positive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} in ('useful', 'purchased', 'price_confirmed') then 1 else 0 end), 0)`,
+        negative: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} in ('false_positive', 'cancelled', 'wrong_variant', 'coupon_failed') then 1 else 0 end), 0)`,
+        expired: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'expired' then 1 else 0 end), 0)`,
+        purchased: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'purchased' then 1 else 0 end), 0)`,
+      }).from(alertFeedback).where(inArray(alertFeedback.alertId, rows.map((row) => row.id))).groupBy(alertFeedback.alertId),
+      database.select().from(alertIntelligence).where(inArray(alertIntelligence.alertId, rows.map((row) => row.id))),
+    ]);
     const community = new Map(feedbackRows.map((row) => [row.alertId, {
       total: Number(row.total), positive: Number(row.positive), negative: Number(row.negative),
       expired: Number(row.expired), purchased: Number(row.purchased),
     }]));
+    const intelligence = new Map(intelligenceRows.map((row) => [row.alertId, row]));
 
     return json(
       {
@@ -277,7 +303,7 @@ export async function GET(request: Request) {
         mode: includeDemo ? "live_and_demo" : "live",
         generatedAt: now,
         count: rows.length,
-        items: rows.map((row) => serializeAlert(row, community.get(row.id))),
+        items: rows.map((row) => serializeAlert(row, community.get(row.id), intelligence.get(row.id))),
         pagination: {
           limit,
           offset,

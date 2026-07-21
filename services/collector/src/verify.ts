@@ -9,6 +9,14 @@ export interface VerifyOptions {
 
 const defaultSleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
+function variantSignature(offer: OfferSnapshot) {
+  const normalized = (value: string | null) => (value ?? "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/gu, "");
+  const title = normalized(offer.product.title);
+  const storage = /(?:^|\D)(\d+(?:tb|to|gb|go))(?:\D|$)/u.exec(title)?.[1] ?? "";
+  const color = /(noir|black|blanc|white|bleu|blue|rouge|red|vert|green|rose|pink|gris|gray|silver|argent|gold)/u.exec(title)?.[1] ?? "";
+  return [normalized(offer.product.gtin), normalized(offer.product.brand), normalized(offer.product.model), storage, color, offer.condition].join(":");
+}
+
 export async function verifyWithSecondRead(
   read: () => Promise<OfferSnapshot>,
   options: VerifyOptions = {},
@@ -18,7 +26,8 @@ export async function verifyWithSecondRead(
   const second = await read();
 
   const matchingIdentity = first.product.productKey === second.product.productKey
-    && first.product.externalId === second.product.externalId;
+    && first.product.externalId === second.product.externalId
+    && variantSignature(first) === variantSignature(second);
   const matchingPrice = first.price.currency === second.price.currency
     && first.price.amountMinor === second.price.amountMinor
     && first.shipping?.currency === second.shipping?.currency

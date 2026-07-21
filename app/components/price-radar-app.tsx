@@ -9,7 +9,6 @@ import {
   type FormEvent,
 } from "react";
 import { AdminView } from "./admin-view";
-import { externalResearchLinks } from "@/lib/external-research";
 
 type Tab = "radar" | "watchlist" | "sources" | "admin" | "settings";
 type Confidence = "Très probable" | "Probable" | "À vérifier";
@@ -60,8 +59,17 @@ type AlertItem = {
     cautions: string[];
   };
   community?: { total: number; positive: number; negative: number; expired: number; purchased: number };
-  externalResearch?: { query: string; idealo: string; dealabs: string };
+  intelligence?: {
+    variant: { fingerprint: string; confidence: number; comparable?: boolean; attributes?: Record<string, unknown> };
+    shadowCart: { status: string; finalTotalCents: number | null; verified?: boolean; consistent?: boolean };
+    priceIndex: { medianCents: number; bestCents?: number; merchantCount?: number; marketDiscountPercent?: number; marketPosition: string };
+    anomaly: { kind: string; evidenceStrength?: number; actionable?: boolean };
+    seller: { score: number; level?: string };
+    lifetime: { urgencyScore: number; predictedLifetimeMinutes: number; predictedExpiresAt?: string | null };
+  };
 };
+
+type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
 
 type RadarRule = {
   id: string;
@@ -287,7 +295,14 @@ for (const alert of ALERTS) {
     cautions: alert.shipping.includes("confirmer") || alert.shipping.includes("Non confirmé") ? ["Livraison à confirmer"] : [],
   };
   alert.community = { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 };
-  alert.externalResearch = externalResearchLinks({ title: alert.title, model: alert.sku });
+  alert.intelligence = {
+    variant: { fingerprint: `demo:${alert.sku}`, confidence: alert.confidence === "Très probable" ? 94 : alert.confidence === "Probable" ? 82 : 61, comparable: alert.confidence !== "À vérifier" },
+    shadowCart: { status: alert.shipping.includes("confirmer") || alert.shipping.includes("Non confirmé") ? "product_page" : "confirmed", finalTotalCents: Math.round(alert.currentPrice * 100), verified: !alert.shipping.includes("confirmer") && !alert.shipping.includes("Non confirmé"), consistent: true },
+    priceIndex: { medianCents: Math.round(alert.usualPrice * 100), merchantCount: Math.max(2, alert.marketSources ?? 4), marketDiscountPercent: alert.discount, marketPosition: "best" },
+    anomaly: { kind: alert.score >= 70 ? "true_anomaly" : "insufficient_evidence", evidenceStrength: alert.score, actionable: alert.score >= 70 },
+    seller: { score: alert.seller.includes("tiers") || alert.seller.includes("partenaire") ? 62 : 91, level: "acceptable" },
+    lifetime: { urgencyScore: Math.min(98, alert.score), predictedLifetimeMinutes: Math.max(18, 125 - alert.discount * 2) },
+  };
 }
 
 const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
@@ -318,6 +333,23 @@ function confidenceClass(confidence: Confidence) {
   if (confidence === "Très probable") return "confidence-high";
   if (confidence === "Probable") return "confidence-medium";
   return "confidence-low";
+}
+
+function anomalyLabel(kind?: string) {
+  return ({
+    true_anomaly: "Anomalie réelle",
+    promotion: "Promotion identifiée",
+    wrong_variant: "Variante incertaine",
+    seller_risk: "Risque vendeur",
+    conditional_price: "Prix conditionnel",
+    shipping_unknown: "Livraison inconnue",
+    refurbished: "Reconditionné",
+    insufficient_evidence: "Preuves insuffisantes",
+  } as Record<string, string>)[kind ?? ""] ?? "À qualifier";
+}
+
+function cartLabel(status?: string) {
+  return status === "confirmed" ? "Panier confirmé" : status === "blocked" ? "Panier bloqué" : status === "unavailable" ? "Indisponible" : "Page vérifiée";
 }
 
 function subscribeToOnlineState(onStoreChange: () => void) {
@@ -385,7 +417,13 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const deliveryContext = record(item.deliveryContext);
   const buyNowRecord = record(item.buyNow);
   const communityRecord = record(item.community);
-  const externalRecord = record(item.externalResearch);
+  const intelligenceRecord = record(item.intelligence);
+  const variantRecord = record(intelligenceRecord?.variant);
+  const cartRecord = record(intelligenceRecord?.shadowCart);
+  const indexRecord = record(intelligenceRecord?.priceIndex);
+  const anomalyRecord = record(intelligenceRecord?.anomaly);
+  const sellerRecord = record(intelligenceRecord?.seller);
+  const lifetimeRecord = record(intelligenceRecord?.lifetime);
   let reasons: string[] = [];
   if (Array.isArray(item.reasons)) {
     reasons = item.reasons.filter((reason): reason is string => typeof reason === "string");
@@ -512,11 +550,38 @@ function mapLiveAlert(value: unknown): AlertItem | null {
       expired: finite(communityRecord?.expired),
       purchased: finite(communityRecord?.purchased),
     },
-    externalResearch: {
-      query: typeof externalRecord?.query === "string" ? externalRecord.query : item.title,
-      idealo: typeof externalRecord?.idealo === "string" ? externalRecord.idealo : externalResearchLinks({ title: item.title }).idealo,
-      dealabs: typeof externalRecord?.dealabs === "string" ? externalRecord.dealabs : externalResearchLinks({ title: item.title }).dealabs,
-    },
+    intelligence: intelligenceRecord ? {
+      variant: {
+        fingerprint: typeof variantRecord?.fingerprint === "string" ? variantRecord.fingerprint : `product:${item.id}`,
+        confidence: Math.round(finite(variantRecord?.confidence)),
+        comparable: variantRecord?.comparable === true,
+        attributes: record(variantRecord?.attributes) ?? undefined,
+      },
+      shadowCart: {
+        status: typeof cartRecord?.status === "string" ? cartRecord.status : "product_page",
+        finalTotalCents: typeof cartRecord?.finalTotalCents === "number" ? cartRecord.finalTotalCents : null,
+        verified: cartRecord?.verified === true,
+        consistent: cartRecord?.consistent !== false,
+      },
+      priceIndex: {
+        medianCents: finite(indexRecord?.medianCents),
+        bestCents: typeof indexRecord?.bestCents === "number" ? indexRecord.bestCents : undefined,
+        merchantCount: finite(indexRecord?.merchantCount),
+        marketDiscountPercent: finite(indexRecord?.marketDiscountPercent),
+        marketPosition: typeof indexRecord?.marketPosition === "string" ? indexRecord.marketPosition : "market",
+      },
+      anomaly: {
+        kind: typeof anomalyRecord?.kind === "string" ? anomalyRecord.kind : "insufficient_evidence",
+        evidenceStrength: finite(anomalyRecord?.evidenceStrength),
+        actionable: anomalyRecord?.actionable === true,
+      },
+      seller: { score: finite(sellerRecord?.score), level: typeof sellerRecord?.level === "string" ? sellerRecord.level : undefined },
+      lifetime: {
+        urgencyScore: finite(lifetimeRecord?.urgencyScore),
+        predictedLifetimeMinutes: finite(lifetimeRecord?.predictedLifetimeMinutes),
+        predictedExpiresAt: typeof lifetimeRecord?.predictedExpiresAt === "string" ? lifetimeRecord.predictedExpiresAt : null,
+      },
+    } : undefined,
   };
 }
 
@@ -539,6 +604,7 @@ export function PriceRadarApp() {
   const [watched, setWatched] = useState<Set<string>>(new Set());
   const [watchLoading, setWatchLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [inspection, setInspection] = useState<InspectionState | null>(null);
   const online = useSyncExternalStore(
     subscribeToOnlineState,
     readOnlineState,
@@ -818,6 +884,69 @@ export function PriceRadarApp() {
     const match = [...liveAlerts, ...ALERTS].find((alert) => alert.id === requested);
     if (match) window.setTimeout(() => setSelected(match), 0);
   }, [liveAlerts, selected]);
+
+  useEffect(() => {
+    const location = new URL(window.location.href);
+    const sharedUrl = location.searchParams.get("inspect");
+    if (!sharedUrl) {
+      if (location.searchParams.get("inspectError")) {
+        window.setTimeout(() => setInspection({ status: "failed", message: "Ce lien ne vient pas d’une enseigne prise en charge." }), 0);
+      }
+      return;
+    }
+    let active = true;
+    let timer = 0;
+    const cleanAddress = () => {
+      const next = new URL(window.location.href);
+      next.searchParams.delete("inspect");
+      next.searchParams.delete("inspectError");
+      window.history.replaceState({}, "", next);
+    };
+    const poll = async (id: string, attempt = 0): Promise<void> => {
+      if (!active) return;
+      try {
+        const response = await fetch(`/api/inspections?id=${encodeURIComponent(id)}`, { headers: { accept: "application/json" } });
+        const payload = await response.json() as { items?: Array<{ status?: string; result?: Record<string, unknown> }> };
+        const item = payload.items?.[0];
+        if (item?.status === "completed") {
+          const title = typeof item.result?.title === "string" ? item.result.title : "offre partagée";
+          setInspection({ status: "completed", id, message: `${title} a été contrôlée : panier, variante, vendeur et indice PrixRadar.` });
+          setSearch(title === "offre partagée" ? "" : title);
+          const refreshed = await fetch("/api/alerts?limit=50", { headers: { accept: "application/json" } });
+          if (refreshed.ok) {
+            const data = await refreshed.json() as { items?: unknown[] };
+            const mapped = (data.items ?? []).map(mapLiveAlert).filter((value): value is AlertItem => value !== null);
+            if (active) setLiveAlerts(mapped);
+          }
+          cleanAddress();
+          return;
+        }
+        if (item?.status === "failed") throw new Error("La page marchande n’a pas pu être contrôlée.");
+        setInspection({ status: item?.status === "processing" ? "processing" : "pending", id, message: item?.status === "processing" ? "PrixRadar relit la page et teste le panier sans acheter…" : "Lien ajouté à la file prioritaire…" });
+        if (attempt < 20) timer = window.setTimeout(() => void poll(id, attempt + 1), 3_000);
+        else setInspection({ status: "pending", id, message: "Contrôle conservé en arrière-plan. Le résultat apparaîtra automatiquement au prochain passage." });
+      } catch (error) {
+        setInspection({ status: "failed", id, message: error instanceof Error ? error.message : "Inspection indisponible." });
+        cleanAddress();
+      }
+    };
+    void fetch("/api/inspections", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ url: sharedUrl }),
+    }).then(async (response) => {
+      const payload = await response.json() as { item?: { id?: string }; message?: string };
+      if (!response.ok || !payload.item?.id) throw new Error(payload.message ?? "Ce lien ne peut pas être inspecté.");
+      if (active) {
+        setInspection({ status: "pending", id: payload.item.id, message: "Lien reçu. Contrôle autonome prioritaire lancé…" });
+        await poll(payload.item.id);
+      }
+    }).catch((error) => {
+      if (active) setInspection({ status: "failed", message: error instanceof Error ? error.message : "Inspection indisponible." });
+      cleanAddress();
+    });
+    return () => { active = false; window.clearTimeout(timer); };
+  }, []);
 
   const activeAlerts = useMemo(
     () => (liveAlerts.length ? liveAlerts : ALERTS),
@@ -1256,6 +1385,14 @@ export function PriceRadarApp() {
           </span>
         </div>
 
+        {inspection ? (
+          <div className={`inspection-banner is-${inspection.status}`} role="status">
+            <span className="inspection-pulse" aria-hidden="true" />
+            <div><strong>{inspection.status === "completed" ? "Inspection terminée" : inspection.status === "failed" ? "Inspection impossible" : "Sentinelle prioritaire"}</strong><p>{inspection.message}</p></div>
+            <button type="button" onClick={() => setInspection(null)} aria-label="Fermer">×</button>
+          </div>
+        ) : null}
+
         <main id="main-content" className="content-area">
           {renderTab()}
         </main>
@@ -1505,7 +1642,6 @@ function RadarView({
           >
             Tout afficher
           </button>
-          {search.trim() ? <div className="empty-external-links"><a href={externalResearchLinks({ title: search.trim(), gtin: /^\d{8,14}$/u.test(search.trim()) ? search.trim() : null }).idealo} target="_blank" rel="noreferrer">Comparer sur idealo</a><a href={externalResearchLinks({ title: search.trim(), gtin: /^\d{8,14}$/u.test(search.trim()) ? search.trim() : null }).dealabs} target="_blank" rel="noreferrer">Chercher sur Dealabs</a></div> : null}
         </div>
       )}
     </section>
@@ -1549,6 +1685,7 @@ function AlertCard({
           </div>
           <h3>{alert.title}</h3>
           <p className="card-source">{alert.source}</p>
+          {alert.intelligence ? <div className="autonomy-badges"><span>{cartLabel(alert.intelligence.shadowCart.status)}</span><span>Variante {alert.intelligence.variant.confidence}%</span><span>Urgence {alert.intelligence.lifetime.urgencyScore}/100</span></div> : null}
           <div className="price-line">
             <strong>{money(alert.currentPrice, alert.currency)}</strong>
             <del>{money(alert.usualPrice, alert.currency)}</del>
@@ -1899,20 +2036,20 @@ function SourcesView({
           method="Vendeurs tiers séparés, score de fiabilité renforcé"
         />
         <SourceRow
-          mark="I"
-          name="idealo"
-          detail="Comparateur externe · contexte marché"
-          status="Liens actifs"
-          tone="prepared"
-          method="Recherche directe active ; API uniquement après accord au programme partenaire idealo"
+          mark="◎"
+          name="Indice PrixRadar"
+          detail="Médiane interne · rapprochement multi-enseignes"
+          status="Automatique"
+          tone="live"
+          method="Compare uniquement les variantes suffisamment identiques et les prix accessibles à tous"
         />
         <SourceRow
-          mark="🔥"
-          name="Dealabs"
-          detail="Communauté · discussions et validation"
-          status="Liens actifs"
-          tone="prepared"
-          method="Recherche communautaire sans aspiration automatique ni influence directe sur le score"
+          mark="S"
+          name="Sentinelle autonome"
+          detail="Découverte · priorité · fréquence adaptative"
+          status="Automatique"
+          tone="live"
+          method="Découvre les fiches, évite les doublons et rescane plus vite les zones rentables"
         />
       </div>
 
@@ -2203,7 +2340,6 @@ function AlertDetail({
 }) {
   const buyNow = alert.buyNow ?? { score: alert.score, label: "À considérer", factors: [], cautions: [] };
   const community = alert.community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 };
-  const external = alert.externalResearch ?? externalResearchLinks({ title: alert.title, brand: alert.brand, model: alert.model, gtin: alert.gtin });
   const [recheck, setRecheck] = useState<"idle" | "pending" | "processing" | "completed" | "failed">("idle");
   const [recheckMessage, setRecheckMessage] = useState("");
 
@@ -2294,6 +2430,20 @@ function AlertDetail({
           {buyNow.cautions.length > 0 ? <p className="buy-now-cautions">{buyNow.cautions.join(" · ")}</p> : null}
         </section>
 
+        {alert.intelligence ? (
+          <section className="detail-section autonomy-passport">
+            <div className="section-label-row"><h3>Contrôle autonome</h3><span>{anomalyLabel(alert.intelligence.anomaly.kind)}</span></div>
+            <div className="autonomy-grid">
+              <div><span>Panier fantôme</span><strong>{cartLabel(alert.intelligence.shadowCart.status)}</strong><small>{alert.intelligence.shadowCart.finalTotalCents ? `${money(alert.intelligence.shadowCart.finalTotalCents / 100, alert.currency)} final` : "total à confirmer"}</small></div>
+              <div><span>Variante exacte</span><strong>{alert.intelligence.variant.confidence}/100</strong><small>{alert.intelligence.variant.comparable ? "comparable" : "prudence"}</small></div>
+              <div><span>Indice PrixRadar</span><strong>{alert.intelligence.priceIndex.medianCents ? money(alert.intelligence.priceIndex.medianCents / 100, alert.currency) : "En cours"}</strong><small>{alert.intelligence.priceIndex.merchantCount ?? 0} offres rapprochées</small></div>
+              <div><span>Vendeur & garantie</span><strong>{alert.intelligence.seller.score}/100</strong><small>{alert.intelligence.seller.level ?? "analysé"}</small></div>
+              <div><span>Durée probable</span><strong>{alert.intelligence.lifetime.predictedLifetimeMinutes ? `≈ ${alert.intelligence.lifetime.predictedLifetimeMinutes} min` : "Inconnue"}</strong><small>urgence {alert.intelligence.lifetime.urgencyScore}/100</small></div>
+              <div><span>Origine détectée</span><strong>{anomalyLabel(alert.intelligence.anomaly.kind)}</strong><small>preuves {alert.intelligence.anomaly.evidenceStrength ?? 0}/100</small></div>
+            </div>
+          </section>
+        ) : null}
+
         <section className="detail-section">
           <div className="section-label-row">
             <h3>Les indices</h3>
@@ -2362,12 +2512,6 @@ function AlertDetail({
           <div className="section-label-row"><h3>Verdict de la communauté</h3><span>{community.total ? `${community.positive}/${community.total} positifs` : "Premier avis"}</span></div>
           <p>{community.purchased > 0 ? `${community.purchased} achat${community.purchased > 1 ? "s" : ""} confirmé${community.purchased > 1 ? "s" : ""}. ` : ""}Un appareil ne peut voter qu’une fois par alerte.</p>
           <div className="feedback-actions feedback-expanded"><button onClick={() => onFeedback("purchased")}>Acheté</button><button onClick={() => onFeedback("price_confirmed")}>Prix confirmé</button><button onClick={() => onFeedback("useful")}>Bonne alerte</button><button onClick={() => onFeedback("expired")}>Expiré</button><button onClick={() => onFeedback("wrong_variant")}>Mauvaise variante</button><button onClick={() => onFeedback("coupon_failed")}>Coupon impossible</button><button onClick={() => onFeedback("cancelled")}>Commande annulée</button><button onClick={() => onFeedback("false_positive")}>Faux positif</button></div>
-        </section>
-
-        <section className="detail-section external-context">
-          <div className="section-label-row"><h3>Comparer ailleurs</h3><span>Contexte externe</span></div>
-          <p>idealo sert de repère de marché ; Dealabs apporte les retours et discussions de la communauté. Ces liens n’entrent pas seuls dans le score.</p>
-          <div><a href={external.idealo} target="_blank" rel="noreferrer">Comparer sur idealo ↗</a><a href={external.dealabs} target="_blank" rel="noreferrer">Chercher sur Dealabs ↗</a></div>
         </section>
 
         <div className="detail-warning">

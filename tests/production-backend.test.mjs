@@ -21,7 +21,7 @@ test("publishes only live, fully verified anomalies", async () => {
   assert.match(ingestRoute, /IDEMPOTENCY_CONFLICT/);
   assert.match(
     ingestRoute,
-    /totalCents:\s*parsed\.shippingCents === null \? null : evaluation\.currentTotalCents/,
+    /totalCents:\s*shadowCart\.finalTotalCents/,
   );
   assert.match(anomaly, /candidate\.sourceMode === "live"/);
   assert.match(anomaly, /candidate\.verificationCount >= 2/);
@@ -123,11 +123,32 @@ test("ships durable game-changer radars, proof, rechecks and three notification 
   assert.doesNotMatch(migration, /SELECT[^;]*"score", "buy_now_score"/);
   assert.match(app, /Scanner un EAN/);
   assert.match(app, /Passeport de preuve/);
-  assert.match(app, /Comparer sur idealo/);
+  assert.match(app, /Contrôle autonome/);
+  assert.match(app, /Panier fantôme/);
   assert.match(radars, /parseRadarIntent/);
   assert.match(recheck, /status: "pending"/);
   assert.match(digests, /notificationSpeed, "digest"/);
   assert.match(sourcePlan, /optimizeCoverageBudgets/);
+});
+
+test("ships autonomous cart, variant, index, sharing and sentinel controls", async () => {
+  const [schema, autonomy, manifest, inspections, frontier, sourcePlan, app] = await Promise.all([
+    source("../db/schema.ts"), source("../lib/autonomy.ts"), source("../app/manifest.ts"),
+    source("../app/api/inspections/route.ts"), source("../app/api/frontier/route.ts"),
+    source("../app/api/source-plan/route.ts"), source("../app/components/price-radar-app.tsx"),
+  ]);
+  assert.match(schema, /alertIntelligence/);
+  assert.match(schema, /inspectionRequests/);
+  assert.match(schema, /sentinelFrontier/);
+  assert.match(autonomy, /buildVariantFingerprint/);
+  assert.match(autonomy, /evaluateShadowCart/);
+  assert.match(autonomy, /buildPriceRadarIndex/);
+  assert.match(autonomy, /predictOpportunityLifetime/);
+  assert.match(manifest, /share_target/);
+  assert.match(inspections, /status: "pending"/);
+  assert.match(frontier, /sentinelPriority/);
+  assert.match(sourcePlan, /frontierItems/);
+  assert.doesNotMatch(app, /idealo|Dealabs/);
 });
 
 test("keeps the mobile header clear of the iPhone safe area", async () => {
@@ -140,5 +161,5 @@ test("keeps the mobile header clear of the iPhone safe area", async () => {
   assert.match(styles, /--safe-top:\s*env\(safe-area-inset-top, 0px\)/);
   assert.match(styles, /min-height:\s*calc\(64px \+ var\(--safe-top\)\)/);
   assert.match(styles, /padding:\s*calc\(10px \+ var\(--safe-top\)\)/);
-  assert.match(await source("../public/sw.js"), /prixradar-shell-v4/);
+  assert.match(await source("../public/sw.js"), /prixradar-shell-v5/);
 });

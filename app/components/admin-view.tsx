@@ -60,6 +60,12 @@ type Metrics = {
   alertsInReview: number;
   conditionalPrices: number;
   feedback: { total: number; useful: number; falsePositive: number; expired: number; averageLifetimeMinutes?: number };
+  autonomy: {
+    analyzed: number; cartsConfirmed: number; trueAnomalies: number; riskySellers: number;
+    averageVariantConfidence: number; averageUrgency: number; frontierTotal: number;
+    frontierActive: number; frontierBlocked: number; duplicatesAvoided: number;
+    inspectionsRequested: number; inspectionsCompleted: number;
+  };
 };
 
 type BudgetRecommendation = {
@@ -76,6 +82,7 @@ const DEFAULT_METRICS: Metrics = {
   productsSeen: 0, antiBotBlocks: 0, keepaRequests: 0, apifyCostEuros: 0, keepaEstimatedCostEuros: 0,
   costPerExploitableAlertEuros: null, exploitableAlerts: 0, alertsInReview: 0,
   conditionalPrices: 0, feedback: { total: 0, useful: 0, falsePositive: 0, expired: 0 },
+  autonomy: { analyzed: 0, cartsConfirmed: 0, trueAnomalies: 0, riskySellers: 0, averageVariantConfidence: 0, averageUrgency: 0, frontierTotal: 0, frontierActive: 0, frontierBlocked: 0, duplicatesAvoided: 0, inspectionsRequested: 0, inspectionsCompleted: 0 },
 };
 const DEFAULT_GRAPH_METRICS = { canonicalProducts: 0, merchantMappings: 0, pendingReviews: 0 };
 
@@ -202,6 +209,18 @@ export function AdminView() {
         <div className="metric-card"><span>Keepa / Apify</span><strong>{metrics.keepaRequests} req. / {metrics.apifyCostEuros.toFixed(2)} €</strong><small>{metrics.keepaEstimatedCostEuros.toFixed(2)} € Keepa · {metrics.costPerExploitableAlertEuros === null ? "coût/alerte en attente" : `${metrics.costPerExploitableAlertEuros.toFixed(2)} € par alerte`}</small></div>
         <div className="metric-card"><span>Qualité</span><strong>{falsePositiveRate} %</strong><small>{metrics.antiBotBlocks} blocages · {graphMetrics.pendingReviews} rapprochements à revoir</small></div>
       </div>
+
+      <section className="admin-panel autonomy-admin-panel">
+        <div className="section-label-row"><div><span className="eyebrow">Moteur autonome</span><h2>Qualité avant notification</h2></div><span>7 derniers jours</span></div>
+        <div className="autonomy-admin-grid">
+          <div><span>Panier fantôme</span><strong>{metrics.autonomy.cartsConfirmed}/{metrics.autonomy.analyzed}</strong><small>totaux finaux confirmés</small></div>
+          <div><span>Variante exacte</span><strong>{metrics.autonomy.averageVariantConfidence}/100</strong><small>confiance moyenne</small></div>
+          <div><span>Origine</span><strong>{metrics.autonomy.trueAnomalies}</strong><small>anomalies réelles · {metrics.autonomy.riskySellers} vendeurs risqués</small></div>
+          <div><span>Sentinelle</span><strong>{metrics.autonomy.frontierActive}/{metrics.autonomy.frontierTotal}</strong><small>URL actives · {metrics.autonomy.duplicatesAvoided} doublons évités</small></div>
+          <div><span>Partages PWA</span><strong>{metrics.autonomy.inspectionsCompleted}/{metrics.autonomy.inspectionsRequested}</strong><small>inspections terminées</small></div>
+          <div><span>Urgence</span><strong>{metrics.autonomy.averageUrgency}/100</strong><small>durée d’opportunité estimée</small></div>
+        </div>
+      </section>
 
       <div className="admin-grid">
         <div className="admin-panel">
