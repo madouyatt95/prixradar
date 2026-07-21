@@ -1,0 +1,1465 @@
+"use client";
+
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
+
+type Tab = "radar" | "watchlist" | "sources" | "settings";
+type Confidence = "Très probable" | "Probable" | "À vérifier";
+
+type AlertItem = {
+  id: string;
+  title: string;
+  merchant: string;
+  market: string;
+  source: string;
+  currentPrice: number;
+  usualPrice: number;
+  currency: "EUR" | "GBP";
+  discount: number;
+  confidence: Confidence;
+  score: number;
+  freshness: string;
+  verifiedAt: string;
+  seller: string;
+  condition: string;
+  shipping: string;
+  sku: string;
+  category: string;
+  label: string;
+  accent: "violet" | "coral" | "mint" | "gold" | "blue";
+  url: string;
+  reasons: string[];
+  history: number[];
+};
+
+type WatchItem = {
+  productId?: string;
+  id?: string;
+};
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
+const ALERTS: AlertItem[] = [
+  {
+    id: "boulanger-oled-c3",
+    title: "TV OLED 55 pouces série C3",
+    merchant: "Boulanger",
+    market: "France",
+    source: "Page produit + historique interne",
+    currentPrice: 749,
+    usualPrice: 1399,
+    currency: "EUR",
+    discount: 46,
+    confidence: "Très probable",
+    score: 94,
+    freshness: "il y a 4 min",
+    verifiedAt: "12:42",
+    seller: "Boulanger",
+    condition: "Neuf",
+    shipping: "Livraison incluse",
+    sku: "OLED55-C3",
+    category: "Image & son",
+    label: "OLED",
+    accent: "violet",
+    url: "https://www.boulanger.com/",
+    reasons: [
+      "Prix 41 % sous la médiane observée sur 90 jours",
+      "Même référence et même taille vérifiées",
+      "Prix encore visible lors du second contrôle",
+    ],
+    history: [82, 79, 81, 78, 75, 77, 73, 70, 69, 31],
+  },
+  {
+    id: "amazon-fr-ssd-990",
+    title: "SSD NVMe 2 To 990 Pro",
+    merchant: "Amazon.fr",
+    market: "Amazon France",
+    source: "Historique Keepa · NEW",
+    currentPrice: 109.99,
+    usualPrice: 179.9,
+    currency: "EUR",
+    discount: 39,
+    confidence: "Très probable",
+    score: 91,
+    freshness: "il y a 7 min",
+    verifiedAt: "12:39",
+    seller: "Amazon",
+    condition: "Neuf",
+    shipping: "Prime incluse",
+    sku: "B0B9C4DKKG",
+    category: "Informatique",
+    label: "SSD",
+    accent: "coral",
+    url: "https://www.amazon.fr/",
+    reasons: [
+      "Prix inférieur au plus bas des 90 derniers jours",
+      "ASIN exact, pas une variation parent",
+      "Prix Amazon séparé des coupons conditionnels",
+    ],
+    history: [76, 74, 78, 73, 70, 72, 67, 65, 63, 38],
+  },
+  {
+    id: "darty-dreame-l10",
+    title: "Robot aspirateur L10s Ultra",
+    merchant: "Darty",
+    market: "France",
+    source: "Page produit + comparaison marché",
+    currentPrice: 389,
+    usualPrice: 649,
+    currency: "EUR",
+    discount: 40,
+    confidence: "Probable",
+    score: 82,
+    freshness: "il y a 12 min",
+    verifiedAt: "12:34",
+    seller: "Darty",
+    condition: "Neuf",
+    shipping: "+ 4,99 €",
+    sku: "L10S-ULTRA",
+    category: "Maison",
+    label: "HOME",
+    accent: "mint",
+    url: "https://www.darty.com/",
+    reasons: [
+      "Écart inhabituel avec cinq vendeurs comparables",
+      "Référence fabricant identique",
+      "Frais de port intégrés au calcul final",
+    ],
+    history: [84, 79, 81, 75, 71, 67, 69, 66, 61, 42],
+  },
+  {
+    id: "cdiscount-xm5",
+    title: "Casque sans fil WH-1000XM5",
+    merchant: "Cdiscount",
+    market: "France",
+    source: "Offre marketplace vérifiée",
+    currentPrice: 229.99,
+    usualPrice: 349.99,
+    currency: "EUR",
+    discount: 34,
+    confidence: "Probable",
+    score: 76,
+    freshness: "il y a 18 min",
+    verifiedAt: "12:28",
+    seller: "Vendeur partenaire",
+    condition: "Neuf",
+    shipping: "+ 6,90 €",
+    sku: "WH1000XM5B",
+    category: "Audio",
+    label: "AUDIO",
+    accent: "gold",
+    url: "https://www.cdiscount.com/",
+    reasons: [
+      "Prix total 32 % sous la médiane récente",
+      "Vendeur tiers identifié : prudence recommandée",
+      "Stock et frais revérifiés une fois",
+    ],
+    history: [80, 79, 76, 74, 77, 73, 72, 69, 66, 49],
+  },
+  {
+    id: "amazon-de-switch-oled",
+    title: "Console Switch OLED blanche",
+    merchant: "Amazon.de",
+    market: "Amazon Allemagne",
+    source: "Historique Keepa · Buy Box",
+    currentPrice: 249,
+    usualPrice: 329,
+    currency: "EUR",
+    discount: 24,
+    confidence: "Probable",
+    score: 72,
+    freshness: "il y a 21 min",
+    verifiedAt: "12:25",
+    seller: "Amazon EU",
+    condition: "Neuf",
+    shipping: "À confirmer vers la France",
+    sku: "B098TNW7NM",
+    category: "Gaming",
+    label: "PLAY",
+    accent: "blue",
+    url: "https://www.amazon.de/",
+    reasons: [
+      "Baisse nette face à la moyenne Keepa sur 90 jours",
+      "Devise et TVA du marché allemand conservées",
+      "Éligibilité de livraison France à confirmer",
+    ],
+    history: [74, 72, 70, 69, 73, 68, 66, 62, 59, 48],
+  },
+  {
+    id: "amazon-es-airfryer",
+    title: "Airfryer double panier 9 L",
+    merchant: "Amazon.es",
+    market: "Amazon Espagne",
+    source: "Historique Keepa · NEW",
+    currentPrice: 99.9,
+    usualPrice: 159.99,
+    currency: "EUR",
+    discount: 38,
+    confidence: "À vérifier",
+    score: 58,
+    freshness: "il y a 34 min",
+    verifiedAt: "12:12",
+    seller: "Vendeur tiers",
+    condition: "Neuf",
+    shipping: "Non confirmé",
+    sku: "B0C-AIR9L",
+    category: "Cuisine",
+    label: "COOK",
+    accent: "coral",
+    url: "https://www.amazon.es/",
+    reasons: [
+      "Baisse détectée mais offre tierce peu fraîche",
+      "Frais de livraison encore inconnus",
+      "Une vérification forte est nécessaire avant achat",
+    ],
+    history: [77, 75, 74, 76, 71, 68, 65, 64, 60, 41],
+  },
+];
+
+const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
+  { id: "radar", label: "Radar", icon: "◎" },
+  { id: "watchlist", label: "Suivis", icon: "◇" },
+  { id: "sources", label: "Sources", icon: "⌁" },
+  { id: "settings", label: "Réglages", icon: "☷" },
+];
+
+const MARKET_OPTIONS = [
+  { value: "FR", label: "Amazon.fr", domain: 4 },
+  { value: "DE", label: "Amazon.de", domain: 3 },
+  { value: "IT", label: "Amazon.it", domain: 8 },
+  { value: "ES", label: "Amazon.es", domain: 9 },
+  { value: "GB", label: "Amazon.co.uk", domain: 2 },
+];
+
+function money(value: number, currency: "EUR" | "GBP" = "EUR") {
+  return new Intl.NumberFormat("fr-FR", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: value % 1 === 0 ? 0 : 2,
+  }).format(value);
+}
+
+function confidenceClass(confidence: Confidence) {
+  if (confidence === "Très probable") return "confidence-high";
+  if (confidence === "Probable") return "confidence-medium";
+  return "confidence-low";
+}
+
+function subscribeToOnlineState(onStoreChange: () => void) {
+  window.addEventListener("online", onStoreChange);
+  window.addEventListener("offline", onStoreChange);
+  return () => {
+    window.removeEventListener("online", onStoreChange);
+    window.removeEventListener("offline", onStoreChange);
+  };
+}
+
+function readOnlineState() {
+  return navigator.onLine;
+}
+
+export function PriceRadarApp() {
+  const [tab, setTab] = useState<Tab>("radar");
+  const [filter, setFilter] = useState("Tout");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<AlertItem | null>(null);
+  const [watched, setWatched] = useState<Set<string>>(new Set());
+  const [watchLoading, setWatchLoading] = useState(true);
+  const [toast, setToast] = useState("");
+  const online = useSyncExternalStore(
+    subscribeToOnlineState,
+    readOnlineState,
+    () => true,
+  );
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupAsin, setLookupAsin] = useState("");
+  const [lookupMarket, setLookupMarket] = useState("FR");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupResult, setLookupResult] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [lookupError, setLookupError] = useState("");
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [notificationState, setNotificationState] = useState(() => {
+    if (typeof Notification === "undefined") return "Non prises en charge";
+    return Notification.permission === "granted"
+      ? "Autorisées"
+      : Notification.permission === "denied"
+        ? "Bloquées"
+        : "Non activées";
+  });
+  const [minScore, setMinScore] = useState(75);
+  const [quietHours, setQuietHours] = useState(true);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+
+    const installHandler = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", installHandler);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", installHandler);
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/watchlist", { headers: { accept: "application/json" } })
+      .then(async (response) => {
+        if (!response.ok) return [];
+        const data = (await response.json()) as {
+          items?: WatchItem[];
+          watchlist?: WatchItem[];
+        };
+        return data.items ?? data.watchlist ?? [];
+      })
+      .then((items) => {
+        if (!active) return;
+        setWatched(
+          new Set(
+            items
+              .map((item) => item.productId ?? item.id)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        );
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setWatchLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 3200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [selected]);
+
+  const visibleAlerts = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase("fr");
+    return ALERTS.filter((alert) => {
+      const filterMatch =
+        filter === "Tout" ||
+        (filter === "Très probable" && alert.confidence === "Très probable") ||
+        (filter === "Amazon · Keepa" && alert.source.includes("Keepa")) ||
+        (filter === "France" && alert.market.includes("France"));
+      const searchMatch =
+        !query ||
+        `${alert.title} ${alert.merchant} ${alert.category}`
+          .toLocaleLowerCase("fr")
+          .includes(query);
+      return filterMatch && searchMatch;
+    });
+  }, [filter, search]);
+
+  const watchedAlerts = ALERTS.filter((alert) => watched.has(alert.id));
+
+  async function toggleWatch(alert: AlertItem) {
+    const isWatched = watched.has(alert.id);
+    const source = alert.merchant.startsWith("Amazon")
+      ? "amazon"
+      : alert.merchant.toLowerCase();
+    const market = alert.merchant.endsWith(".de")
+      ? "DE"
+      : alert.merchant.endsWith(".es")
+        ? "ES"
+        : "FR";
+    setWatched((current) => {
+      const next = new Set(current);
+      if (isWatched) next.delete(alert.id);
+      else next.add(alert.id);
+      return next;
+    });
+
+    try {
+      const response = await fetch(
+        isWatched
+          ? `/api/watchlist?productId=${encodeURIComponent(alert.id)}&source=${source}&market=${market}`
+          : "/api/watchlist",
+        {
+          method: isWatched ? "DELETE" : "POST",
+          headers: isWatched
+            ? { accept: "application/json" }
+            : { "content-type": "application/json", accept: "application/json" },
+          body: isWatched
+            ? undefined
+            : JSON.stringify({
+                productId: alert.id,
+                source,
+                title: alert.title,
+                market,
+                priceCents: Math.round(alert.currentPrice * 100),
+                url: alert.url,
+              }),
+        },
+      );
+      if (!response.ok) throw new Error("persistence");
+      setToast(isWatched ? "Retiré de vos suivis" : "Ajouté à vos suivis");
+    } catch {
+      setWatched((current) => {
+        const next = new Set(current);
+        if (isWatched) next.add(alert.id);
+        else next.delete(alert.id);
+        return next;
+      });
+      setToast("Impossible d’enregistrer pour le moment");
+    }
+  }
+
+  async function lookupKeepa(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const asin = lookupAsin.trim().toUpperCase();
+    if (!/^[A-Z0-9]{10}$/.test(asin)) {
+      setLookupError("Saisissez un ASIN Amazon valide de 10 caractères.");
+      return;
+    }
+    setLookupLoading(true);
+    setLookupError("");
+    setLookupResult(null);
+    try {
+      const response = await fetch(
+        `/api/keepa?asin=${encodeURIComponent(asin)}&market=${lookupMarket}`,
+        { headers: { accept: "application/json" } },
+      );
+      const data = (await response.json()) as Record<string, unknown> & {
+        error?: string | { message?: string };
+        message?: string;
+      };
+      if (!response.ok) {
+        const apiMessage =
+          typeof data.error === "string"
+            ? data.error
+            : data.error?.message ?? data.message;
+        throw new Error(apiMessage || "Keepa n’est pas disponible.");
+      }
+      setLookupResult(data);
+    } catch (error) {
+      setLookupError(
+        error instanceof Error
+          ? error.message
+          : "La vérification Keepa a échoué.",
+      );
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  async function requestNotifications() {
+    if (!("Notification" in window)) {
+      setToast("Les notifications ne sont pas prises en charge ici");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationState(
+      permission === "granted"
+        ? "Autorisées"
+        : permission === "denied"
+          ? "Bloquées"
+          : "Non activées",
+    );
+    if (permission === "granted") {
+      const registration = await navigator.serviceWorker?.ready;
+      if (registration) {
+        await registration.showNotification("PrixRadar est prêt", {
+          body: "Vous pourrez recevoir ici les anomalies réellement confirmées.",
+          icon: "/icon-192.png",
+          tag: "prixradar-test",
+        });
+      }
+      setToast("Notification de test envoyée");
+    }
+  }
+
+  async function installApp() {
+    if (installPrompt) {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      setToast(
+        choice.outcome === "accepted"
+          ? "PrixRadar est installé"
+          : "Installation annulée",
+      );
+      if (choice.outcome === "accepted") setInstallPrompt(null);
+      return;
+    }
+    setToast("Sur iPhone : Partager, puis Sur l’écran d’accueil");
+  }
+
+  function renderTab() {
+    if (tab === "watchlist") {
+      return (
+        <WatchlistView
+          alerts={watchedAlerts}
+          loading={watchLoading}
+          onOpen={setSelected}
+          onRemove={toggleWatch}
+          onExplore={() => setTab("radar")}
+        />
+      );
+    }
+    if (tab === "sources") {
+      return (
+        <SourcesView
+          lookupOpen={lookupOpen}
+          setLookupOpen={setLookupOpen}
+          asin={lookupAsin}
+          setAsin={setLookupAsin}
+          market={lookupMarket}
+          setMarket={setLookupMarket}
+          loading={lookupLoading}
+          result={lookupResult}
+          error={lookupError}
+          onSubmit={lookupKeepa}
+        />
+      );
+    }
+    if (tab === "settings") {
+      return (
+        <SettingsView
+          notificationState={notificationState}
+          onNotifications={requestNotifications}
+          minScore={minScore}
+          setMinScore={setMinScore}
+          quietHours={quietHours}
+          setQuietHours={setQuietHours}
+          onInstall={installApp}
+          installReady={Boolean(installPrompt)}
+        />
+      );
+    }
+    return (
+      <RadarView
+        alerts={visibleAlerts}
+        filter={filter}
+        setFilter={setFilter}
+        search={search}
+        setSearch={setSearch}
+        searchRef={searchRef}
+        watched={watched}
+        onWatch={toggleWatch}
+        onOpen={setSelected}
+        onLookup={() => {
+          setTab("sources");
+          setLookupOpen(true);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Aller au contenu
+      </a>
+      <aside className="desktop-rail" aria-label="Navigation principale">
+        <BrandMark compact={false} />
+        <nav className="rail-nav">
+          {NAV_ITEMS.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              className={`rail-link ${tab === item.id ? "is-active" : ""}`}
+              onClick={() => setTab(item.id)}
+              aria-current={tab === item.id ? "page" : undefined}
+            >
+              <span aria-hidden="true">{item.icon}</span>
+              {item.label}
+              {item.id === "watchlist" && watched.size > 0 ? (
+                <span className="nav-count">{watched.size}</span>
+              ) : null}
+            </button>
+          ))}
+        </nav>
+        <div className="rail-foot">
+          <span className="pulse-dot" />
+          <div>
+            <strong>Mode démo</strong>
+            <small>Connecteurs à configurer</small>
+          </div>
+        </div>
+      </aside>
+
+      <div className="app-main">
+        <header className="mobile-header">
+          <BrandMark compact />
+          <button
+            type="button"
+            className="round-button"
+            aria-label="Rechercher"
+            onClick={() => {
+              setTab("radar");
+              window.setTimeout(() => searchRef.current?.focus(), 30);
+            }}
+          >
+            ⌕
+          </button>
+        </header>
+
+        {!online ? (
+          <div className="offline-banner" role="status">
+            Hors ligne · vos derniers écrans restent disponibles
+          </div>
+        ) : null}
+
+        <div className="demo-banner" role="note">
+          <span className="demo-badge">DÉMO</span>
+          <span>
+            Prix illustratifs, aucun achat réel. Branchez les sources pour passer
+            en surveillance active.
+          </span>
+        </div>
+
+        <main id="main-content" className="content-area">
+          {renderTab()}
+        </main>
+      </div>
+
+      <nav className="mobile-nav" aria-label="Navigation principale">
+        {NAV_ITEMS.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className={tab === item.id ? "is-active" : ""}
+            onClick={() => setTab(item.id)}
+            aria-current={tab === item.id ? "page" : undefined}
+          >
+            <span className="mobile-nav-icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span>{item.label}</span>
+            {item.id === "watchlist" && watched.size > 0 ? (
+              <span className="mobile-count">{watched.size}</span>
+            ) : null}
+          </button>
+        ))}
+      </nav>
+
+      {selected ? (
+        <AlertDetail
+          alert={selected}
+          watched={watched.has(selected.id)}
+          onWatch={() => toggleWatch(selected)}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
+
+      {toast ? (
+        <div className="toast" role="status">
+          {toast}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BrandMark({ compact }: { compact: boolean }) {
+  return (
+    <div className={`brand ${compact ? "brand-compact" : ""}`}>
+      <span className="radar-mark" aria-hidden="true">
+        <span />
+      </span>
+      <span className="brand-word">
+        Prix<span>Radar</span>
+      </span>
+      {!compact ? <small>Les baisses qui méritent un regard.</small> : null}
+    </div>
+  );
+}
+
+function PageHeading({
+  eyebrow,
+  title,
+  description,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="page-heading">
+      <div>
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function RadarView({
+  alerts,
+  filter,
+  setFilter,
+  search,
+  setSearch,
+  searchRef,
+  watched,
+  onWatch,
+  onOpen,
+  onLookup,
+}: {
+  alerts: AlertItem[];
+  filter: string;
+  setFilter: (value: string) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  searchRef: React.RefObject<HTMLInputElement | null>;
+  watched: Set<string>;
+  onWatch: (alert: AlertItem) => void;
+  onOpen: (alert: AlertItem) => void;
+  onLookup: () => void;
+}) {
+  const filters = ["Tout", "Très probable", "Amazon · Keepa", "France"];
+  return (
+    <section className="view-section">
+      <PageHeading
+        eyebrow="Mardi 21 juillet · 12:46"
+        title="Le radar a repéré 6 signaux"
+        description="Chaque signal est comparé, expliqué puis classé selon sa fiabilité."
+        action={
+          <button type="button" className="primary-button" onClick={onLookup}>
+            <span aria-hidden="true">＋</span> Vérifier un ASIN
+          </button>
+        }
+      />
+
+      <div className="metric-row" aria-label="Résumé du radar">
+        <div className="metric-card metric-primary">
+          <span>Candidats aujourd’hui</span>
+          <strong>17</strong>
+          <small>sur 4 enseignes + Amazon</small>
+        </div>
+        <div className="metric-card">
+          <span>Doublement vérifiés</span>
+          <strong>5</strong>
+          <small>prêts à être notifiés</small>
+        </div>
+        <div className="metric-card">
+          <span>Économie médiane</span>
+          <strong>−38 %</strong>
+          <small>sur les signaux affichés</small>
+        </div>
+      </div>
+
+      <div className="toolbar">
+        <label className="search-field">
+          <span aria-hidden="true">⌕</span>
+          <span className="sr-only">Rechercher un produit ou une enseigne</span>
+          <input
+            ref={searchRef}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Produit, enseigne, catégorie…"
+          />
+          {search ? (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Effacer la recherche"
+            >
+              ×
+            </button>
+          ) : null}
+        </label>
+        <div className="filter-scroll" aria-label="Filtrer les signaux">
+          {filters.map((item) => (
+            <button
+              type="button"
+              key={item}
+              className={filter === item ? "is-active" : ""}
+              onClick={() => setFilter(item)}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="section-label-row">
+        <h2>Signaux récents</h2>
+        <span>{alerts.length} résultats</span>
+      </div>
+      {alerts.length ? (
+        <div className="alert-grid">
+          {alerts.map((alert, index) => (
+            <AlertCard
+              key={alert.id}
+              alert={alert}
+              featured={index === 0}
+              watched={watched.has(alert.id)}
+              onWatch={() => onWatch(alert)}
+              onOpen={() => onOpen(alert)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <div className="empty-radar" aria-hidden="true" />
+          <h2>Aucun signal dans ce filtre</h2>
+          <p>Essayez une autre enseigne ou effacez votre recherche.</p>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setFilter("Tout");
+              setSearch("");
+            }}
+          >
+            Tout afficher
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AlertCard({
+  alert,
+  featured,
+  watched,
+  onWatch,
+  onOpen,
+}: {
+  alert: AlertItem;
+  featured: boolean;
+  watched: boolean;
+  onWatch: () => void;
+  onOpen: () => void;
+}) {
+  return (
+    <article className={`alert-card ${featured ? "is-featured" : ""}`}>
+      <button
+        type="button"
+        className="card-main-button"
+        onClick={onOpen}
+        aria-label={`Voir l’analyse de ${alert.title}`}
+      >
+        <div className={`product-tile accent-${alert.accent}`} aria-hidden="true">
+          <span>{alert.label}</span>
+          <i />
+        </div>
+        <div className="card-content">
+          <div className="card-meta">
+            <span className="merchant-pill">{alert.merchant}</span>
+            <span>{alert.freshness}</span>
+          </div>
+          <h3>{alert.title}</h3>
+          <p className="card-source">{alert.source}</p>
+          <div className="price-line">
+            <strong>{money(alert.currentPrice, alert.currency)}</strong>
+            <del>{money(alert.usualPrice, alert.currency)}</del>
+            <span className="discount-tag">−{alert.discount} %</span>
+          </div>
+          <div className="confidence-row">
+            <span className={`confidence ${confidenceClass(alert.confidence)}`}>
+              <i /> {alert.confidence}
+            </span>
+            <span className="score">{alert.score}/100</span>
+          </div>
+        </div>
+      </button>
+      <button
+        type="button"
+        className={`watch-button ${watched ? "is-watched" : ""}`}
+        onClick={onWatch}
+        aria-label={watched ? "Retirer des suivis" : "Ajouter aux suivis"}
+        aria-pressed={watched}
+      >
+        {watched ? "◆" : "◇"}
+      </button>
+    </article>
+  );
+}
+
+function WatchlistView({
+  alerts,
+  loading,
+  onOpen,
+  onRemove,
+  onExplore,
+}: {
+  alerts: AlertItem[];
+  loading: boolean;
+  onOpen: (alert: AlertItem) => void;
+  onRemove: (alert: AlertItem) => void;
+  onExplore: () => void;
+}) {
+  return (
+    <section className="view-section">
+      <PageHeading
+        eyebrow="Votre sélection"
+        title="Produits suivis"
+        description="Retrouvez ici les signaux que vous souhaitez surveiller dans la durée."
+      />
+      {loading ? (
+        <div className="loading-panel" role="status">
+          <span className="loading-orbit" /> Chargement de vos suivis…
+        </div>
+      ) : alerts.length ? (
+        <div className="watch-list">
+          {alerts.map((alert) => (
+            <div className="watch-row" key={alert.id}>
+              <button type="button" onClick={() => onOpen(alert)}>
+                <span className={`mini-tile accent-${alert.accent}`}>
+                  {alert.label.slice(0, 2)}
+                </span>
+                <span>
+                  <small>{alert.merchant}</small>
+                  <strong>{alert.title}</strong>
+                  <em>
+                    {money(alert.currentPrice, alert.currency)} · −{alert.discount} %
+                  </em>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="remove-watch"
+                onClick={() => onRemove(alert)}
+                aria-label={`Ne plus suivre ${alert.title}`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state spacious">
+          <div className="empty-radar" aria-hidden="true" />
+          <h2>Votre liste est encore vide</h2>
+          <p>
+            Ajoutez un signal au suivi pour le retrouver ici et préparer ses
+            futures alertes.
+          </p>
+          <button type="button" className="primary-button" onClick={onExplore}>
+            Explorer le radar
+          </button>
+        </div>
+      )}
+      <div className="trust-note">
+        <span aria-hidden="true">✓</span>
+        <div>
+          <strong>Une baisse ne suffit pas à déclencher une alerte.</strong>
+          <p>
+            Prix total, variante, vendeur, stock et fraîcheur devront tous être
+            revérifiés par le moteur connecté.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SourcesView({
+  lookupOpen,
+  setLookupOpen,
+  asin,
+  setAsin,
+  market,
+  setMarket,
+  loading,
+  result,
+  error,
+  onSubmit,
+}: {
+  lookupOpen: boolean;
+  setLookupOpen: (value: boolean) => void;
+  asin: string;
+  setAsin: (value: string) => void;
+  market: string;
+  setMarket: (value: string) => void;
+  loading: boolean;
+  result: Record<string, unknown> | null;
+  error: string;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const normalized = result
+    ? (result.data as Record<string, unknown> | undefined) ?? result
+    : null;
+  const product = normalized?.product as Record<string, unknown> | undefined;
+  const prices = product?.prices as Record<string, unknown> | undefined;
+  const productMarket = product?.market as Record<string, unknown> | undefined;
+  const title = String(product?.title ?? normalized?.title ?? "Produit Amazon");
+  const priceMinor = Number(
+    prices?.currentMinor ??
+      normalized?.currentPriceMinor ??
+      (normalized?.price as Record<string, unknown> | undefined)?.currentMinor ??
+      0,
+  );
+  const currency = String(
+    productMarket?.currency ??
+      (normalized?.marketplace as Record<string, unknown> | undefined)?.currency ??
+      normalized?.currency ??
+      (market === "GB" ? "GBP" : "EUR"),
+  ) as "EUR" | "GBP";
+
+  return (
+    <section className="view-section">
+      <PageHeading
+        eyebrow="État des connecteurs"
+        title="Sources & couverture"
+        description="Une vue honnête de ce qui est prêt, à connecter ou hors couverture."
+        action={
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setLookupOpen(!lookupOpen)}
+          >
+            {lookupOpen ? "Fermer le test" : "Tester Keepa"}
+          </button>
+        }
+      />
+
+      {lookupOpen ? (
+        <div className="lookup-panel">
+          <div className="lookup-heading">
+            <div className="source-logo keepa-logo">K</div>
+            <div>
+              <span className="eyebrow">Connexion serveur sécurisée</span>
+              <h2>Vérifier un ASIN avec Keepa</h2>
+              <p>La clé API ne quitte jamais le serveur.</p>
+            </div>
+          </div>
+          <form className="lookup-form" onSubmit={onSubmit}>
+            <label>
+              <span>Marketplace</span>
+              <select value={market} onChange={(e) => setMarket(e.target.value)}>
+                {MARKET_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="asin-field">
+              <span>ASIN</span>
+              <input
+                value={asin}
+                onChange={(e) => setAsin(e.target.value.toUpperCase())}
+                placeholder="B0B9C4DKKG"
+                maxLength={10}
+                autoCapitalize="characters"
+                spellCheck={false}
+              />
+            </label>
+            <button type="submit" className="dark-button" disabled={loading}>
+              {loading ? "Analyse…" : "Analyser"}
+            </button>
+          </form>
+          {error ? (
+            <div className="lookup-message is-error" role="alert">
+              <strong>Connexion requise</strong>
+              <p>{error}</p>
+              <code>KEEPA_API_KEY</code>
+            </div>
+          ) : null}
+          {normalized ? (
+            <div className="lookup-result" role="status">
+              <span className="result-check">✓</span>
+              <div>
+                <small>Produit trouvé</small>
+                <strong>{title}</strong>
+                <span>
+                  {priceMinor > 0
+                    ? money(priceMinor / 100, currency)
+                    : "Prix actuel indisponible"}
+                </span>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="coverage-callout">
+        <div>
+          <span className="eyebrow">Amazon Europe</span>
+          <h2>5 marchés couverts par Keepa</h2>
+          <p>
+            France, Allemagne, Italie, Espagne et Royaume-Uni. Chaque marché
+            conserve son catalogue, sa devise et son historique propres.
+          </p>
+        </div>
+        <div className="market-badges" aria-label="Marchés Amazon couverts">
+          {MARKET_OPTIONS.map((option) => (
+            <span key={option.value}>{option.value}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="source-list">
+        <SourceRow
+          mark="K"
+          name="Amazon via Keepa"
+          detail="FR · DE · IT · ES · UK"
+          status="À connecter"
+          tone="pending"
+          method="Historique 90 jours, Buy Box, deuxième vérification avant alerte"
+        />
+        <SourceRow
+          mark="B"
+          name="Boulanger"
+          detail="France · flux catalogue + contrôle page"
+          status="Préparé"
+          tone="prepared"
+          method="Flux partenaire prioritaire, navigateur uniquement en repli"
+        />
+        <SourceRow
+          mark="D"
+          name="Darty"
+          detail="France · flux affilié + contrôle page"
+          status="Préparé"
+          tone="prepared"
+          method="Référence exacte, vendeur et frais de livraison normalisés"
+        />
+        <SourceRow
+          mark="C"
+          name="Cdiscount"
+          detail="France · marketplace"
+          status="À brancher"
+          tone="pending"
+          method="Vendeurs tiers séparés, score de fiabilité renforcé"
+        />
+      </div>
+
+      <div className="coverage-limit">
+        <span aria-hidden="true">!</span>
+        <div>
+          <strong>Keepa ne couvre pas tous les Amazon européens.</strong>
+          <p>
+            Belgique, Pays-Bas, Pologne, Suède et Irlande nécessiteront un autre
+            fournisseur ou un connecteur dédié. Ils ne sont pas artificiellement
+            rattachés à un autre pays.
+          </p>
+        </div>
+      </div>
+
+      <section className="method-section">
+        <span className="eyebrow">Méthode d’alerte</span>
+        <h2>Du signal à la notification</h2>
+        <div className="method-grid">
+          {[
+            ["01", "Détecter", "Flux, API et pages font remonter les baisses inhabituelles."],
+            ["02", "Comparer", "Médiane, historique et références exactes réduisent le bruit."],
+            ["03", "Revérifier", "Prix total, stock, variante et vendeur sont relus une seconde fois."],
+            ["04", "Alerter", "Seuls les signaux frais et suffisamment fiables sont envoyés."],
+          ].map(([number, name, description]) => (
+            <div key={number} className="method-card">
+              <span>{number}</span>
+              <h3>{name}</h3>
+              <p>{description}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function SourceRow({
+  mark,
+  name,
+  detail,
+  status,
+  tone,
+  method,
+}: {
+  mark: string;
+  name: string;
+  detail: string;
+  status: string;
+  tone: "pending" | "prepared";
+  method: string;
+}) {
+  return (
+    <article className="source-row">
+      <div className={`source-logo source-${mark.toLowerCase()}`}>{mark}</div>
+      <div className="source-identity">
+        <h3>{name}</h3>
+        <p>{detail}</p>
+      </div>
+      <p className="source-method">{method}</p>
+      <span className={`source-status status-${tone}`}>
+        <i /> {status}
+      </span>
+    </article>
+  );
+}
+
+function SettingsView({
+  notificationState,
+  onNotifications,
+  minScore,
+  setMinScore,
+  quietHours,
+  setQuietHours,
+  onInstall,
+  installReady,
+}: {
+  notificationState: string;
+  onNotifications: () => void;
+  minScore: number;
+  setMinScore: (value: number) => void;
+  quietHours: boolean;
+  setQuietHours: (value: boolean) => void;
+  onInstall: () => void;
+  installReady: boolean;
+}) {
+  return (
+    <section className="view-section settings-view">
+      <PageHeading
+        eyebrow="Préférences"
+        title="Des alertes utiles, jamais bruyantes"
+        description="Ajustez le niveau de confiance et les moments où PrixRadar peut vous prévenir."
+      />
+
+      <div className="settings-grid">
+        <section className="setting-card setting-featured">
+          <div className="setting-icon">↗</div>
+          <div className="setting-copy">
+            <span className="eyebrow">Application installable</span>
+            <h2>Gardez le radar à portée de pouce</h2>
+            <p>
+              Ajoutez PrixRadar à l’écran d’accueil pour une expérience plein
+              écran et un accès plus rapide.
+            </p>
+          </div>
+          <button type="button" className="primary-button" onClick={onInstall}>
+            {installReady ? "Installer l’application" : "Voir comment installer"}
+          </button>
+        </section>
+
+        <section className="setting-card">
+          <div className="setting-row-heading">
+            <div>
+              <span className="eyebrow">Notifications</span>
+              <h2>Alertes navigateur</h2>
+            </div>
+            <span className="setting-status">{notificationState}</span>
+          </div>
+          <p>
+            Activez l’autorisation locale. L’envoi automatique commencera lorsque
+            le moteur de collecte sera connecté.
+          </p>
+          <button type="button" className="secondary-button" onClick={onNotifications}>
+            Autoriser et tester
+          </button>
+        </section>
+
+        <section className="setting-card">
+          <div className="setting-row-heading">
+            <div>
+              <span className="eyebrow">Seuil de confiance</span>
+              <h2>{minScore}/100 minimum</h2>
+            </div>
+            <span className={`confidence ${confidenceClass(minScore >= 85 ? "Très probable" : "Probable")}`}>
+              <i /> {minScore >= 85 ? "Très sélectif" : "Équilibré"}
+            </span>
+          </div>
+          <input
+            className="score-range"
+            type="range"
+            min="60"
+            max="95"
+            step="5"
+            value={minScore}
+            onChange={(event) => setMinScore(Number(event.target.value))}
+            aria-label="Score minimal de confiance"
+          />
+          <div className="range-labels">
+            <span>Plus de signaux</span>
+            <span>Plus fiable</span>
+          </div>
+        </section>
+
+        <section className="setting-card">
+          <div className="toggle-row">
+            <div>
+              <span className="eyebrow">Tranquillité</span>
+              <h2>Silence de 22 h à 8 h</h2>
+              <p>Les alertes attendent le matin, sauf signal critique expirant vite.</p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${quietHours ? "is-on" : ""}`}
+              role="switch"
+              aria-checked={quietHours}
+              onClick={() => setQuietHours(!quietHours)}
+              aria-label="Activer les heures silencieuses"
+            >
+              <span />
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <div className="privacy-card">
+        <span className="privacy-mark">P</span>
+        <div>
+          <strong>Vos suivis restent liés à cet appareil.</strong>
+          <p>
+            La liste est enregistrée côté serveur avec un identifiant anonyme.
+            Aucune clé Keepa ni donnée sensible n’est stockée dans le navigateur.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AlertDetail({
+  alert,
+  watched,
+  onWatch,
+  onClose,
+}: {
+  alert: AlertItem;
+  watched: boolean;
+  onWatch: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="detail-backdrop" onMouseDown={onClose}>
+      <aside
+        className="detail-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detail-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-handle" aria-hidden="true" />
+        <header className="detail-header">
+          <div>
+            <span className="merchant-pill">{alert.merchant}</span>
+            <span className="demo-inline">EXEMPLE</span>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Fermer l’analyse">
+            ×
+          </button>
+        </header>
+
+        <div className={`detail-hero accent-${alert.accent}`}>
+          <span>{alert.label}</span>
+          <i />
+        </div>
+        <div className="detail-title-block">
+          <p>{alert.category} · {alert.sku}</p>
+          <h2 id="detail-title">{alert.title}</h2>
+          <div className="detail-price">
+            <strong>{money(alert.currentPrice, alert.currency)}</strong>
+            <del>{money(alert.usualPrice, alert.currency)}</del>
+            <span>−{alert.discount} %</span>
+          </div>
+        </div>
+
+        <section className="confidence-box">
+          <div className="score-ring" style={{ "--score": `${alert.score * 3.6}deg` } as React.CSSProperties}>
+            <span>{alert.score}</span>
+          </div>
+          <div>
+            <span className={`confidence ${confidenceClass(alert.confidence)}`}>
+              <i /> {alert.confidence}
+            </span>
+            <h3>Pourquoi ce score ?</h3>
+            <p>
+              Plus les références, l’historique et la seconde lecture concordent,
+              plus le signal est fiable.
+            </p>
+          </div>
+        </section>
+
+        <section className="detail-section">
+          <div className="section-label-row">
+            <h3>Les indices</h3>
+            <span>3 contrôles</span>
+          </div>
+          <ul className="reason-list">
+            {alert.reasons.map((reason) => (
+              <li key={reason}>
+                <span aria-hidden="true">✓</span> {reason}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="detail-section">
+          <div className="section-label-row">
+            <h3>Historique 90 jours</h3>
+            <span>{alert.source.includes("Keepa") ? "Keepa" : "Interne"}</span>
+          </div>
+          <div className="price-chart" aria-label="Historique de prix simplifié">
+            {alert.history.map((value, index) => (
+              <i key={`${value}-${index}`} style={{ height: `${value}%` }} />
+            ))}
+          </div>
+          <div className="chart-legend">
+            <span>Il y a 90 jours</span>
+            <span>Maintenant</span>
+          </div>
+        </section>
+
+        <section className="detail-section verified-grid">
+          <div><span>Vendeur</span><strong>{alert.seller}</strong></div>
+          <div><span>État</span><strong>{alert.condition}</strong></div>
+          <div><span>Livraison</span><strong>{alert.shipping}</strong></div>
+          <div><span>Dernier contrôle</span><strong>{alert.verifiedAt}</strong></div>
+        </section>
+
+        <div className="detail-warning">
+          <span aria-hidden="true">!</span>
+          <p>
+            Un prix peut expirer ou être annulé. Vérifiez le total et le vendeur
+            sur la page finale avant de payer.
+          </p>
+        </div>
+
+        <footer className="detail-actions">
+          <button
+            type="button"
+            className={`secondary-button detail-watch ${watched ? "is-watched" : ""}`}
+            onClick={onWatch}
+          >
+            {watched ? "◆ Suivi" : "◇ Suivre"}
+          </button>
+          <a
+            className="primary-button"
+            href={alert.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Vérifier chez {alert.merchant} ↗
+          </a>
+        </footer>
+      </aside>
+    </div>
+  );
+}
