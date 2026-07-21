@@ -33,6 +33,7 @@ Ajouter aux variables serveur du Site :
 - `VAPID_SUBJECT`, par exemple `mailto:alertes@votre-domaine.fr`
 - `NEXT_PUBLIC_SITE_URL`, avec l’URL publique finale
 - `KEEPA_API_KEY`, après souscription Keepa
+- `ADMIN_EMAILS`, avec les adresses autorisées à piloter les sources
 
 Après redéploiement, `/api/health` doit répondre sans révéler les valeurs et
 afficher les capacités correspondantes à `true`.
@@ -63,10 +64,11 @@ depuis un poste d’administration.
 
 ## 4. Choisir les pages de départ françaises
 
-`PRIXRADAR_RETAIL_URLS` reçoit une liste séparée par des virgules ou des retours
-à la ligne. Utiliser des pages catégorie/recherche stables de Boulanger, Darty et
-Cdiscount, jamais des domaines non autorisés. Le collecteur découvre les fiches
-produit, puis effectue deux lectures avant ingestion.
+Les pages se gèrent désormais dans l’onglet **Pilotage**. `PRIXRADAR_RETAIL_URLS`
+reste un amorçage facultatif pour le premier déploiement. Utiliser des pages
+catégorie/recherche stables de Boulanger, Darty et Cdiscount, jamais des domaines
+non autorisés. Le collecteur récupère automatiquement le plan dû, découvre les
+fiches produit, puis effectue deux lectures avant ingestion.
 
 Commencer avec une page par enseigne. Élargir ensuite selon la consommation
 réelle et la stabilité des connecteurs ; plus d’URL ne signifie pas

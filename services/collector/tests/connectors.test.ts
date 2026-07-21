@@ -26,4 +26,17 @@ test("autorise les cinq domaines Amazon EU et extrait les garde-fous de la page"
   assert.equal(offer.sellerTrusted, true);
   assert.equal(offer.availability, "in_stock");
   assert.equal(offer.condition, "new");
+  assert.equal(offer.promotion?.accessibleToAll, true);
+});
+
+test("sépare un coupon conditionnel du prix public", () => {
+  const html = `<html><body>
+    <h1>Produit avec coupon</h1><div data-product-id="12345"></div>
+    <div data-testid="price">99,99 €</div><div data-testid="shipping">Livraison gratuite</div>
+    <div data-testid="seller">Boulanger</div><div data-testid="availability">En stock</div>
+    <div data-testid="condition">Neuf</div><div data-testid="coupon">Coupon de 20 € à appliquer</div>
+  </body></html>`;
+  const [offer] = extractRetailOffers(html, "https://www.boulanger.com/ref/12345");
+  assert.ok(offer);
+  assert.deepEqual(offer.promotion, { type: "coupon", label: "Coupon de 20 € à appliquer", accessibleToAll: false });
 });

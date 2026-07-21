@@ -3,6 +3,7 @@ export type Market = "FR" | "DE" | "IT" | "ES" | "GB";
 export type Currency = "EUR" | "GBP";
 export type Availability = "in_stock" | "out_of_stock" | "preorder" | "unknown";
 export type ExtractionStrategy = "json-ld" | "connector" | "keepa";
+export type PromotionType = "public_price" | "coupon" | "membership" | "cashback" | "trade_in" | "bundle" | "unknown";
 
 export interface Money {
   amountMinor: number;
@@ -18,6 +19,7 @@ export interface ProductIdentity {
   brand: string | null;
   model: string | null;
   gtin: string | null;
+  category?: string | null;
   url: string;
   imageUrl: string | null;
 }
@@ -36,6 +38,11 @@ export interface OfferSnapshot {
   observedAt: string;
   strategy: ExtractionStrategy;
   fixture: boolean;
+  promotion?: {
+    type: PromotionType;
+    label: string | null;
+    accessibleToAll: boolean;
+  };
 }
 
 export interface VerificationEvidence {
@@ -76,7 +83,7 @@ export interface IngestResponse {
   duplicate?: boolean;
   alert?: {
     id: string;
-    status: "active" | "review" | "monitoring";
+    status: "active" | "review" | "monitoring" | "expired";
     score: number;
     confidence: string;
     notificationRequested: boolean;
@@ -111,4 +118,8 @@ export interface SourceStatusEvent {
   lastErrorCode: string | null;
   productsSeen: number;
   queueLag: number;
+  duplicatesSkipped?: number;
+  antiBotBlocked?: boolean;
+  keepaRequests?: number;
+  apifyCostMicros?: number | null;
 }

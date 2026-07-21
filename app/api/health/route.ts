@@ -24,7 +24,7 @@ export async function GET() {
   const body = {
     ok: database,
     service: "prixradar",
-    version: "0.3.0",
+    version: "0.4.0",
     checkedAt: new Date().toISOString(),
     capabilities: {
       database,
@@ -36,6 +36,8 @@ export async function GET() {
         configured("VAPID_PUBLIC_KEY") &&
         configured("VAPID_PRIVATE_KEY") &&
         configured("PUSH_DELIVERY_SECRET"),
+      administration: configured("ADMIN_EMAILS"),
+      affiliateLinks: configured("AMAZON_ASSOCIATE_TAG"),
     },
   };
 

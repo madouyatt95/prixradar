@@ -359,6 +359,7 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     observedAt: product.observedAt,
     strategy: "keepa",
     fixture,
+    promotion: { type: "public_price", label: null, accessibleToAll: true },
   };
 }
 

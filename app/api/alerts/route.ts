@@ -1,4 +1,5 @@
-import { and, desc, eq, gt, gte, inArray, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { env } from "cloudflare:workers";
 
 import { getDb } from "@/db";
 import { alerts } from "@/db/schema";
@@ -50,6 +51,9 @@ function parseEvidence(value: string) {
       blockingReasons: Array.isArray(analysis?.blockingReasons)
         ? analysis.blockingReasons.filter((reason): reason is string => typeof reason === "string").slice(0, 20)
         : [],
+      marketMedianCents: typeof analysis?.marketMedianCents === "number" ? analysis.marketMedianCents : null,
+      marketSources: typeof analysis?.marketSources === "number" ? analysis.marketSources : 0,
+      marketDiscountPercent: typeof analysis?.marketDiscountPercent === "number" ? analysis.marketDiscountPercent : null,
     };
   } catch {
     return null;
@@ -63,6 +67,13 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
     row.status === "active" &&
     row.verifiedAt !== null &&
     evidence?.notificationEligible === true;
+  let affiliateUrl: string | null = null;
+  const tag = (env as unknown as { AMAZON_ASSOCIATE_TAG?: unknown }).AMAZON_ASSOCIATE_TAG ?? process.env.AMAZON_ASSOCIATE_TAG;
+  if (row.source === "amazon" && typeof tag === "string" && /^[A-Za-z0-9-]{3,40}$/.test(tag)) {
+    const url = new URL(row.url);
+    url.searchParams.set("tag", tag);
+    affiliateUrl = url.toString();
+  }
 
   return {
     id: row.id,
@@ -72,8 +83,14 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
     merchant: row.merchant,
     market: row.market,
     productId: row.productId,
+    identityKey: row.identityKey,
     title: row.title,
+    brand: row.brand,
+    model: row.model,
+    gtin: row.gtin,
+    category: row.category,
     url: row.url,
+    affiliateUrl,
     currency: row.currency,
     priceCents: row.priceCents,
     shippingCents: row.shippingCents,
@@ -87,6 +104,10 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
     notificationEligible: liveEligible,
     seller: row.seller,
     condition: row.condition,
+    publicPriceCents: row.publicPriceCents,
+    priceAccessibleToAll: row.priceAccessibleToAll,
+    promotionType: row.promotionType,
+    promotionLabel: row.promotionLabel,
     observedAt: row.observedAt,
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
@@ -96,6 +117,9 @@ function serializeAlert(row: typeof alerts.$inferSelect) {
       robustZ: evidence.robustZ,
       freshnessMinutes: evidence.freshnessMinutes,
       blockingReasons: evidence.blockingReasons,
+      marketMedianCents: evidence.marketMedianCents,
+      marketSources: evidence.marketSources,
+      marketDiscountPercent: evidence.marketDiscountPercent,
     },
   };
 }
@@ -117,6 +141,7 @@ export async function GET(request: Request) {
   let offset: number;
   let minDiscount: number;
   let minScore: number;
+  let maxPrice: number;
 
   try {
     limit = boundedInteger(url.searchParams.get("limit"), "limit", 20, 1, 50);
@@ -129,6 +154,7 @@ export async function GET(request: Request) {
       0,
       100,
     );
+    maxPrice = boundedInteger(url.searchParams.get("maxPriceCents"), "maxPriceCents", 100_000_000, 1, 100_000_000);
   } catch (error) {
     return apiError(400, "INVALID_FILTER", error instanceof Error ? error.message : "Filtre invalide.");
   }
@@ -146,6 +172,11 @@ export async function GET(request: Request) {
   if (confidence !== null && !CONFIDENCE.has(confidence)) {
     return apiError(400, "INVALID_CONFIDENCE", "confidence est invalide.");
   }
+  const category = url.searchParams.get("category")?.trim() ?? null;
+  if (category !== null && (!category || category.length > 80)) {
+    return apiError(400, "INVALID_CATEGORY", "category est invalide.");
+  }
+  const accessibleOnly = url.searchParams.get("accessibleOnly") !== "false";
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -161,6 +192,7 @@ export async function GET(request: Request) {
     gte(alerts.verifiedAt, freshAfter),
     gte(alerts.score, ANOMALY_LIMITS.minNotificationScore),
     inArray(alerts.confidence, ["very_likely", "likely"]),
+    eq(alerts.priceAccessibleToAll, true),
     sql`json_extract(${alerts.evidenceJson}, '$.notificationEligible') = 1`,
   );
   const visibility = includeDemo
@@ -170,9 +202,12 @@ export async function GET(request: Request) {
       )
     : liveEligibility;
   const conditions: SQL[] = [visibility as SQL, gte(alerts.discountPercent, minDiscount), gte(alerts.score, minScore)];
+  conditions.push(lte(alerts.publicPriceCents, maxPrice));
+  if (accessibleOnly) conditions.push(eq(alerts.priceAccessibleToAll, true));
   if (source !== null) conditions.push(eq(alerts.source, source));
   if (market !== null) conditions.push(eq(alerts.market, market));
   if (confidence !== null) conditions.push(eq(alerts.confidence, confidence));
+  if (category !== null) conditions.push(eq(alerts.category, category));
   const where = and(...conditions);
 
   try {

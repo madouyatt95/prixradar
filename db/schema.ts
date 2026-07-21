@@ -42,7 +42,12 @@ export const alerts = sqliteTable(
     merchant: text("merchant").notNull(),
     market: text("market").notNull(),
     productId: text("product_id").notNull(),
+    identityKey: text("identity_key"),
     title: text("title").notNull(),
+    brand: text("brand"),
+    model: text("model"),
+    gtin: text("gtin"),
+    category: text("category"),
     url: text("url").notNull(),
     currency: text("currency").notNull(),
     priceCents: integer("price_cents").notNull(),
@@ -54,6 +59,12 @@ export const alerts = sqliteTable(
     seller: text("seller"),
     condition: text("condition"),
     shippingCents: integer("shipping_cents"),
+    publicPriceCents: integer("public_price_cents"),
+    priceAccessibleToAll: integer("price_accessible_to_all", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    promotionType: text("promotion_type").notNull().default("public_price"),
+    promotionLabel: text("promotion_label"),
     evidenceJson: text("evidence_json").notNull().default("{}"),
     observedAt: text("observed_at").notNull(),
     verifiedAt: text("verified_at"),
@@ -72,6 +83,8 @@ export const alerts = sqliteTable(
       table.market,
       table.productId
     ),
+    index("alerts_identity_observed_idx").on(table.identityKey, table.observedAt),
+    index("alerts_category_price_idx").on(table.category, table.publicPriceCents),
     index("alerts_expiry_updated_idx").on(table.expiresAt, table.updatedAt),
     check("alerts_price_nonnegative", sql`${table.priceCents} >= 0`),
     check("alerts_usual_price_positive", sql`${table.usualPriceCents} > 0`),
@@ -94,6 +107,11 @@ export const alerts = sqliteTable(
     check(
       "alerts_shipping_nonnegative",
       sql`${table.shippingCents} >= 0`
+    ),
+    check("alerts_public_price_nonnegative", sql`${table.publicPriceCents} >= 0`),
+    check(
+      "alerts_promotion_type_allowed",
+      sql`${table.promotionType} IN ('public_price', 'coupon', 'membership', 'cashback', 'trade_in', 'bundle', 'unknown')`
     ),
     check(
       "alerts_discount_percent_range",
@@ -183,6 +201,96 @@ export const sourceStatuses = sqliteTable(
   ]
 );
 
+export const sourceConfigurations = sqliteTable(
+  "source_configurations",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(),
+    market: text("market").notNull(),
+    displayName: text("display_name").notNull(),
+    discoveryUrl: text("discovery_url").notNull(),
+    category: text("category").notNull().default("Général"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    cadenceMinutes: integer("cadence_minutes").notNull().default(60),
+    volatilityScore: integer("volatility_score").notNull().default(50),
+    lastRunAt: text("last_run_at"),
+    lastSuccessAt: text("last_success_at"),
+    productsSeen: integer("products_seen").notNull().default(0),
+    duplicateUrls: integer("duplicate_urls").notNull().default(0),
+    pausedReason: text("paused_reason"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("source_config_source_market_url_unique").on(
+      table.source,
+      table.market,
+      table.discoveryUrl
+    ),
+    index("source_config_enabled_due_idx").on(table.enabled, table.lastRunAt),
+    check("source_config_cadence_range", sql`${table.cadenceMinutes} BETWEEN 15 AND 1440`),
+    check("source_config_volatility_range", sql`${table.volatilityScore} BETWEEN 0 AND 100`),
+    check("source_config_products_nonnegative", sql`${table.productsSeen} >= 0`),
+    check("source_config_duplicates_nonnegative", sql`${table.duplicateUrls} >= 0`),
+  ]
+);
+
+export const collectionRuns = sqliteTable(
+  "collection_runs",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(),
+    market: text("market").notNull(),
+    status: text("status").notNull(),
+    productsSeen: integer("products_seen").notNull().default(0),
+    queueLag: integer("queue_lag").notNull().default(0),
+    duplicatesSkipped: integer("duplicates_skipped").notNull().default(0),
+    antiBotBlocked: integer("anti_bot_blocked", { mode: "boolean" }).notNull().default(false),
+    keepaRequests: integer("keepa_requests").notNull().default(0),
+    apifyCostMicros: integer("apify_cost_micros"),
+    errorCode: text("error_code"),
+    attemptedAt: text("attempted_at").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("collection_runs_source_attempt_idx").on(table.source, table.attemptedAt),
+    index("collection_runs_attempt_idx").on(table.attemptedAt),
+    check("collection_runs_products_nonnegative", sql`${table.productsSeen} >= 0`),
+    check("collection_runs_queue_nonnegative", sql`${table.queueLag} >= 0`),
+    check("collection_runs_duplicates_nonnegative", sql`${table.duplicatesSkipped} >= 0`),
+    check("collection_runs_keepa_nonnegative", sql`${table.keepaRequests} >= 0`),
+    check("collection_runs_cost_nonnegative", sql`${table.apifyCostMicros} >= 0`),
+  ]
+);
+
+export const alertFeedback = sqliteTable(
+  "alert_feedback",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    alertId: text("alert_id").notNull().references(() => alerts.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull(),
+    verdict: text("verdict").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("alert_feedback_owner_alert_unique").on(table.ownerId, table.alertId),
+    index("alert_feedback_alert_verdict_idx").on(table.alertId, table.verdict),
+    check("alert_feedback_verdict_allowed", sql`${table.verdict} IN ('useful', 'false_positive', 'expired')`),
+  ]
+);
+
+export const privacyConsents = sqliteTable(
+  "privacy_consents",
+  {
+    ownerId: text("owner_id").primaryKey(),
+    analytics: integer("analytics", { mode: "boolean" }).notNull().default(false),
+    affiliateLinks: integer("affiliate_links", { mode: "boolean" }).notNull().default(false),
+    policyVersion: text("policy_version").notNull().default("2026-07"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  }
+);
+
 export const ingestEvents = sqliteTable(
   "ingest_events",
   {
@@ -254,6 +362,11 @@ export const userPreferences = sqliteTable(
     notificationEnabled: integer("notification_enabled", { mode: "boolean" })
       .notNull()
       .default(true),
+    minDiscount: integer("min_discount").notNull().default(20),
+    maxPriceCents: integer("max_price_cents"),
+    marketsJson: text("markets_json").notNull().default("[]"),
+    categoriesJson: text("categories_json").notNull().default("[]"),
+    sourcesJson: text("sources_json").notNull().default("[]"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -262,6 +375,8 @@ export const userPreferences = sqliteTable(
       "user_preferences_min_score_range",
       sql`${table.minScore} BETWEEN 60 AND 95`
     ),
+    check("user_preferences_min_discount_range", sql`${table.minDiscount} BETWEEN 0 AND 90`),
+    check("user_preferences_max_price_positive", sql`${table.maxPriceCents} > 0`),
   ]
 );
 

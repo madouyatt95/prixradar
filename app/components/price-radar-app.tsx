@@ -8,8 +8,9 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from "react";
+import { AdminView } from "./admin-view";
 
-type Tab = "radar" | "watchlist" | "sources" | "settings";
+type Tab = "radar" | "watchlist" | "sources" | "admin" | "settings";
 type Confidence = "Très probable" | "Probable" | "À vérifier";
 type SourceMode = "live" | "fixture";
 
@@ -37,8 +38,13 @@ type AlertItem = {
   label: string;
   accent: "violet" | "coral" | "mint" | "gold" | "blue";
   url: string;
+  affiliateUrl?: string | null;
   reasons: string[];
   history: number[];
+  priceAccessibleToAll?: boolean;
+  promotionLabel?: string | null;
+  marketMedian?: number | null;
+  marketSources?: number;
 };
 
 type SourceRuntimeStatus = {
@@ -254,6 +260,7 @@ const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "radar", label: "Radar", icon: "◎" },
   { id: "watchlist", label: "Suivis", icon: "◇" },
   { id: "sources", label: "Sources", icon: "⌁" },
+  { id: "admin", label: "Pilotage", icon: "◈" },
   { id: "settings", label: "Réglages", icon: "☷" },
 ];
 
@@ -367,6 +374,9 @@ function mapLiveAlert(value: unknown): AlertItem | null {
       "Seconde vérification requise avant notification",
     ];
   }
+  if (typeof evidence?.marketMedianCents === "number" && finite(evidence.marketSources) >= 2) {
+    reasons.unshift(`Prix comparé à ${Math.round(finite(evidence.marketSources))} enseignes · médiane ${money(finite(evidence.marketMedianCents) / 100, item.currency === "GBP" ? "GBP" : "EUR")}`);
+  }
   const confidenceRaw = String(item.confidence ?? "Probable").toLowerCase();
   const confidence: Confidence = confidenceRaw.includes("très") || confidenceRaw.includes("high") || confidenceRaw === "very_likely"
     ? "Très probable"
@@ -433,8 +443,13 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     label: alertLabel(source, item.title),
     accent: alertAccent(source),
     url: typeof item.url === "string" ? item.url : "#",
+    affiliateUrl: typeof item.affiliateUrl === "string" ? item.affiliateUrl : null,
     reasons,
     history,
+    priceAccessibleToAll: item.priceAccessibleToAll !== false,
+    promotionLabel: typeof item.promotionLabel === "string" ? item.promotionLabel : null,
+    marketMedian: typeof evidence?.marketMedianCents === "number" ? finite(evidence.marketMedianCents) / 100 : null,
+    marketSources: finite(evidence?.marketSources),
   };
 }
 
@@ -482,6 +497,12 @@ export function PriceRadarApp() {
   });
   const [minScore, setMinScore] = useState(75);
   const [quietHours, setQuietHours] = useState(true);
+  const [minDiscount, setMinDiscount] = useState(20);
+  const [maxPriceEuros, setMaxPriceEuros] = useState("");
+  const [preferredMarkets, setPreferredMarkets] = useState("FR");
+  const [preferredCategories, setPreferredCategories] = useState("");
+  const [analyticsConsent, setAnalyticsConsent] = useState(false);
+  const [affiliateConsent, setAffiliateConsent] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -595,6 +616,10 @@ export function PriceRadarApp() {
         if (typeof preferences.quietHours === "boolean") {
           setQuietHours(preferences.quietHours);
         }
+        if (typeof preferences.minDiscount === "number") setMinDiscount(preferences.minDiscount);
+        if (typeof preferences.maxPriceCents === "number") setMaxPriceEuros(String(preferences.maxPriceCents / 100));
+        if (Array.isArray(preferences.markets)) setPreferredMarkets(preferences.markets.join(", "));
+        if (Array.isArray(preferences.categories)) setPreferredCategories(preferences.categories.join(", "));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -611,11 +636,36 @@ export function PriceRadarApp() {
       fetch("/api/preferences", {
         method: "PUT",
         headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ minScore, quietHours }),
+        body: JSON.stringify({
+          minScore,
+          quietHours,
+          minDiscount,
+          maxPriceCents: maxPriceEuros.trim() ? Math.max(1, Math.round(Number(maxPriceEuros) * 100)) : null,
+          markets: preferredMarkets.split(",").map((item) => item.trim()).filter(Boolean),
+          categories: preferredCategories.split(",").map((item) => item.trim()).filter(Boolean),
+        }),
       }).catch(() => undefined);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [minScore, preferencesReady, quietHours]);
+  }, [maxPriceEuros, minDiscount, minScore, preferredCategories, preferredMarkets, preferencesReady, quietHours]);
+
+  useEffect(() => {
+    fetch("/api/consent", { headers: { accept: "application/json" } }).then(async (response) => response.ok ? response.json() : null).then((data: unknown) => {
+      const consent = record(record(data)?.consent);
+      if (consent) {
+        setAnalyticsConsent(consent.analytics === true);
+        setAffiliateConsent(consent.affiliateLinks === true);
+      }
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    const timer = window.setTimeout(() => {
+      fetch("/api/consent", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ analytics: analyticsConsent, affiliateLinks: affiliateConsent }) }).catch(() => undefined);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [affiliateConsent, analyticsConsent, preferencesReady]);
 
   useEffect(() => {
     let active = true;
@@ -681,8 +731,12 @@ export function PriceRadarApp() {
       const filterMatch =
         filter === "Tout" ||
         (filter === "Très probable" && alert.confidence === "Très probable") ||
+        (filter === "Prix public" && alert.priceAccessibleToAll !== false) ||
+        (filter === "Remise ≥ 30 %" && alert.discount >= 30) ||
+        (filter === "Budget ≤ 250 €" && alert.currency === "EUR" && alert.currentPrice <= 250) ||
         (filter === "Amazon · Keepa" && alert.source.includes("Keepa")) ||
-        (filter === "France" && alert.market.includes("France"));
+        (filter === "France" && alert.market.includes("France")) ||
+        (filter.startsWith("Catégorie · ") && alert.category === filter.slice("Catégorie · ".length));
       const searchMatch =
         !query ||
         `${alert.title} ${alert.merchant} ${alert.category}`
@@ -754,6 +808,20 @@ export function PriceRadarApp() {
         return next;
       });
       setToast("Impossible d’enregistrer pour le moment");
+    }
+  }
+
+  async function submitFeedback(alert: AlertItem, verdict: "useful" | "false_positive" | "expired") {
+    try {
+      const response = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ alertId: alert.id, verdict }),
+      });
+      if (!response.ok) throw new Error("feedback");
+      setToast(verdict === "useful" ? "Merci, bonne alerte enregistrée" : verdict === "expired" ? "Prix expiré signalé" : "Faux positif enregistré");
+    } catch {
+      setToast(alert.sourceMode === "live" ? "Impossible d’enregistrer cet avis" : "Les avis concernent les alertes actives");
     }
   }
 
@@ -878,6 +946,7 @@ export function PriceRadarApp() {
   }
 
   function renderTab() {
+    if (tab === "admin") return <AdminView />;
     if (tab === "watchlist") {
       return (
         <WatchlistView
@@ -917,6 +986,18 @@ export function PriceRadarApp() {
           setMinScore={setMinScore}
           quietHours={quietHours}
           setQuietHours={setQuietHours}
+          minDiscount={minDiscount}
+          setMinDiscount={setMinDiscount}
+          maxPriceEuros={maxPriceEuros}
+          setMaxPriceEuros={setMaxPriceEuros}
+          preferredMarkets={preferredMarkets}
+          setPreferredMarkets={setPreferredMarkets}
+          preferredCategories={preferredCategories}
+          setPreferredCategories={setPreferredCategories}
+          analyticsConsent={analyticsConsent}
+          setAnalyticsConsent={setAnalyticsConsent}
+          affiliateConsent={affiliateConsent}
+          setAffiliateConsent={setAffiliateConsent}
           onInstall={installApp}
           installReady={Boolean(installPrompt)}
         />
@@ -1045,6 +1126,8 @@ export function PriceRadarApp() {
           alert={selected}
           watched={watched.has(selected.id)}
           onWatch={() => toggleWatch(selected)}
+          onFeedback={(verdict) => void submitFeedback(selected, verdict)}
+          useAffiliateLink={affiliateConsent}
           onClose={() => setSelected(null)}
         />
       ) : null}
@@ -1122,7 +1205,8 @@ function RadarView({
   mode: SourceMode;
   loading: boolean;
 }) {
-  const filters = ["Tout", "Très probable", "Amazon · Keepa", "France"];
+  const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
+  const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon · Keepa", "France", ...categories.map((category) => `Catégorie · ${category}`)];
   const verifiedCount = alerts.filter((alert) => alert.score >= 75).length;
   const medianDiscount = alerts.length
     ? [...alerts].sort((a, b) => a.discount - b.discount)[Math.floor(alerts.length / 2)]
@@ -1288,6 +1372,9 @@ function AlertCard({
               <i /> {alert.confidence}
             </span>
             <span className="score">{alert.score}/100</span>
+            <span className={`access-badge ${alert.priceAccessibleToAll === false ? "is-conditional" : ""}`}>
+              {alert.priceAccessibleToAll === false ? "Sous condition" : "Prix public"}
+            </span>
           </div>
         </div>
       </button>
@@ -1705,6 +1792,18 @@ function SettingsView({
   setMinScore,
   quietHours,
   setQuietHours,
+  minDiscount,
+  setMinDiscount,
+  maxPriceEuros,
+  setMaxPriceEuros,
+  preferredMarkets,
+  setPreferredMarkets,
+  preferredCategories,
+  setPreferredCategories,
+  analyticsConsent,
+  setAnalyticsConsent,
+  affiliateConsent,
+  setAffiliateConsent,
   onInstall,
   installReady,
 }: {
@@ -1714,6 +1813,18 @@ function SettingsView({
   setMinScore: (value: number) => void;
   quietHours: boolean;
   setQuietHours: (value: boolean) => void;
+  minDiscount: number;
+  setMinDiscount: (value: number) => void;
+  maxPriceEuros: string;
+  setMaxPriceEuros: (value: string) => void;
+  preferredMarkets: string;
+  setPreferredMarkets: (value: string) => void;
+  preferredCategories: string;
+  setPreferredCategories: (value: string) => void;
+  analyticsConsent: boolean;
+  setAnalyticsConsent: (value: boolean) => void;
+  affiliateConsent: boolean;
+  setAffiliateConsent: (value: boolean) => void;
   onInstall: () => void;
   installReady: boolean;
 }) {
@@ -1756,6 +1867,17 @@ function SettingsView({
           <button type="button" className="secondary-button" onClick={onNotifications}>
             Autoriser et tester
           </button>
+        </section>
+
+        <section className="setting-card personalized-alerts">
+          <div className="setting-row-heading"><div><span className="eyebrow">Sans watchlist obligatoire</span><h2>Filtres d’alertes personnalisés</h2></div></div>
+          <div className="preference-fields">
+            <label>Remise minimale <strong>{minDiscount} %</strong><input type="range" min="0" max="90" step="5" value={minDiscount} onChange={(event) => setMinDiscount(Number(event.target.value))} /></label>
+            <label>Budget maximal (€)<input type="number" min="1" inputMode="decimal" value={maxPriceEuros} onChange={(event) => setMaxPriceEuros(event.target.value)} placeholder="Sans limite" /></label>
+            <label>Pays Amazon<input value={preferredMarkets} onChange={(event) => setPreferredMarkets(event.target.value)} placeholder="FR, DE, IT, ES, GB" /></label>
+            <label>Catégories<input value={preferredCategories} onChange={(event) => setPreferredCategories(event.target.value)} placeholder="Audio, Gaming, Maison" /></label>
+          </div>
+          <p>Ces règles s’appliquent directement aux notifications push, même sans produit suivi.</p>
         </section>
 
         <section className="setting-card">
@@ -1813,6 +1935,10 @@ function SettingsView({
             La liste est enregistrée côté serveur avec un identifiant anonyme.
             Aucune clé Keepa ni donnée sensible n’est stockée dans le navigateur.
           </p>
+          <div className="consent-actions">
+            <label><input type="checkbox" checked={analyticsConsent} onChange={(event) => setAnalyticsConsent(event.target.checked)} /> Mesure d’usage optionnelle</label>
+            <label><input type="checkbox" checked={affiliateConsent} onChange={(event) => setAffiliateConsent(event.target.checked)} /> Liens affiliés facultatifs</label>
+          </div>
         </div>
       </div>
     </section>
@@ -1823,11 +1949,15 @@ function AlertDetail({
   alert,
   watched,
   onWatch,
+  onFeedback,
+  useAffiliateLink,
   onClose,
 }: {
   alert: AlertItem;
   watched: boolean;
   onWatch: () => void;
+  onFeedback: (verdict: "useful" | "false_positive" | "expired") => void;
+  useAffiliateLink: boolean;
   onClose: () => void;
 }) {
   return (
@@ -1932,6 +2062,17 @@ function AlertDetail({
           <div><span>Dernier contrôle</span><strong>{alert.verifiedAt}</strong></div>
         </section>
 
+        <section className="detail-section">
+          <div className="section-label-row"><h3>Accessibilité du prix</h3><span>{alert.priceAccessibleToAll === false ? "Conditionnel" : "Pour tous"}</span></div>
+          <p>{alert.priceAccessibleToAll === false ? alert.promotionLabel ?? "Ce montant exige une condition commerciale à vérifier." : "Ce prix ne dépend ni d’une carte, ni d’un coupon, ni d’une reprise détectée."}</p>
+          {alert.marketMedian && alert.marketSources ? <p><strong>Comparaison marché :</strong> médiane de {money(alert.marketMedian, alert.currency)} sur {alert.marketSources} autres enseignes.</p> : null}
+        </section>
+
+        <section className="detail-section feedback-box">
+          <div className="section-label-row"><h3>Votre verdict</h3><span>Améliore les seuils</span></div>
+          <div className="feedback-actions"><button onClick={() => onFeedback("useful")}>Bonne alerte</button><button onClick={() => onFeedback("false_positive")}>Faux positif</button><button onClick={() => onFeedback("expired")}>Prix expiré</button></div>
+        </section>
+
         <div className="detail-warning">
           <span aria-hidden="true">!</span>
           <p>
@@ -1950,12 +2091,17 @@ function AlertDetail({
           </button>
           <a
             className="primary-button"
-            href={alert.url}
+            href={useAffiliateLink && alert.affiliateUrl ? alert.affiliateUrl : alert.url}
             target="_blank"
             rel="noreferrer"
           >
             Vérifier chez {alert.merchant} ↗
           </a>
+          <button type="button" className="secondary-button" onClick={() => {
+            const text = `${alert.title} · ${money(alert.currentPrice, alert.currency)} · vérifié à ${alert.verifiedAt} · ${alert.url}`;
+            if (navigator.share) void navigator.share({ title: "Alerte PrixRadar", text, url: alert.url });
+            else void navigator.clipboard?.writeText(text);
+          }}>Partager la preuve</button>
         </footer>
       </aside>
     </div>

@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, gte, lt, ne, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
   alerts,
+  alertFeedback,
+  collectionRuns,
   ingestEvents,
   keepaCache,
   keepaUsage,
@@ -11,6 +13,7 @@ import {
   priceObservations,
   pushSubscriptions,
   sourceStatuses,
+  sourceConfigurations,
 } from "@/db/schema";
 import {
   AnomalyInputError,
@@ -30,6 +33,7 @@ const AMAZON_MARKETS = new Set(["DE", "ES", "FR", "GB", "IT"]);
 const SOURCE_MODES = new Set<SourceMode>(["live", "demo", "fixture"]);
 const CONDITIONS = new Set<ProductCondition>(["new", "used", "refurbished", "unknown"]);
 const SOURCE_STATUSES = new Set(["healthy", "degraded", "offline", "not_configured"]);
+const PROMOTION_TYPES = new Set(["public_price", "coupon", "membership", "cashback", "trade_in", "bundle", "unknown"]);
 
 type Source = (typeof SOURCES)[number];
 type UnknownRecord = Record<string, unknown>;
@@ -47,7 +51,12 @@ type ParsedAlert = {
   merchant: string;
   market: string;
   productId: string;
+  identityKey: string | null;
   title: string;
+  brand: string | null;
+  model: string | null;
+  gtin: string | null;
+  category: string | null;
   url: string;
   currency: "EUR" | "GBP";
   priceCents: number;
@@ -66,6 +75,10 @@ type ParsedAlert = {
   notify: boolean;
   rawHash: string | null;
   historicalPrices: ParsedHistoricalPrice[];
+  publicPriceCents: number | null;
+  priceAccessibleToAll: boolean;
+  promotionType: string;
+  promotionLabel: string | null;
 };
 
 type ParsedHistoricalPrice = {
@@ -86,6 +99,10 @@ type ParsedSourceStatus = {
   lastErrorCode: string | null;
   productsSeen: number;
   queueLag: number;
+  duplicatesSkipped: number;
+  antiBotBlocked: boolean;
+  keepaRequests: number;
+  apifyCostMicros: number | null;
 };
 
 function json(body: unknown, status = 200) {
@@ -220,7 +237,12 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "merchant",
     "market",
     "productId",
+    "identityKey",
     "title",
+    "brand",
+    "model",
+    "gtin",
+    "category",
     "url",
     "currency",
     "priceCents",
@@ -239,6 +261,10 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "notify",
     "rawHash",
     "historicalPrices",
+    "publicPriceCents",
+    "priceAccessibleToAll",
+    "promotionType",
+    "promotionLabel",
   ]);
 
   const id = requiredString(value.id, "id", 160);
@@ -287,7 +313,12 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     merchant: requiredString(value.merchant, "merchant", 120),
     market,
     productId,
+    identityKey: optionalString(value.identityKey, "identityKey", 160),
     title: requiredString(value.title, "title", 300),
+    brand: optionalString(value.brand, "brand", 120),
+    model: optionalString(value.model, "model", 160),
+    gtin: optionalString(value.gtin, "gtin", 32),
+    category: optionalString(value.category, "category", 80),
     url: validateProductUrl(source, market, value.url),
     currency: currency as "EUR" | "GBP",
     priceCents: integerInRange(value.priceCents, "priceCents", 1, MAX_MONEY_CENTS),
@@ -306,7 +337,14 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     notify: optionalBoolean(value.notify, "notify", false),
     rawHash,
     historicalPrices,
+    publicPriceCents: nullableMoney(value.publicPriceCents, "publicPriceCents"),
+    priceAccessibleToAll: optionalBoolean(value.priceAccessibleToAll, "priceAccessibleToAll", true),
+    promotionType: value.promotionType === undefined ? "public_price" : requiredString(value.promotionType, "promotionType", 32),
+    promotionLabel: optionalString(value.promotionLabel, "promotionLabel", 240),
   };
+  if (!PROMOTION_TYPES.has(parsed.promotionType)) throw new Error("promotionType est invalide.");
+  if (parsed.priceAccessibleToAll && parsed.publicPriceCents === null) parsed.publicPriceCents = parsed.priceCents;
+  if (!parsed.priceAccessibleToAll && parsed.promotionType === "public_price") throw new Error("Un prix conditionnel doit préciser son type de promotion.");
 
   const observedAtMs = Date.parse(parsed.observedAt);
   const expiresAtMs = Date.parse(parsed.expiresAt);
@@ -348,6 +386,10 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     "lastErrorCode",
     "productsSeen",
     "queueLag",
+    "duplicatesSkipped",
+    "antiBotBlocked",
+    "keepaRequests",
+    "apifyCostMicros",
   ]);
   const market = normalizeMarket(source, value.market);
   const mode = requiredString(value.mode, "mode", 16) as SourceMode;
@@ -374,6 +416,10 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     lastErrorCode,
     productsSeen: integerInRange(value.productsSeen, "productsSeen", 0, 1_000_000_000),
     queueLag: integerInRange(value.queueLag, "queueLag", 0, 10_000_000),
+    duplicatesSkipped: value.duplicatesSkipped === undefined ? 0 : integerInRange(value.duplicatesSkipped, "duplicatesSkipped", 0, 1_000_000_000),
+    antiBotBlocked: optionalBoolean(value.antiBotBlocked, "antiBotBlocked", false),
+    keepaRequests: value.keepaRequests === undefined ? 0 : integerInRange(value.keepaRequests, "keepaRequests", 0, 1_000_000_000),
+    apifyCostMicros: value.apifyCostMicros === undefined ? null : nullableMoney(value.apifyCostMicros, "apifyCostMicros"),
   };
   const maximumFuture = Date.now() + 5 * 60_000;
   if (Date.parse(parsed.lastAttemptAt) > maximumFuture) throw new Error("lastAttemptAt ne peut pas être dans le futur.");
@@ -455,7 +501,7 @@ function duplicateResponse(existing: { payloadHash: string; accepted: boolean },
 
 async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloadHash: string) {
   const database = getDb();
-  const [priorRows, existingAlerts] = await Promise.all([
+  const [priorRows, existingAlerts, comparableRows, feedbackRows] = await Promise.all([
     database
       .select({
         priceCents: priceObservations.priceCents,
@@ -470,10 +516,31 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       .orderBy(desc(priceObservations.observedAt))
       .limit(180),
     database
-      .select({ source: alerts.source, market: alerts.market, productId: alerts.productId })
+      .select({ source: alerts.source, market: alerts.market, productId: alerts.productId, status: alerts.status })
       .from(alerts)
       .where(eq(alerts.id, parsed.id))
       .limit(1),
+    parsed.identityKey === null
+      ? Promise.resolve([])
+      : database
+          .select({ source: alerts.source, publicPriceCents: alerts.publicPriceCents })
+          .from(alerts)
+          .where(and(
+            eq(alerts.identityKey, parsed.identityKey),
+            ne(alerts.source, envelope.source),
+            eq(alerts.currency, parsed.currency),
+            eq(alerts.priceAccessibleToAll, true),
+            gte(alerts.observedAt, new Date(Date.parse(parsed.observedAt) - 7 * 86_400_000).toISOString()),
+          ))
+          .orderBy(desc(alerts.observedAt))
+          .limit(30),
+    database.select({
+      useful: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'useful' then 1 else 0 end), 0)`,
+      falsePositive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'false_positive' then 1 else 0 end), 0)`,
+    }).from(alertFeedback).innerJoin(alerts, eq(alerts.id, alertFeedback.alertId)).where(and(
+      eq(alerts.source, envelope.source),
+      ...(parsed.category ? [eq(alerts.category, parsed.category)] : []),
+    )),
   ]);
   const existingAlert = existingAlerts[0];
   if (
@@ -485,6 +552,10 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     return apiError(409, "ALERT_IDENTITY_CONFLICT", "Cet identifiant d’alerte appartient à un autre produit.");
   }
 
+  const comparableBySource = new Map<string, number>();
+  for (const row of comparableRows) {
+    if (row.publicPriceCents !== null && !comparableBySource.has(row.source)) comparableBySource.set(row.source, row.publicPriceCents);
+  }
   const candidate: AnomalyCandidate = {
     priceCents: parsed.priceCents,
     shippingCents: parsed.shippingCents,
@@ -500,6 +571,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     verificationCount: parsed.verificationCount,
     verifiedAt: parsed.verifiedAt,
     merchantReferenceCents: parsed.merchantReferenceCents,
+    priceAccessibleToAll: parsed.priceAccessibleToAll,
+    crossMerchantPricesCents: [...comparableBySource.values()],
   };
   const evaluation = evaluatePriceAnomaly(
     candidate,
@@ -522,13 +595,23 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       })),
     ],
   );
+  const feedback = feedbackRows[0] ?? { useful: 0, falsePositive: 0 };
+  const adaptiveScoreAdjustment = Math.max(0, Math.min(15, (Number(feedback.falsePositive) - Number(feedback.useful)) * 2));
+  const adaptiveMinimumScore = 65 + adaptiveScoreAdjustment;
+  const notificationEligible = evaluation.notificationEligible && evaluation.score >= adaptiveMinimumScore;
   const now = new Date().toISOString();
-  const alertStatus = evaluation.notificationEligible ? "active" : evaluation.score >= 40 ? "review" : "monitoring";
+  const alertStatus = notificationEligible
+    ? "active"
+    : existingAlert?.status === "active" && (!evaluation.checks.materialDiscount || !parsed.available)
+      ? "expired"
+      : evaluation.score >= 40 ? "review" : "monitoring";
   const evidenceJson = JSON.stringify({
     version: 1,
     provider: envelope.source === "amazon" ? "keepa" : envelope.source,
     notificationRequested: parsed.notify,
-    notificationEligible: evaluation.notificationEligible,
+    notificationEligible,
+    adaptiveMinimumScore,
+    feedbackSample: Number(feedback.falsePositive) + Number(feedback.useful),
     expectedVariantId: parsed.expectedVariantId,
     observedVariantId: parsed.observedVariantId,
     sellerTrusted: parsed.sellerTrusted,
@@ -567,7 +650,12 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       merchant: parsed.merchant,
       market: parsed.market,
       productId: parsed.productId,
+      identityKey: parsed.identityKey,
       title: parsed.title,
+      brand: parsed.brand,
+      model: parsed.model,
+      gtin: parsed.gtin,
+      category: parsed.category,
       url: parsed.url,
       currency: parsed.currency,
       priceCents: parsed.priceCents,
@@ -579,6 +667,10 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       seller: parsed.seller,
       condition: parsed.condition,
       shippingCents: parsed.shippingCents,
+      publicPriceCents: parsed.publicPriceCents,
+      priceAccessibleToAll: parsed.priceAccessibleToAll,
+      promotionType: parsed.promotionType,
+      promotionLabel: parsed.promotionLabel,
       evidenceJson,
       observedAt: parsed.observedAt,
       verifiedAt: parsed.verifiedAt,
@@ -592,7 +684,12 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         merchant: parsed.merchant,
         market: parsed.market,
         productId: parsed.productId,
+        identityKey: parsed.identityKey,
         title: parsed.title,
+        brand: parsed.brand,
+        model: parsed.model,
+        gtin: parsed.gtin,
+        category: parsed.category,
         url: parsed.url,
         currency: parsed.currency,
         priceCents: parsed.priceCents,
@@ -604,6 +701,10 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         seller: parsed.seller,
         condition: parsed.condition,
         shippingCents: parsed.shippingCents,
+        publicPriceCents: parsed.publicPriceCents,
+        priceAccessibleToAll: parsed.priceAccessibleToAll,
+        promotionType: parsed.promotionType,
+        promotionLabel: parsed.promotionLabel,
         evidenceJson,
         observedAt: parsed.observedAt,
         verifiedAt: parsed.verifiedAt,
@@ -653,7 +754,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         score: evaluation.score,
         confidence: evaluation.confidence,
         notificationRequested: parsed.notify,
-        notificationEligible: evaluation.notificationEligible,
+        notificationEligible,
         blockingReasons: evaluation.blockingReasons,
       },
     },
@@ -703,10 +804,34 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
         updatedAt: now,
       },
     });
+  const runInsert = database.insert(collectionRuns).values({
+    id: envelope.idempotencyKey,
+    source: envelope.source,
+    market: parsed.market,
+    status: parsed.status,
+    productsSeen: parsed.productsSeen,
+    queueLag: parsed.queueLag,
+    duplicatesSkipped: parsed.duplicatesSkipped,
+    antiBotBlocked: parsed.antiBotBlocked,
+    keepaRequests: parsed.keepaRequests,
+    apifyCostMicros: parsed.apifyCostMicros,
+    errorCode: parsed.lastErrorCode,
+    attemptedAt: parsed.lastAttemptAt,
+    createdAt: now,
+  }).onConflictDoNothing({ target: collectionRuns.id });
+  const configurationUpdate = database.update(sourceConfigurations).set({
+    lastRunAt: parsed.lastAttemptAt,
+    ...(parsed.lastSuccessAt ? { lastSuccessAt: parsed.lastSuccessAt } : {}),
+    productsSeen: parsed.productsSeen,
+    duplicateUrls: parsed.duplicatesSkipped,
+    updatedAt: now,
+  }).where(and(eq(sourceConfigurations.source, envelope.source), eq(sourceConfigurations.market, parsed.market)));
   const daysAgo = (days: number) => new Date(nowDate.getTime() - days * 86_400_000).toISOString();
   await database.batch([
     eventInsert,
     statusUpsert,
+    runInsert,
+    configurationUpdate,
     database
       .update(alerts)
       .set({ status: "expired", updatedAt: now })
@@ -714,6 +839,7 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
     database.delete(priceObservations).where(lt(priceObservations.observedAt, daysAgo(180))),
     database.delete(ingestEvents).where(lt(ingestEvents.createdAt, daysAgo(90))),
     database.delete(notificationDeliveries).where(lt(notificationDeliveries.attemptedAt, daysAgo(90))),
+    database.delete(collectionRuns).where(lt(collectionRuns.attemptedAt, daysAgo(90))),
     database.delete(alerts).where(and(lt(alerts.expiresAt, now), lt(alerts.updatedAt, daysAgo(30)))),
     database
       .delete(pushSubscriptions)

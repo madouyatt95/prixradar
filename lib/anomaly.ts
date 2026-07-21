@@ -37,6 +37,8 @@ export type AnomalyCandidate = {
   verificationCount: number;
   verifiedAt: string | null;
   merchantReferenceCents?: number | null;
+  priceAccessibleToAll?: boolean;
+  crossMerchantPricesCents?: number[];
 };
 
 export type AnomalyEvaluation = {
@@ -51,6 +53,9 @@ export type AnomalyEvaluation = {
   robustZ: number | null;
   discountPercent: number;
   freshnessMinutes: number;
+  marketMedianCents: number | null;
+  marketSources: number;
+  marketDiscountPercent: number | null;
   checks: {
     liveSource: boolean;
     historicalBaseline: boolean;
@@ -65,6 +70,8 @@ export type AnomalyEvaluation = {
     available: boolean;
     secondVerification: boolean;
     notExpired: boolean;
+    publicPriceAccessible: boolean;
+    marketComparisonCoherent: boolean;
   };
   blockingReasons: string[];
   components: {
@@ -74,6 +81,7 @@ export type AnomalyEvaluation = {
     freshness: number;
     verification: number;
     safeguards: number;
+    crossMerchant: number;
   };
 };
 
@@ -181,6 +189,8 @@ function blockingReasons(checks: AnomalyEvaluation["checks"]) {
     available: "offer_unavailable",
     secondVerification: "second_verification_missing",
     notExpired: "alert_expired",
+    publicPriceAccessible: "conditional_price",
+    marketComparisonCoherent: "cross_merchant_price_not_anomalous",
   };
 
   return (Object.keys(checks) as Array<keyof typeof checks>)
@@ -253,6 +263,15 @@ export function evaluatePriceAnomaly(
           ? 12
           : 0;
   const freshnessMinutes = Math.max(0, roundOne((nowMs - observedAtMs) / 60_000));
+  const marketPrices = (candidate.crossMerchantPricesCents ?? []).filter((price) =>
+    Number.isSafeInteger(price) && price > 0 && price <= ANOMALY_LIMITS.maxPriceCents * 2
+  );
+  const rawMarketMedian = median(marketPrices);
+  const marketMedianCents = rawMarketMedian === null ? null : Math.round(rawMarketMedian);
+  const marketDiscountPercent = rawMarketMedian === null || currentTotalCents === null
+    ? null
+    : roundOne(((rawMarketMedian - currentTotalCents) / rawMarketMedian) * 100);
+  const hasMarketComparison = marketPrices.length >= 2;
 
   const exactVariant =
     candidate.expectedVariantId !== null &&
@@ -276,6 +295,8 @@ export function evaluatePriceAnomaly(
     available: candidate.available,
     secondVerification,
     notExpired: expiresAtMs > nowMs,
+    publicPriceAccessible: candidate.priceAccessibleToAll !== false,
+    marketComparisonCoherent: !hasMarketComparison || (marketDiscountPercent ?? 0) >= 10,
   };
 
   const discountComponent = Math.round(clamp(((discountPercent - 5) / 45) * 35, 0, 35));
@@ -284,6 +305,9 @@ export function evaluatePriceAnomaly(
   const freshnessComponent = freshnessMinutes <= 15 ? 10 : freshnessMinutes <= 60 ? 8 : freshnessMinutes <= 120 ? 4 : 0;
   const verificationComponent = secondVerification ? 10 : candidate.verificationCount >= 1 ? 3 : 0;
   const safeguardsComponent = (exactVariant ? 5 : 0) + (trustedSeller ? 5 : 0) + (shippingIncluded ? 5 : 0);
+  const crossMerchantComponent = hasMarketComparison
+    ? Math.round(clamp(((marketDiscountPercent ?? 0) / 40) * 10, 0, 10))
+    : 0;
 
   let score =
     discountComponent +
@@ -291,13 +315,16 @@ export function evaluatePriceAnomaly(
     historyComponent +
     freshnessComponent +
     verificationComponent +
-    safeguardsComponent;
+    safeguardsComponent +
+    crossMerchantComponent;
 
   if (baselineSource !== "historical_median") score = Math.min(score, 49);
   if (!exactVariant || !trustedSeller) score = Math.min(score, 49);
   if (!shippingIncluded) score = Math.min(score, 59);
   if (!candidate.available || candidate.condition !== "new") score = Math.min(score, 39);
   if (!checks.freshObservation || !checks.notExpired) score = Math.min(score, 49);
+  if (!checks.publicPriceAccessible) score = Math.min(score, 49);
+  if (!checks.marketComparisonCoherent) score = Math.min(score, 59);
   score = clamp(Math.round(score), 0, 100);
 
   const reasons = blockingReasons(checks);
@@ -316,6 +343,9 @@ export function evaluatePriceAnomaly(
     robustZ,
     discountPercent,
     freshnessMinutes,
+    marketMedianCents,
+    marketSources: marketPrices.length,
+    marketDiscountPercent,
     checks,
     blockingReasons: reasons,
     components: {
@@ -325,6 +355,7 @@ export function evaluatePriceAnomaly(
       freshness: freshnessComponent,
       verification: verificationComponent,
       safeguards: safeguardsComponent,
+      crossMerchant: crossMerchantComponent,
     },
   };
 }

@@ -50,6 +50,7 @@ export function notificationEligible(observation: VerifiedObservation, minimumSc
     && observation.offer.shipping !== null
     && observation.offer.total !== null
     && observation.offer.total.amountMinor > 0
+    && observation.offer.promotion?.accessibleToAll !== false
     && observation.offer.sellerTrusted
     && observation.anomaly.score >= minimumScore
     && (observation.anomaly.classification === "probable" || observation.anomaly.classification === "strong");

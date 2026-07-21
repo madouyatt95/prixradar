@@ -13,6 +13,10 @@ export interface SourceAttempt {
 export interface SourceAttemptMetrics {
   productsSeen: number;
   queueLag: number;
+  duplicatesSkipped?: number;
+  antiBotBlocked?: boolean;
+  keepaRequests?: number;
+  apifyCostMicros?: number | null;
 }
 
 type StatusSender = (
@@ -111,6 +115,10 @@ export class SourceStatusReporter {
         lastErrorCode: errorCode,
         productsSeen: safeCount(metrics.productsSeen),
         queueLag: safeCount(metrics.queueLag),
+        duplicatesSkipped: safeCount(metrics.duplicatesSkipped ?? 0),
+        antiBotBlocked: metrics.antiBotBlocked === true,
+        keepaRequests: safeCount(metrics.keepaRequests ?? 0),
+        apifyCostMicros: metrics.apifyCostMicros ?? null,
       }, {
         baseUrl: this.#config.priceRadarBaseUrl,
         ingestSecret: this.#config.ingestSecret,
@@ -130,6 +138,7 @@ export async function runReportedSourceAttempt<T>(options: {
   attempt: SourceAttempt;
   run: () => Promise<T>;
   productsSeen: (result: T) => number;
+  metrics?: (result: T) => Partial<SourceAttemptMetrics>;
   queueLag: () => number | Promise<number>;
 }): Promise<T> {
   try {
@@ -141,6 +150,7 @@ export async function runReportedSourceAttempt<T>(options: {
       // Metrics must not change the outcome of the source attempt.
     }
     await options.reporter.healthy(options.attempt, {
+      ...(options.metrics?.(result) ?? {}),
       productsSeen: options.productsSeen(result),
       queueLag,
     });
@@ -152,7 +162,13 @@ export async function runReportedSourceAttempt<T>(options: {
     } catch {
       // Preserve the original collection error.
     }
-    await options.reporter.degraded(options.attempt, { productsSeen: 0, queueLag });
+    const message = primaryError instanceof Error ? primaryError.message.toLowerCase() : "";
+    const antiBotBlocked = /(?:403|429|captcha|blocked|access denied|robot)/u.test(message);
+    await options.reporter.degraded(
+      options.attempt,
+      { productsSeen: 0, queueLag, antiBotBlocked },
+      antiBotBlocked ? "ANTI_BOT_BLOCKED" : "COLLECTOR_JOB_FAILED",
+    );
     throw primaryError;
   }
 }

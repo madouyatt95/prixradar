@@ -16,9 +16,15 @@ test("regroupe Amazon EU5 dans un seul Actor toutes les quinze minutes", () => {
   assert.equal(input.notify, true);
 });
 
-test("n’active le planning retail qu’avec des pages de départ explicites", () => {
-  assert.equal(buildAutomationPlan("actor", []).length, 1);
+test("récupère la couverture distante et teste les connecteurs chaque jour", () => {
+  const remotePlan = buildAutomationPlan("actor", []);
+  assert.equal(remotePlan.length, 3);
+  const remoteAction = remotePlan[1]?.definition.actions?.[0];
+  if (!remoteAction || remoteAction.type !== "RUN_ACTOR") assert.fail("Action retail attendue");
+  const remoteInput = JSON.parse(remoteAction.runInput?.body ?? "{}") as Record<string, unknown>;
+  assert.equal(remoteInput.useRemoteCoverage, true);
   const plan = buildAutomationPlan("actor", ["https://www.boulanger.com/c/electromenager"]);
-  assert.equal(plan.length, 2);
+  assert.equal(plan.length, 3);
   assert.equal(plan[1]?.definition.cronExpression, "7,37 * * * *");
+  assert.equal(plan[2]?.definition.cronExpression, "17 6 * * *");
 });

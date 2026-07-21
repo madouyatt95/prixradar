@@ -52,8 +52,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
     },
   }];
 
-  if (retailUrls.length > 0) {
-    schedules.push({
+  schedules.push({
       name: "prixradar-retail-fr-30min",
       definition: {
         ...common,
@@ -64,6 +63,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         actions: [actorAction(actorId, {
           source: "all",
           urls: retailUrls.map((url) => ({ url })),
+          useRemoteCoverage: retailUrls.length === 0,
           mode: "full",
           notify: true,
           browserFallback: true,
@@ -71,6 +71,25 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         }, 1_024)],
       },
     });
-  }
+  schedules.push({
+    name: "prixradar-connectors-daily",
+    definition: {
+      ...common,
+      notifications: { email: true },
+      name: "prixradar-connectors-daily",
+      title: "PrixRadar · Test quotidien des connecteurs",
+      description: "Teste les pages de référence sans ingestion ni notification utilisateur.",
+      cronExpression: "17 6 * * *",
+      actions: [actorAction(actorId, {
+        source: "all",
+        urls: retailUrls.map((url) => ({ url })),
+        useRemoteCoverage: retailUrls.length === 0,
+        mode: "fixture",
+        notify: false,
+        browserFallback: true,
+        limit: 5,
+      }, 1_024)],
+    },
+  });
   return schedules;
 }

@@ -18,6 +18,11 @@ const DEFAULT_PREFERENCES = {
   quietStart: "22:00",
   quietEnd: "08:00",
   notificationEnabled: true,
+  minDiscount: 20,
+  maxPriceCents: null,
+  marketsJson: "[]",
+  categoriesJson: "[]",
+  sourcesJson: "[]",
 } as const;
 
 const EDITABLE_FIELDS = new Set([
@@ -26,6 +31,11 @@ const EDITABLE_FIELDS = new Set([
   "quietStart",
   "quietEnd",
   "notificationEnabled",
+  "minDiscount",
+  "maxPriceCents",
+  "markets",
+  "categories",
+  "sources",
 ]);
 
 type PreferencesPatch = {
@@ -34,7 +44,30 @@ type PreferencesPatch = {
   quietStart?: string;
   quietEnd?: string;
   notificationEnabled?: boolean;
+  minDiscount?: number;
+  maxPriceCents?: number | null;
+  marketsJson?: string;
+  categoriesJson?: string;
+  sourcesJson?: string;
 };
+
+function stringList(value: unknown, field: string, maxItems = 20) {
+  if (!Array.isArray(value) || value.length > maxItems) throw new Error(`${field} doit être une liste courte.`);
+  const items = value.map((item) => {
+    if (typeof item !== "string" || !item.trim() || item.trim().length > 80) throw new Error(`${field} contient une valeur invalide.`);
+    return item.trim();
+  });
+  return [...new Set(items)];
+}
+
+function parseJsonList(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 function serializePreferences(
   value: typeof userPreferences.$inferSelect
@@ -46,6 +79,11 @@ function serializePreferences(
     quietEnd: value.quietEnd,
     timezone: value.timezone,
     notificationEnabled: value.notificationEnabled,
+    minDiscount: value.minDiscount,
+    maxPriceCents: value.maxPriceCents,
+    markets: parseJsonList(value.marketsJson),
+    categories: parseJsonList(value.categoriesJson),
+    sources: parseJsonList(value.sourcesJson),
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   };
@@ -82,6 +120,18 @@ function parsePatch(body: Record<string, unknown>) {
     }
     patch.minScore = body.minScore;
   }
+  if (body.minDiscount !== undefined) {
+    if (!Number.isInteger(body.minDiscount) || (body.minDiscount as number) < 0 || (body.minDiscount as number) > 90) {
+      throw new Error("minDiscount doit être compris entre 0 et 90.");
+    }
+    patch.minDiscount = body.minDiscount as number;
+  }
+  if (body.maxPriceCents !== undefined) {
+    if (body.maxPriceCents !== null && (!Number.isSafeInteger(body.maxPriceCents) || (body.maxPriceCents as number) < 1 || (body.maxPriceCents as number) > 100_000_000)) {
+      throw new Error("maxPriceCents est invalide.");
+    }
+    patch.maxPriceCents = body.maxPriceCents as number | null;
+  }
 
   for (const field of ["quietHours", "notificationEnabled"] as const) {
     if (body[field] !== undefined) {
@@ -98,6 +148,9 @@ function parsePatch(body: Record<string, unknown>) {
   if (body.quietEnd !== undefined) {
     patch.quietEnd = parseTime(body.quietEnd, "quietEnd");
   }
+  if (body.markets !== undefined) patch.marketsJson = JSON.stringify(stringList(body.markets, "markets").map((item) => item.toUpperCase()));
+  if (body.categories !== undefined) patch.categoriesJson = JSON.stringify(stringList(body.categories, "categories"));
+  if (body.sources !== undefined) patch.sourcesJson = JSON.stringify(stringList(body.sources, "sources").map((item) => item.toLowerCase()));
 
   return patch;
 }

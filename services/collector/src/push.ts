@@ -102,12 +102,24 @@ export async function fetchPushTargets(
   score: number,
   config: PushConfig,
   fetchImpl: typeof fetch = fetch,
+  filters?: { discount: number; priceCents: number; source: string; market: string; category: string },
 ): Promise<PushSubscriptionTarget[]> {
   const targets: PushSubscriptionTarget[] = [];
   let after = 0;
   for (let page = 0; page < 10; page += 1) {
     const endpoint = apiEndpoint(config.baseUrl, "api/push/targets");
-    endpoint.search = new URLSearchParams({ score: String(Math.max(0, Math.min(100, Math.round(score)))), limit: "500", after: String(after) }).toString();
+    endpoint.search = new URLSearchParams({
+      score: String(Math.max(0, Math.min(100, Math.round(score)))),
+      limit: "500",
+      after: String(after),
+      ...(filters ? {
+        discount: String(Math.max(0, Math.round(filters.discount))),
+        priceCents: String(Math.max(0, Math.round(filters.priceCents))),
+        source: filters.source,
+        market: filters.market,
+        category: filters.category,
+      } : {}),
+    }).toString();
     const payload = await protectedJson<TargetResponse>(config, endpoint, { method: "GET" }, fetchImpl);
     if (!payload.ok || !Array.isArray(payload.targets)) {
       throw new SinkRequestError("Réponse des cibles push invalide.", null);
@@ -163,7 +175,13 @@ export async function sendPushForObservation(
   if (!dependencies.sendNotification) {
     webPush.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
   }
-  const targets = await fetchPushTargets(backendScore, config, fetchImpl);
+  const targets = await fetchPushTargets(backendScore, config, fetchImpl, {
+    discount: observation.anomaly.discountPercent ?? 0,
+    priceCents: observation.offer.total?.amountMinor ?? observation.offer.price.amountMinor,
+    source: observation.offer.product.source,
+    market: observation.offer.product.market,
+    category: observation.offer.product.category ?? "",
+  });
   const summary: PushDeliverySummary = { eligible: true, targets: targets.length, reserved: 0, sent: 0, failed: 0 };
   const total = observation.offer.total;
   if (total === null) return { eligible: false, targets: 0, reserved: 0, sent: 0, failed: 0 };

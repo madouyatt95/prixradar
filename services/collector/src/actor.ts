@@ -10,6 +10,7 @@ import {
   SourceStatusReporter,
 } from "./source-status.js";
 import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
+import { privateApiHeaders } from "./sink.js";
 import type { Market, RetailSource } from "./types.js";
 
 interface ActorInput {
@@ -25,6 +26,22 @@ interface ActorInput {
   minimumDropPercent?: number;
   verifyAmazonPage?: boolean;
   liveVerificationLimit?: number;
+  useRemoteCoverage?: boolean;
+}
+
+async function remoteCoverageUrls(config: CollectorConfig): Promise<string[]> {
+  if (!config.priceRadarBaseUrl || !config.ingestSecret) return [];
+  const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
+  const response = await fetch(endpoint, {
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    signal: AbortSignal.timeout(config.httpTimeoutMs),
+  });
+  if (!response.ok) throw new Error(`Plan de couverture indisponible (HTTP ${response.status}).`);
+  const payload = await response.json() as { items?: Array<{ discoveryUrl?: unknown }> };
+  return (payload.items ?? []).flatMap((item) => typeof item.discoveryUrl === "string" ? [item.discoveryUrl] : []);
 }
 
 function inputUrls(value: ActorInput["urls"]): string[] {
@@ -68,7 +85,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     };
 
     const source = input.source ?? "all";
-    const urls = inputUrls(input.urls);
+    const configuredUrls = inputUrls(input.urls);
+    const urls = [...new Set(configuredUrls.length > 0 || input.useRemoteCoverage === false
+      ? configuredUrls
+      : await remoteCoverageUrls(config))];
+    const seenProductUrls = new Set<string>();
     for (const url of urls) {
       const connector = connectorForUrl(url);
       if (source !== "all" && source !== connector.source) {
@@ -81,13 +102,20 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           if (mode === "discover") {
             const result = await scanSourceUrl(url, scanOptions);
             await Actor.pushData({ dataKind: "discovery", fixture, ...result });
-            return result.discoveredUrls.length;
+            const unseen = result.discoveredUrls.filter((productUrl) => !seenProductUrls.has(productUrl));
+            unseen.forEach((productUrl) => seenProductUrls.add(productUrl));
+            return { productsSeen: unseen.length, duplicatesSkipped: result.discoveredUrls.length - unseen.length };
           }
           const initialScan = mode === "full" ? await scanSourceUrl(url, scanOptions) : null;
           const targetUrls = initialScan
             ? (initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, limit))
             : [url];
-          const targets = targetUrls.length > 0 ? targetUrls : [url];
+          const candidates = targetUrls.length > 0 ? targetUrls : [url];
+          const targets = candidates.filter((targetUrl) => {
+            if (seenProductUrls.has(targetUrl)) return false;
+            seenProductUrls.add(targetUrl);
+            return true;
+          });
           for (const targetUrl of targets) {
             const observation = await verifySourceUrl(targetUrl, {
               ...scanOptions,
@@ -98,9 +126,10 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             }
             await Actor.pushData({ dataKind: "verified-observation", ...observation });
           }
-          return targets.length;
+          return { productsSeen: targets.length, duplicatesSkipped: candidates.length - targets.length };
         },
-        productsSeen: (count) => count,
+        productsSeen: (result) => result.productsSeen,
+        metrics: (result) => ({ duplicatesSkipped: result.duplicatesSkipped }),
         queueLag: () => 0,
       });
     }
@@ -141,6 +170,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             return observations.length;
           },
           productsSeen: (count) => count,
+          metrics: () => ({ keepaRequests: 2 }),
           queueLag: () => 0,
         });
       }

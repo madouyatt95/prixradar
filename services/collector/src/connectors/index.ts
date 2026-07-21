@@ -149,6 +149,37 @@ function selectorValue($: cheerio.CheerioAPI, selectors: readonly string[]): str
   return null;
 }
 
+function promotionFromPage($: cheerio.CheerioAPI): NonNullable<OfferSnapshot["promotion"]> {
+  const text = selectorValue($, [
+    "#couponText",
+    "[data-testid*='coupon']",
+    "[class*='coupon']",
+    "[class*='loyalty']",
+    "[class*='fidelite']",
+    "[class*='prime']",
+    "[class*='cashback']",
+    "[class*='odr']",
+    "[class*='reprise']",
+    "[class*='trade-in']",
+    "[class*='bundle']",
+    "[class*='pack']",
+  ]);
+  if (text === null) return { type: "public_price", label: null, accessibleToAll: true };
+  const normalized = text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+  const type = /(?:lot|pack|bundle).*(?:avec|comprend|inclut)|achetes?.*(?:offert|ensemble)/u.test(normalized)
+    ? "bundle"
+    : /reprise|trade[- ]?in/u.test(normalized)
+    ? "trade_in"
+    : /rembours|cashback|\bodr\b/u.test(normalized)
+      ? "cashback"
+      : /prime|membre|fidelite|carte/u.test(normalized)
+        ? "membership"
+        : /coupon|code promo|appliquer/u.test(normalized)
+          ? "coupon"
+          : "unknown";
+  return { type, label: cleanText(text, 240), accessibleToAll: false };
+}
+
 function shippingMinor(value: string | null): number | null {
   if (value === null) return null;
   const normalized = value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
@@ -220,6 +251,7 @@ function fallbackOffer(
       brand: null,
       model: null,
       gtin: null,
+      category: selectorValue($, ["meta[property='product:category']", "[itemprop='category']"]),
       url,
       imageUrl: cleanText($("meta[property='og:image']").attr("content"), 2_048),
     },
@@ -236,6 +268,7 @@ function fallbackOffer(
     observedAt: options.observedAt ?? new Date().toISOString(),
     strategy: "connector",
     fixture: options.fixture ?? false,
+    promotion: promotionFromPage($),
   };
 }
 
@@ -253,7 +286,16 @@ export function extractRetailOffers(
     allowedHosts: connector.allowedHosts,
     ...options,
   });
-  if (structured.length > 0) return structured;
+  if (structured.length > 0) {
+    const $ = cheerio.load(html);
+    const promotion = promotionFromPage($);
+    const category = selectorValue($, ["meta[property='product:category']", "[itemprop='category']"]);
+    return structured.map((offer) => ({
+      ...offer,
+      product: { ...offer.product, category },
+      promotion,
+    }));
+  }
   const fallback = fallbackOffer(html, pageUrl, connector, options);
   return fallback ? [fallback] : [];
 }

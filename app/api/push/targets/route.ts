@@ -26,7 +26,12 @@ export async function GET(request: Request) {
   const limit = positiveInteger(search.get("limit"), 100, 500);
   const after = positiveInteger(search.get("after"), 0, Number.MAX_SAFE_INTEGER);
   const score = positiveInteger(search.get("score"), 100, 100);
-  if (limit === null || limit === 0 || after === null || score === null) {
+  const discount = positiveInteger(search.get("discount"), 0, 100);
+  const priceCents = positiveInteger(search.get("priceCents"), 0, 100_000_000);
+  const source = search.get("source")?.trim().toLowerCase() ?? "";
+  const market = search.get("market")?.trim().toUpperCase() ?? "";
+  const category = search.get("category")?.trim() ?? "";
+  if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null) {
     return serverJson(
       {
         ok: false,
@@ -51,6 +56,7 @@ export async function GET(request: Request) {
     let cursor = after;
     let scanned = 0;
     let suppressedQuietHours = 0;
+    let suppressedFilters = 0;
     let exhausted = false;
 
     while (page.length < limit && !exhausted && scanned < 2_500) {
@@ -67,6 +73,11 @@ export async function GET(request: Request) {
           quietStart: userPreferences.quietStart,
           quietEnd: userPreferences.quietEnd,
           timezone: userPreferences.timezone,
+          minDiscount: userPreferences.minDiscount,
+          maxPriceCents: userPreferences.maxPriceCents,
+          marketsJson: userPreferences.marketsJson,
+          categoriesJson: userPreferences.categoriesJson,
+          sourcesJson: userPreferences.sourcesJson,
         })
         .from(pushSubscriptions)
         .innerJoin(
@@ -91,8 +102,27 @@ export async function GET(request: Request) {
       for (const row of rows) {
         cursor = row.id;
         scanned += 1;
+        const parseList = (value: string) => {
+          try {
+            const parsed: unknown = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+          } catch {
+            return [];
+          }
+        };
+        const markets = parseList(row.marketsJson);
+        const categories = parseList(row.categoriesJson);
+        const sources = parseList(row.sourcesJson);
+        const filtered =
+          discount < row.minDiscount ||
+          (row.maxPriceCents !== null && priceCents > row.maxPriceCents) ||
+          (markets.length > 0 && !markets.includes(market)) ||
+          (categories.length > 0 && !categories.includes(category)) ||
+          (sources.length > 0 && !sources.includes(source));
         if (isQuietNow(row, now)) {
           suppressedQuietHours += 1;
+        } else if (filtered) {
+          suppressedFilters += 1;
         } else {
           page.push({
             id: row.id,
@@ -114,6 +144,7 @@ export async function GET(request: Request) {
       score,
       scanned,
       suppressedQuietHours,
+      suppressedFilters,
       targets: page.map((row) => ({
         id: row.id,
         endpoint: row.endpoint,

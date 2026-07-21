@@ -25,7 +25,12 @@ export interface AlertIngestEnvelope {
     merchant: string;
     market: string;
     productId: string;
+    identityKey: string;
     title: string;
+    brand: string | null;
+    model: string | null;
+    gtin: string | null;
+    category: string | null;
     url: string;
     currency: "EUR" | "GBP";
     priceCents: number;
@@ -43,6 +48,10 @@ export interface AlertIngestEnvelope {
     expiresAt: string;
     notify: boolean;
     rawHash: string;
+    publicPriceCents: number | null;
+    priceAccessibleToAll: boolean;
+    promotionType: "public_price" | "coupon" | "membership" | "cashback" | "trade_in" | "bundle" | "unknown";
+    promotionLabel: string | null;
     historicalPrices?: Array<{
       provider: "keepa";
       priceCents: number;
@@ -67,6 +76,10 @@ export interface SourceStatusEnvelope {
     lastErrorCode: string | null;
     productsSeen: number;
     queueLag: number;
+    duplicatesSkipped: number;
+    antiBotBlocked: boolean;
+    keepaRequests: number;
+    apifyCostMicros: number | null;
   };
 }
 
@@ -102,6 +115,10 @@ function boundedProductId(value: string, fallback: string): string {
 
 function directMerchant(source: RetailSource): string {
   return { amazon: "Amazon", boulanger: "Boulanger", darty: "Darty", cdiscount: "Cdiscount" }[source];
+}
+
+function identityToken(value: string) {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/gu, "");
 }
 
 export function ingestIdempotencyKey(observation: VerifiedObservation): string {
@@ -143,6 +160,15 @@ export function toAlertIngestEnvelope(
         rawHash: point.rawHash,
       }))
     : undefined;
+  const normalizedGtin = product.gtin?.replace(/\D/gu, "") ?? "";
+  const brandToken = product.brand ? identityToken(product.brand) : "";
+  const modelToken = product.model ? identityToken(product.model) : "";
+  const identityKey = normalizedGtin.length >= 8
+    ? `gtin:${stableHash([normalizedGtin])}`
+    : brandToken.length >= 2 && modelToken.length >= 3
+      ? `model:${stableHash([brandToken, modelToken])}`
+      : `local:${stableHash([product.source, product.market, product.externalId])}`;
+  const promotion = observation.offer.promotion ?? { type: "public_price" as const, label: null, accessibleToAll: true };
 
   return {
     idempotencyKey,
@@ -154,7 +180,12 @@ export function toAlertIngestEnvelope(
       merchant: directMerchant(product.source),
       market: product.market,
       productId,
+      identityKey,
       title: product.title,
+      brand: product.brand,
+      model: product.model,
+      gtin: product.gtin,
+      category: product.category ?? null,
       url: product.url,
       currency: observation.offer.price.currency,
       priceCents: observation.offer.price.amountMinor,
@@ -172,6 +203,10 @@ export function toAlertIngestEnvelope(
       expiresAt,
       notify: requestNotification && notificationEligible(observation),
       rawHash,
+      publicPriceCents: promotion.accessibleToAll ? observation.offer.total?.amountMinor ?? null : null,
+      priceAccessibleToAll: promotion.accessibleToAll,
+      promotionType: promotion.type,
+      promotionLabel: promotion.label,
       ...(historicalPrices && historicalPrices.length > 0 ? { historicalPrices } : {}),
     },
   };
@@ -201,6 +236,10 @@ export function toSourceStatusEnvelope(status: SourceStatusEvent): SourceStatusE
       lastErrorCode: status.lastErrorCode,
       productsSeen: status.productsSeen,
       queueLag: status.queueLag,
+      duplicatesSkipped: status.duplicatesSkipped ?? 0,
+      antiBotBlocked: status.antiBotBlocked ?? false,
+      keepaRequests: status.keepaRequests ?? 0,
+      apifyCostMicros: status.apifyCostMicros ?? null,
     },
   };
 }
