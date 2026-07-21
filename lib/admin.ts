@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { runtimeEnv as env } from "@/lib/runtime-env";
 
 function serverValue(name: string) {
   const workerValue = (env as unknown as Record<string, unknown>)[name];

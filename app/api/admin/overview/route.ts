@@ -1,5 +1,5 @@
 import { desc, eq, gte, sql } from "drizzle-orm";
-import { env } from "cloudflare:workers";
+import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
 import { alertFeedback, alerts, collectionRuns, notificationDeliveries, sourceConfigurations } from "@/db/schema";

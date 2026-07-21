@@ -49,6 +49,16 @@ npm run dev
 
 Puis ouvrir `http://localhost:3000`.
 
+### Cibles de déploiement
+
+- Sur Vercel (`VERCEL=1`), le build utilise Next.js natif afin de publier la
+  PWA et ses routes HTTP au lieu d’un bundle Worker non routable.
+- Sur Cloudflare/Sites, le build par défaut reste `vinext` et reçoit le binding
+  D1 `DB` via le Worker. C’est cette cible qui active les données persistantes.
+- Un déploiement Vercel sans adaptateur de base affiche correctement la PWA,
+  mais les fonctions dépendantes de D1 restent indisponibles et échouent
+  explicitement au lieu de simuler une base active.
+
 Contrôles complets :
 
 ```bash

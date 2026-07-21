@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, gte, inArray, isNotNull, lte, or, sql, type SQL } from "drizzle-orm";
-import { env } from "cloudflare:workers";
+import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
 import { alerts } from "@/db/schema";
