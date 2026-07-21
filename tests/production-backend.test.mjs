@@ -102,3 +102,16 @@ test("ships canonical matching, local delivery rules and automatic source circui
   assert.match(migration, /CREATE TABLE `discovery_segments`/);
   assert.match(migration, /SELECT[\s\S]*'closed', 0, 0, NULL, NULL, NULL, 500/);
 });
+
+test("keeps the mobile header clear of the iPhone safe area", async () => {
+  const [layout, styles] = await Promise.all([
+    source("../app/layout.tsx"),
+    source("../app/globals.css"),
+  ]);
+
+  assert.match(layout, /viewportFit:\s*"cover"/);
+  assert.match(styles, /--safe-top:\s*env\(safe-area-inset-top, 0px\)/);
+  assert.match(styles, /min-height:\s*calc\(64px \+ var\(--safe-top\)\)/);
+  assert.match(styles, /padding:\s*calc\(10px \+ var\(--safe-top\)\)/);
+  assert.match(await source("../public/sw.js"), /prixradar-shell-v3/);
+});

@@ -20,6 +20,7 @@
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
+  --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -98,6 +99,7 @@ a {
 
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .desktop-rail {
@@ -2322,13 +2324,14 @@ a {
     z-index: 25;
     top: 0;
     display: flex;
-    height: 64px;
+    min-height: calc(64px + var(--safe-top));
     align-items: center;
     justify-content: space-between;
-    padding: 10px 18px;
+    padding: calc(10px + var(--safe-top)) max(18px, env(safe-area-inset-right, 0px)) 10px max(18px, env(safe-area-inset-left, 0px));
     border-bottom: 1px solid rgb(222 216 204 / 84%);
     background: rgb(250 247 240 / 88%);
     backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
   }
 
   .brand-compact {
@@ -2371,7 +2374,7 @@ a {
   }
 
   .content-area {
-    min-height: calc(100vh - 109px);
+    min-height: calc(100dvh - 109px - var(--safe-top));
     padding: 29px 17px calc(96px + var(--safe-bottom));
   }
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = "prixradar-shell-v2";
+const CACHE_NAME = "prixradar-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
