@@ -1,6 +1,6 @@
 {
   "name": "@prixradar/collector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Collecteur autonome PrixRadar: discovery, double verification, ingestion et push.",
   "type": "module",
@@ -15,10 +15,13 @@
     "scan-keepa": "tsx src/cli.ts scan-keepa",
     "worker": "tsx src/cli.ts worker",
     "actor": "tsx src/cli.ts actor",
+    "plan": "node --import tsx src/provision.ts",
+    "provision": "node --import tsx src/provision.ts --apply",
     "start": "node dist/cli.js worker"
   },
   "dependencies": {
     "apify": "3.7.2",
+    "apify-client": "2.23.4",
     "bullmq": "5.80.9",
     "cheerio": "1.1.2",
     "crawlee": "3.17.0",

@@ -53,12 +53,21 @@ export interface AnomalyScore {
   reasons: string[];
 }
 
+export interface TrustedHistoricalPrice {
+  provider: "keepa";
+  priceMinor: number;
+  observedAt: string;
+  rawHash: string;
+}
+
 export interface VerifiedObservation {
   schemaVersion: "1";
   alertCandidateId: string;
   offer: OfferSnapshot;
   verification: VerificationEvidence;
   anomaly: AnomalyScore;
+  /** Bounded, provider-authenticated history. It is only ingested when shipping is explicitly free. */
+  historicalPrices?: TrustedHistoricalPrice[];
 }
 
 export interface IngestResponse {

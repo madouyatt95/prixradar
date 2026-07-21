@@ -21,6 +21,14 @@
       "enum": ["FR", "DE", "IT", "ES", "GB"],
       "enumTitles": ["France", "Allemagne", "Italie", "Espagne", "Royaume-Uni"]
     },
+    "markets": {
+      "title": "Marchés Amazon automatisés",
+      "type": "array",
+      "description": "Permet de scanner EU5 dans une seule exécution, moins coûteuse que cinq démarrages Actor.",
+      "editor": "stringList",
+      "default": ["FR", "DE", "IT", "ES", "GB"],
+      "items": { "type": "string", "enum": ["FR", "DE", "IT", "ES", "GB"] }
+    },
     "urls": {
       "title": "URLs autorisées",
       "type": "array",
@@ -62,6 +70,36 @@
       "default": 25,
       "minimum": 1,
       "maximum": 100
+    },
+    "page": {
+      "title": "Page Keepa",
+      "type": "integer",
+      "description": "Page de résultats Keepa, pour répartir la couverture entre plusieurs tâches.",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 10
+    },
+    "minimumDropPercent": {
+      "title": "Baisse minimale",
+      "type": "integer",
+      "description": "Pourcentage minimal demandé à Keepa avant la vérification directe.",
+      "default": 30,
+      "minimum": 20,
+      "maximum": 90
+    },
+    "verifyAmazonPage": {
+      "title": "Vérifier la page Amazon",
+      "type": "boolean",
+      "description": "Contrôle deux fois les meilleurs candidats sur la page marchande avant notification.",
+      "default": true
+    },
+    "liveVerificationLimit": {
+      "title": "Limite de vérifications Amazon",
+      "type": "integer",
+      "description": "Garde-fou de coût: nombre maximal de candidats Keepa contrôlés directement par exécution.",
+      "default": 5,
+      "minimum": 0,
+      "maximum": 20
     }
   }
 }

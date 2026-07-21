@@ -65,6 +65,14 @@ type ParsedAlert = {
   expiresAt: string;
   notify: boolean;
   rawHash: string | null;
+  historicalPrices: ParsedHistoricalPrice[];
+};
+
+type ParsedHistoricalPrice = {
+  provider: "keepa";
+  priceCents: number;
+  observedAt: string;
+  rawHash: string;
 };
 
 type ParsedSourceStatus = {
@@ -230,6 +238,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "expiresAt",
     "notify",
     "rawHash",
+    "historicalPrices",
   ]);
 
   const id = requiredString(value.id, "id", 160);
@@ -250,6 +259,27 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
   const seller = optionalString(value.seller, "seller", 160);
   const rawHash = optionalString(value.rawHash, "rawHash", 64);
   if (rawHash !== null && !/^[a-f0-9]{64}$/i.test(rawHash)) throw new Error("rawHash doit être un SHA-256 hexadécimal.");
+
+  const historicalValues = value.historicalPrices === undefined ? [] : value.historicalPrices;
+  if (!Array.isArray(historicalValues) || historicalValues.length > 60) {
+    throw new Error("historicalPrices doit contenir au maximum 60 points.");
+  }
+  if (historicalValues.length > 0 && source !== "amazon") {
+    throw new Error("historicalPrices est réservé à Amazon via Keepa.");
+  }
+  const historicalPrices = historicalValues.map((entry, index): ParsedHistoricalPrice => {
+    if (!isRecord(entry)) throw new Error(`historicalPrices[${index}] doit être un objet.`);
+    ensureOnlyKeys(entry, ["provider", "priceCents", "observedAt", "rawHash"], `historicalPrices[${index}]`);
+    if (entry.provider !== "keepa") throw new Error(`historicalPrices[${index}].provider doit être keepa.`);
+    const pointHash = requiredString(entry.rawHash, `historicalPrices[${index}].rawHash`, 64);
+    if (!/^[a-f0-9]{64}$/i.test(pointHash)) throw new Error(`historicalPrices[${index}].rawHash est invalide.`);
+    return {
+      provider: "keepa",
+      priceCents: integerInRange(entry.priceCents, `historicalPrices[${index}].priceCents`, 1, MAX_MONEY_CENTS),
+      observedAt: isoTimestamp(entry.observedAt, `historicalPrices[${index}].observedAt`) as string,
+      rawHash: pointHash.toLowerCase(),
+    };
+  });
 
   const parsed: ParsedAlert = {
     id,
@@ -275,6 +305,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     expiresAt: isoTimestamp(value.expiresAt, "expiresAt") as string,
     notify: optionalBoolean(value.notify, "notify", false),
     rawHash,
+    historicalPrices,
   };
 
   const observedAtMs = Date.parse(parsed.observedAt);
@@ -288,6 +319,19 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
   }
   if (parsed.notify && parsed.sourceMode !== "live") {
     throw new Error("Une donnée demo ou fixture ne peut jamais demander une notification.");
+  }
+  if (parsed.historicalPrices.length > 0 && parsed.shippingCents !== 0) {
+    throw new Error("L’historique Keepa n’est accepté que si la livraison actuelle est explicitement gratuite.");
+  }
+  const minimumHistoryTimestamp = observedAtMs - 180 * 86_400_000;
+  const uniqueHistoryHashes = new Set<string>();
+  for (const point of parsed.historicalPrices) {
+    const timestamp = Date.parse(point.observedAt);
+    if (timestamp >= observedAtMs || timestamp < minimumHistoryTimestamp) {
+      throw new Error("historicalPrices doit précéder observedAt de moins de 180 jours.");
+    }
+    if (uniqueHistoryHashes.has(point.rawHash)) throw new Error("historicalPrices contient un doublon.");
+    uniqueHistoryHashes.add(point.rawHash);
   }
   return parsed;
 }
@@ -459,14 +503,24 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
   };
   const evaluation = evaluatePriceAnomaly(
     candidate,
-    priorRows.map((row) => ({
-      priceCents: row.priceCents,
-      shippingCents: row.shippingCents,
-      totalCents: row.totalCents,
-      available: row.available,
-      observedAt: row.observedAt,
-      rawHash: row.rawHash,
-    })),
+    [
+      ...parsed.historicalPrices.map((point) => ({
+        priceCents: point.priceCents,
+        shippingCents: 0,
+        totalCents: point.priceCents,
+        available: true,
+        observedAt: point.observedAt,
+        rawHash: point.rawHash,
+      })),
+      ...priorRows.map((row) => ({
+        priceCents: row.priceCents,
+        shippingCents: row.shippingCents,
+        totalCents: row.totalCents,
+        available: row.available,
+        observedAt: row.observedAt,
+        rawHash: row.rawHash,
+      })),
+    ],
   );
   const now = new Date().toISOString();
   const alertStatus = evaluation.notificationEligible ? "active" : evaluation.score >= 40 ? "review" : "monitoring";
@@ -478,6 +532,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     expectedVariantId: parsed.expectedVariantId,
     observedVariantId: parsed.observedVariantId,
     sellerTrusted: parsed.sellerTrusted,
+    historyProvider: parsed.historicalPrices.length > 0 ? "keepa" : null,
+    importedHistoryPoints: parsed.historicalPrices.length,
     analysis: evaluation,
   });
   const rawHash =
@@ -568,7 +624,23 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     })
     .onConflictDoNothing({ target: [priceObservations.alertId, priceObservations.rawHash] });
 
-  await database.batch([eventInsert, alertUpsert, observationInsert]);
+  const historyInsert = parsed.historicalPrices.length === 0
+    ? null
+    : database
+        .insert(priceObservations)
+        .values(parsed.historicalPrices.map((point) => ({
+          alertId: parsed.id,
+          priceCents: point.priceCents,
+          shippingCents: 0,
+          totalCents: point.priceCents,
+          available: true,
+          observedAt: point.observedAt,
+          rawHash: point.rawHash,
+        })))
+        .onConflictDoNothing({ target: [priceObservations.alertId, priceObservations.rawHash] });
+
+  if (historyInsert) await database.batch([eventInsert, alertUpsert, historyInsert, observationInsert]);
+  else await database.batch([eventInsert, alertUpsert, observationInsert]);
 
   return json(
     {

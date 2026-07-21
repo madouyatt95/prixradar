@@ -24,7 +24,7 @@ export async function GET() {
   const body = {
     ok: database,
     service: "prixradar",
-    version: "0.2.0",
+    version: "0.3.0",
     checkedAt: new Date().toISOString(),
     capabilities: {
       database,

@@ -41,7 +41,7 @@ test("ships an installable PWA without caching private APIs", async () => {
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /request\.mode === "navigate"/);
   assert.match(layout, /appleWebApp/);
-  assert.match(layout, /og\.png/);
+  assert.match(layout, /og-v2\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   const hostingConfig = JSON.parse(hosting);
   assert.equal(hostingConfig.d1, "DB");
@@ -52,7 +52,7 @@ test("ships an installable PWA without caching private APIs", async () => {
     access(new URL("../public/icon-192.png", import.meta.url)),
     access(new URL("../public/icon-512.png", import.meta.url)),
     access(new URL("../public/apple-touch-icon.png", import.meta.url)),
-    access(new URL("../public/og.png", import.meta.url)),
+    access(new URL("../public/og-v2.png", import.meta.url)),
   ]);
 });
 

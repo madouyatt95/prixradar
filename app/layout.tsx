@@ -40,7 +40,7 @@ export const metadata: Metadata = {
       "Un radar clair pour les anomalies de prix en France et sur Amazon Europe.",
     images: [
       {
-        url: new URL("/og.png", siteUrl).toString(),
+        url: new URL("/og-v2.png", siteUrl).toString(),
         width: 1536,
         height: 1024,
         alt: "PrixRadar, repérez l’inhabituel et vérifiez avant d’acheter",
@@ -52,7 +52,7 @@ export const metadata: Metadata = {
     title: "PrixRadar — Les anomalies de prix, vérifiées",
     description:
       "Un radar clair pour les anomalies de prix en France et sur Amazon Europe.",
-    images: [new URL("/og.png", siteUrl).toString()],
+    images: [new URL("/og-v2.png", siteUrl).toString()],
   },
 };
 

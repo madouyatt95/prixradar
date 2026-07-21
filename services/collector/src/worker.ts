@@ -1,7 +1,7 @@
 import { scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import { loadConfig, type CollectorConfig } from "./config.js";
 import { connectorForUrl } from "./connectors/index.js";
-import { KeepaClient, scanKeepaMarket } from "./keepa.js";
+import { KeepaClient, mergeKeepaWithLive, scanKeepaMarket } from "./keepa.js";
 import { logger } from "./logger.js";
 import { CollectorQueue, createCollectorWorker, type CollectorJob } from "./queue.js";
 import { sendPushForObservation } from "./push.js";
@@ -57,6 +57,31 @@ export async function deliverObservation(
   logger.info("push_delivery_completed", { alertId: ingested.alert.id, ...result });
 }
 
+export async function liveVerifyKeepaObservation(
+  observation: VerifiedObservation,
+  config: CollectorConfig,
+  options: { browserFallback?: boolean } = {},
+): Promise<{ observation: VerifiedObservation; liveVerified: boolean; errorCode: string | null }> {
+  try {
+    const live = await verifySourceUrl(observation.offer.product.url, {
+      browserFallback: options.browserFallback ?? config.browserFallback,
+      fixture: observation.offer.fixture,
+      timeoutMs: config.httpTimeoutMs,
+      maxDiscoveredUrls: 1,
+      proxyUrls: config.proxyUrls,
+      verifyDelayMs: config.verifyDelayMs,
+      baselineMinor: observation.offer.referencePrice?.amountMinor ?? null,
+    });
+    const merged = mergeKeepaWithLive(observation, live);
+    if (merged.verification.status !== "confirmed") {
+      return { observation, liveVerified: false, errorCode: "AMAZON_LIVE_MISMATCH" };
+    }
+    return { observation: merged, liveVerified: true, errorCode: null };
+  } catch {
+    return { observation, liveVerified: false, errorCode: "AMAZON_LIVE_UNAVAILABLE" };
+  }
+}
+
 function sourceAttemptForJob(job: CollectorJob): SourceAttempt {
   if (job.kind === "scan-keepa") return sourceAttempt("amazon", job.market, job.fixture);
   const connector = connectorForUrl(job.url);
@@ -106,8 +131,15 @@ export async function processCollectorJob(
     maxQuotaWaitMs: config.keepaMaxQuotaWaitMs,
   });
   const observations = await scanKeepaMarket(client, job.market, { limit: job.limit, fixture: job.fixture });
-  for (const observation of observations) await deliverObservation(observation, config);
-  return { market: job.market, observations: observations.length, quota: client.quota };
+  let liveVerified = 0;
+  for (const [index, observation] of observations.entries()) {
+    const verified = index < 5
+      ? await liveVerifyKeepaObservation(observation, config)
+      : { observation, liveVerified: false, errorCode: "AMAZON_LIVE_LIMIT" };
+    if (verified.liveVerified) liveVerified += 1;
+    await deliverObservation(verified.observation, config);
+  }
+  return { market: job.market, observations: observations.length, liveVerified, quota: client.quota };
 }
 
 export async function runWorker(config: CollectorConfig = loadConfig()): Promise<void> {

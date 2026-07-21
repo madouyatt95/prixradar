@@ -111,8 +111,11 @@ function isTrustedRetailSeller(source: RetailSource, seller: string | null): boo
     boulanger: ["boulanger", "boulangercom"],
     darty: ["darty", "dartycom"],
     cdiscount: ["cdiscount", "cdiscountcom"],
+    amazon: ["amazon", "amazonfr", "amazonde", "amazonit", "amazones", "amazoncouk"],
   };
-  return expected[source]?.includes(normalized) ?? false;
+  if (expected[source]?.includes(normalized)) return true;
+  return source === "amazon"
+    && /(?:vendu(?: et expedie)? par|sold(?: and dispatched)? by|verkauf(?: und versand)? durch|venduto(?: e spedito)? da|vendido(?: y enviado)? por)\s*amazon\b/iu.test(seller.normalize("NFKD").replace(/\p{M}/gu, ""));
 }
 
 function productUrl(raw: JsonRecord, offer: JsonRecord, context: JsonLdContext): string {

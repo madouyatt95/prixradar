@@ -54,6 +54,15 @@ type SourceRuntimeStatus = {
   queueLag?: number;
 };
 
+type HealthCapabilities = {
+  database: boolean;
+  keepa: boolean;
+  ingestion: boolean;
+  deviceIdentity: boolean;
+  pushSubscriptions: boolean;
+  pushDeliveryCredentials: boolean;
+};
+
 type WatchItem = {
   productId?: string;
   id?: string;
@@ -444,6 +453,7 @@ export function PriceRadarApp() {
   const [liveAlerts, setLiveAlerts] = useState<AlertItem[]>([]);
   const [liveLoading, setLiveLoading] = useState(true);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
+  const [health, setHealth] = useState<HealthCapabilities | null>(null);
   const [watched, setWatched] = useState<Set<string>>(new Set());
   const [watchLoading, setWatchLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -542,10 +552,26 @@ export function PriceRadarApp() {
             }));
         },
       ),
-    ]).then(([alertsResult, sourcesResult]) => {
+      fetch("/api/health", { headers: { accept: "application/json" } }).then(
+        async (response) => {
+          const data = (await response.json()) as Record<string, unknown>;
+          const capabilities = record(data.capabilities);
+          if (!capabilities) return null;
+          return {
+            database: capabilities.database === true,
+            keepa: capabilities.keepa === true,
+            ingestion: capabilities.ingestion === true,
+            deviceIdentity: capabilities.deviceIdentity === true,
+            pushSubscriptions: capabilities.pushSubscriptions === true,
+            pushDeliveryCredentials: capabilities.pushDeliveryCredentials === true,
+          } satisfies HealthCapabilities;
+        },
+      ),
+    ]).then(([alertsResult, sourcesResult, healthResult]) => {
       if (!active) return;
       if (alertsResult.status === "fulfilled") setLiveAlerts(alertsResult.value);
       if (sourcesResult.status === "fulfilled") setSourceStatuses(sourcesResult.value);
+      if (healthResult.status === "fulfilled") setHealth(healthResult.value);
       setLiveLoading(false);
     });
     return () => {
@@ -877,6 +903,7 @@ export function PriceRadarApp() {
           error={lookupError}
           onSubmit={lookupKeepa}
           statuses={sourceStatuses}
+          health={health}
           liveAlertCount={liveAlerts.length}
         />
       );
@@ -1367,6 +1394,7 @@ function SourcesView({
   error,
   onSubmit,
   statuses,
+  health,
   liveAlertCount,
 }: {
   lookupOpen: boolean;
@@ -1380,6 +1408,7 @@ function SourcesView({
   error: string;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   statuses: SourceRuntimeStatus[];
+  health: HealthCapabilities | null;
   liveAlertCount: number;
 }) {
   const normalized = result
@@ -1435,6 +1464,15 @@ function SourcesView({
   const boulangerState = presentation(runtimeFor("boulanger"), "Prêt à déployer", "prepared");
   const dartyState = presentation(runtimeFor("darty"), "Prêt à déployer", "prepared");
   const cdiscountState = presentation(runtimeFor("cdiscount"), "Prêt à déployer", "prepared");
+  const apifyActive = statuses.some((item) => item.mode === "live" && Boolean(item.lastSuccessAt));
+  const readiness = [
+    ["Base Cloudflare", health?.database === true, "D1 et API"],
+    ["Keepa", health?.keepa === true, "clé serveur"],
+    ["Collecteur", health?.ingestion === true, "secret d’ingestion"],
+    ["Identité PWA", health?.deviceIdentity === true, "appareils signés"],
+    ["Notifications", health?.pushDeliveryCredentials === true, "Web Push complet"],
+    ["Apify", apifyActive, "premier passage"],
+  ] as const;
 
   return (
     <section className="view-section">
@@ -1456,6 +1494,22 @@ function SourcesView({
           </button>
         }
       />
+
+      <div className="readiness-panel" aria-label="Préparation production">
+        <div className="readiness-heading">
+          <span className="eyebrow">Préparation production</span>
+          <h2>{readiness.filter((item) => item[1]).length}/6 blocs raccordés</h2>
+          <p>Les éléments payants restent inactifs tant que leurs secrets ne sont pas ajoutés.</p>
+        </div>
+        <div className="readiness-grid">
+          {readiness.map(([label, ready, detail]) => (
+            <div key={label} className={ready ? "is-ready" : "is-waiting"}>
+              <span aria-hidden="true">{ready ? "✓" : "·"}</span>
+              <p><strong>{label}</strong><small>{ready ? "Configuré" : detail}</small></p>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {lookupOpen ? (
         <div className="lookup-panel">

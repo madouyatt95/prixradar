@@ -63,17 +63,41 @@ docker compose --profile worker up --build
 ## Keepa EU5
 
 `scan-keepa` appelle `/deal` pour découvrir les baisses puis `/product` pour
-obtenir le produit et les statistiques 90 jours. Les marchés sont GB=2, DE=3,
-FR=4, IT=8 et ES=9. Le client suit `tokensLeft`, `refillIn` et `refillRate`, attend
-un refill court et diffère les attentes supérieures à la limite configurée. La
-clé Keepa ne figure jamais dans une URL journalisée.
+obtenir le produit, les statistiques et un historique borné à 60 points sur 180
+jours. Les marchés sont GB=2, DE=3, FR=4, IT=8 et ES=9. Les cinq marchés peuvent
+être traités dans une seule exécution Actor. Les cinq meilleurs candidats de
+chaque marché sont ensuite contrôlés deux fois sur leur page Amazon. L’historique
+n’est injecté au moteur que lorsque la livraison est explicitement gratuite.
+Le client suit `tokensLeft`, `refillIn` et `refillRate`, attend un refill court et
+diffère les attentes supérieures à la limite configurée. La clé Keepa ne figure
+jamais dans une URL journalisée.
 
 ## Apify Actor
 
-Le packaging `.actor/` accepte `source`, `market`, `urls` et `mode`. Depuis ce
+Le packaging `.actor/` accepte `source`, `market`, `markets`, `urls`, `mode`, les
+seuils Keepa et la limite de contrôles directs. Depuis ce
 dossier, `apify push` utilise le Dockerfile du collecteur. Le mode `fixture`
 marque chaque résultat et refuse explicitement `notify=true`; les deux couches
 sink et push refusent aussi toute fixture.
+
+Le plan d’automatisation est lisible sans compte ni clé :
+
+```bash
+npm run plan
+```
+
+Il regroupe Amazon EU5 dans un Actor toutes les 15 minutes et, lorsque
+`PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
+Actor toutes les 30 minutes. Après vérification du JSON produit, la seule
+commande qui écrit sur Apify est :
+
+```bash
+npm run provision
+```
+
+Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les deux
+plannings par nom. Le token Apify n’est pas nécessaire à l’exécution de l’Actor
+et ne doit pas être ajouté à la PWA.
 
 ## Limites réelles
 

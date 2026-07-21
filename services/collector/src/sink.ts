@@ -43,6 +43,12 @@ export interface AlertIngestEnvelope {
     expiresAt: string;
     notify: boolean;
     rawHash: string;
+    historicalPrices?: Array<{
+      provider: "keepa";
+      priceCents: number;
+      observedAt: string;
+      rawHash: string;
+    }>;
   };
 }
 
@@ -129,6 +135,14 @@ export function toAlertIngestEnvelope(
     observation.offer.seller,
     safeObservedAt,
   ]);
+  const historicalPrices = product.source === "amazon" && observation.offer.shipping?.amountMinor === 0
+    ? observation.historicalPrices?.slice(0, 60).map((point) => ({
+        provider: point.provider,
+        priceCents: point.priceMinor,
+        observedAt: point.observedAt,
+        rawHash: point.rawHash,
+      }))
+    : undefined;
 
   return {
     idempotencyKey,
@@ -158,6 +172,7 @@ export function toAlertIngestEnvelope(
       expiresAt,
       notify: requestNotification && notificationEligible(observation),
       rawHash,
+      ...(historicalPrices && historicalPrices.length > 0 ? { historicalPrices } : {}),
     },
   };
 }

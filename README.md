@@ -13,8 +13,9 @@ présenter une remise comme une « erreur certaine ».
 | API alertes et état des sources | actif | données `live` strictes, aucune fixture publique par défaut |
 | Keepa dans la PWA | prêt | cache D1 15 min et quota 20 appels/heure/appareil ; requiert une clé |
 | Collecteur Boulanger/Darty/Cdiscount | prêt à déployer | JSON-LD, connecteurs, Crawlee HTTP, Playwright en repli |
-| Amazon Europe | prêt à déployer | Keepa EU5 : FR, DE, IT, ES et GB |
+| Amazon Europe | prêt à déployer | Keepa EU5 + historique borné + double contrôle de page avant notification |
 | Web Push | prêt à activer | souscriptions, heures calmes, réservation atomique et audit ; requiert VAPID + collecteur |
+| Automatisation Apify | prête, non appliquée | plan EU5 toutes les 15 min + enseignes FR toutes les 30 min, provisionnement idempotent |
 
 Les six cartes affichées quand aucune source n’est active portent **DÉMO**. Elles
 ne sont jamais ingérées, notifiées ou présentées comme des prix disponibles.
@@ -33,8 +34,9 @@ Une notification exige simultanément :
 8. une expiration de l’alerte au plus tard 120 minutes après l’observation.
 
 Un frais de port inconnu reste `NULL` de bout en bout. Il n’est jamais transformé
-en livraison gratuite. Avec Keepa seul, Amazon fournit l’historique et le signal,
-mais une alerte Push reste bloquée tant que le total livré n’est pas confirmé.
+en livraison gratuite. Keepa fournit le signal et au maximum 60 points historiques ;
+une notification Amazon reste bloquée jusqu’à ce que la page marchande confirme
+deux fois l’ASIN, le prix, le vendeur, l’état, le stock et le total livré.
 
 ## Lancer la PWA
 
@@ -101,6 +103,10 @@ OAI-Sites-Authorization: Bearer <OAI_SITES_AUTH_TOKEN>
 ```
 
 en plus du secret métier de la route appelée.
+
+Le plan d’activation complet, y compris les variables, les contrôles de coût et
+le passage en accès public sans connexion ChatGPT, se trouve dans
+[`docs/activation-checklist.md`](docs/activation-checklist.md).
 
 ## API principale
 

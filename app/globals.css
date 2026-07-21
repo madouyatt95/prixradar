@@ -1288,6 +1288,86 @@ a {
   display: block;
 }
 
+.readiness-panel {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.7fr) minmax(420px, 1.3fr);
+  gap: 22px;
+  margin-bottom: 14px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+.readiness-heading h2,
+.readiness-heading p,
+.readiness-grid p {
+  margin: 0;
+}
+
+.readiness-heading h2 {
+  margin-top: 3px;
+  font-size: 17px;
+}
+
+.readiness-heading p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.readiness-grid > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border-radius: 11px;
+  background: var(--canvas);
+}
+
+.readiness-grid > div > span {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--gold);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.readiness-grid .is-ready > span {
+  background: var(--mint);
+}
+
+.readiness-grid strong,
+.readiness-grid small {
+  display: block;
+}
+
+.readiness-grid strong {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readiness-grid small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 7px;
+}
+
 .lookup-result small {
   color: var(--muted);
   font-size: 9px;
@@ -2085,6 +2165,10 @@ a {
     grid-template-columns: 46px 1fr auto;
   }
 
+  .readiness-panel {
+    grid-template-columns: 1fr;
+  }
+
   .source-method {
     display: none;
   }
@@ -2293,6 +2377,10 @@ a {
   .coverage-callout {
     display: block;
     padding: 23px;
+  }
+
+  .readiness-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .market-badges {

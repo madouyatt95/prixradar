@@ -1,8 +1,10 @@
+import { stableHash } from "./normalize.js";
 import { scoreOffer } from "./scoring.js";
 import type {
   Currency,
   Market,
   OfferSnapshot,
+  TrustedHistoricalPrice,
   VerifiedObservation,
 } from "./types.js";
 
@@ -43,6 +45,7 @@ export interface KeepaProduct {
   market: Market;
   observedAt: string;
   buyBoxIsAmazon: boolean;
+  history: TrustedHistoricalPrice[];
 }
 
 export interface KeepaClientOptions {
@@ -152,6 +155,28 @@ function historyLast(value: unknown): number | null {
   return null;
 }
 
+function normalizeHistory(value: unknown, asin: string, observedAt: string): TrustedHistoricalPrice[] {
+  if (!Array.isArray(value)) return [];
+  const currentTimestamp = Date.parse(observedAt);
+  const minimumTimestamp = currentTimestamp - 180 * 86_400_000;
+  const history: TrustedHistoricalPrice[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index + 1 < value.length; index += 2) {
+    const pointObservedAt = keepaTime(value[index]);
+    const priceMinor = keepaPrice(value[index + 1]);
+    if (!pointObservedAt || priceMinor === null) continue;
+    const timestamp = Date.parse(pointObservedAt);
+    if (timestamp >= currentTimestamp || timestamp < minimumTimestamp) continue;
+    const rawHash = stableHash(["keepa", asin, pointObservedAt, priceMinor]);
+    if (seen.has(rawHash)) continue;
+    seen.add(rawHash);
+    history.push({ provider: "keepa", priceMinor, observedAt: pointObservedAt, rawHash });
+  }
+  return history
+    .sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))
+    .slice(0, 60);
+}
+
 function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string): KeepaProduct | null {
   const asin = normalizedAsin(raw.asin);
   const title = text(raw.title);
@@ -173,6 +198,8 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string): 
     ?? arrayPrice(avg90, PRICE_INDEXES.new)
     ?? arrayPrice(current, PRICE_INDEXES.list);
   const imageName = text(raw.imagesCSV ?? raw.imageCSV)?.split(",")[0]?.trim() ?? null;
+  const historySeries = [csv[PRICE_INDEXES.buyBox], csv[PRICE_INDEXES.amazon], csv[PRICE_INDEXES.new]]
+    .find((series) => Array.isArray(series) && series.length >= 2);
 
   return {
     asin,
@@ -187,6 +214,7 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string): 
     market,
     observedAt,
     buyBoxIsAmazon: raw.buyBoxIsAmazon === true,
+    history: normalizeHistory(historySeries, asin, observedAt),
   };
 }
 
@@ -351,6 +379,52 @@ export function verifyKeepaDeal(deal: KeepaDeal, product: KeepaProduct, fixture 
       matchingPrice,
     },
     anomaly,
+    historicalPrices: product.history,
+  };
+}
+
+export function mergeKeepaWithLive(
+  keepaObservation: VerifiedObservation,
+  liveObservation: VerifiedObservation,
+): VerifiedObservation {
+  const keepaOfferSnapshot = keepaObservation.offer;
+  const liveOffer = liveObservation.offer;
+  const matchingIdentity = keepaOfferSnapshot.product.externalId === liveOffer.product.externalId
+    && keepaOfferSnapshot.product.market === liveOffer.product.market;
+  const matchingPrice = keepaOfferSnapshot.price.currency === liveOffer.price.currency
+    && keepaOfferSnapshot.price.amountMinor === liveOffer.price.amountMinor;
+  const offer: OfferSnapshot = {
+    ...liveOffer,
+    product: {
+      ...liveOffer.product,
+      title: liveOffer.product.title || keepaOfferSnapshot.product.title,
+      brand: liveOffer.product.brand ?? keepaOfferSnapshot.product.brand,
+      model: liveOffer.product.model ?? keepaOfferSnapshot.product.model,
+      imageUrl: liveOffer.product.imageUrl ?? keepaOfferSnapshot.product.imageUrl,
+    },
+    referencePrice: keepaOfferSnapshot.referencePrice ?? liveOffer.referencePrice,
+    fixture: keepaOfferSnapshot.fixture || liveOffer.fixture,
+  };
+  return {
+    schemaVersion: "1",
+    alertCandidateId: offer.product.productKey,
+    offer,
+    verification: {
+      status: keepaObservation.verification.status === "confirmed"
+        && liveObservation.verification.status === "confirmed"
+        && matchingIdentity
+        && matchingPrice
+        ? "confirmed"
+        : "rejected",
+      firstObservedAt: keepaObservation.verification.firstObservedAt,
+      secondObservedAt: liveObservation.verification.secondObservedAt,
+      matchingIdentity,
+      matchingPrice,
+    },
+    anomaly: scoreOffer(offer, keepaOfferSnapshot.referencePrice?.amountMinor ?? null),
+    ...(keepaObservation.historicalPrices
+      ? { historicalPrices: keepaObservation.historicalPrices }
+      : {}),
   };
 }
 

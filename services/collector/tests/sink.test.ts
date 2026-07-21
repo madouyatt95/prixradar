@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ingestIdempotencyKey, postObservation } from "../src/sink.js";
+import { ingestIdempotencyKey, postObservation, toAlertIngestEnvelope } from "../src/sink.js";
 import type { VerifiedObservation } from "../src/types.js";
 
 function observation(fixture = false): VerifiedObservation {
@@ -86,6 +86,27 @@ test("une fixture ne peut jamais atteindre le réseau", async () => {
     /fixture/u,
   );
   assert.equal(called, false);
+});
+
+test("transmet l’historique Keepa uniquement avec une livraison explicitement gratuite", () => {
+  const item = observation();
+  item.offer.product.source = "amazon";
+  item.offer.product.market = "FR";
+  item.offer.product.externalId = "B012345678";
+  item.offer.product.url = "https://www.amazon.fr/dp/B012345678";
+  item.offer.shipping = { amountMinor: 0, currency: "EUR" };
+  item.offer.total = { amountMinor: item.offer.price.amountMinor, currency: "EUR" };
+  item.historicalPrices = [{
+    provider: "keepa",
+    priceMinor: 19_999,
+    observedAt: "2026-07-01T10:00:00.000Z",
+    rawHash: "a".repeat(64),
+  }];
+  const envelope = toAlertIngestEnvelope(item);
+  assert.equal(envelope.payload.historicalPrices?.length, 1);
+  item.offer.shipping = null;
+  item.offer.total = null;
+  assert.equal(toAlertIngestEnvelope(item).payload.historicalPrices, undefined);
 });
 
 test("les erreurs publiques ne contiennent aucun secret", async () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { KEEPA_MARKETS, KeepaApiError, KeepaClient, scanKeepaMarket } from "../src/keepa.js";
+import { KEEPA_MARKETS, KeepaApiError, KeepaClient, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
 
 test("déclare exactement les cinq marchés Amazon Europe couverts", () => {
   assert.deepEqual(Object.fromEntries(Object.entries(KEEPA_MARKETS).map(([market, config]) => [market, config.domainId])), {
@@ -40,7 +40,9 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
             current: [5000, -1, -1, -1, 9000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
             avg90: [10000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
           },
-          csv: [],
+          csv: [
+            [8_000_000, 10_000, 8_030_000, 10_500, 8_060_000, 9_900, 8_090_000, 10_200, 8_120_000, 9_800, 8_150_000, 10_100],
+          ],
         }],
       });
     },
@@ -53,7 +55,20 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(observations[0]?.offer.sellerTrusted, true);
   assert.equal(observations[0]?.offer.referencePrice?.amountMinor, 10_000);
   assert.equal(observations[0]?.offer.fixture, true);
+  assert.equal(observations[0]?.historicalPrices?.length, 6);
   assert.equal(client.quota.tokensLeft, 10);
+
+  const keepa = observations[0];
+  assert.ok(keepa);
+  const live = structuredClone(keepa);
+  live.offer.product.productKey = "amazon:fr:live-page";
+  live.offer.shipping = { amountMinor: 0, currency: "EUR" };
+  live.offer.total = { amountMinor: 5_000, currency: "EUR" };
+  live.offer.strategy = "connector";
+  const merged = mergeKeepaWithLive(keepa, live);
+  assert.equal(merged.verification.status, "confirmed");
+  assert.equal(merged.offer.shipping?.amountMinor, 0);
+  assert.equal(merged.historicalPrices?.length, 6);
 });
 
 test("les erreurs Keepa n’exposent jamais la clé", async () => {

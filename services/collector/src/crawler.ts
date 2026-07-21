@@ -146,12 +146,15 @@ export async function scanSourceUrl(url: string, options: ScanOptions = {}): Pro
 
 export async function verifySourceUrl(
   url: string,
-  options: ScanOptions & { verifyDelayMs?: number } = {},
+  options: ScanOptions & { verifyDelayMs?: number; baselineMinor?: number | null } = {},
 ): Promise<VerifiedObservation> {
   return verifyWithSecondRead(async () => {
     const scan = await scanSourceUrl(url, options);
     const offer = scan.offers[0];
     if (!offer) throw new CollectorNavigationError("Aucune offre produit extractible à cette URL.");
     return offer;
-  }, options.verifyDelayMs === undefined ? {} : { delayMs: options.verifyDelayMs });
+  }, {
+    ...(options.verifyDelayMs === undefined ? {} : { delayMs: options.verifyDelayMs }),
+    ...(options.baselineMinor === undefined ? {} : { baselineMinor: options.baselineMinor }),
+  });
 }
