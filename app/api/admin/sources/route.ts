@@ -55,7 +55,7 @@ async function configurationId(source: string, market: string, url: string) {
 }
 
 export async function GET(request: Request) {
-  const authorization = authorizeAdmin(request);
+  const authorization = await authorizeAdmin(request);
   if (!authorization.ok) return authorization.response;
   try {
     const items = await getDb().select().from(sourceConfigurations).orderBy(sourceConfigurations.source, sourceConfigurations.category);
@@ -66,7 +66,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authorization = authorizeAdmin(request);
+  const authorization = await authorizeAdmin(request);
   if (!authorization.ok) return authorization.response;
   try {
     const body = await request.json() as Record<string, unknown>;
@@ -84,6 +84,7 @@ export async function POST(request: Request) {
       enabled: body.enabled !== false,
       cadenceMinutes: integer(body.cadenceMinutes, "cadenceMinutes", 15, 1_440, 60),
       volatilityScore: integer(body.volatilityScore, "volatilityScore", 0, 100, 50),
+      dailyProductBudget: integer(body.dailyProductBudget, "dailyProductBudget", 1, 100_000, 500),
       updatedAt: new Date().toISOString(),
     };
     await getDb().insert(sourceConfigurations).values(values).onConflictDoUpdate({
@@ -94,6 +95,7 @@ export async function POST(request: Request) {
         enabled: values.enabled,
         cadenceMinutes: values.cadenceMinutes,
         volatilityScore: values.volatilityScore,
+        dailyProductBudget: values.dailyProductBudget,
         updatedAt: values.updatedAt,
       },
     });
@@ -104,7 +106,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const authorization = authorizeAdmin(request);
+  const authorization = await authorizeAdmin(request);
   if (!authorization.ok) return authorization.response;
   try {
     const body = await request.json() as Record<string, unknown>;
@@ -117,7 +119,18 @@ export async function PATCH(request: Request) {
     }
     if (body.cadenceMinutes !== undefined) patch.cadenceMinutes = integer(body.cadenceMinutes, "cadenceMinutes", 15, 1_440, 60);
     if (body.volatilityScore !== undefined) patch.volatilityScore = integer(body.volatilityScore, "volatilityScore", 0, 100, 50);
+    if (body.dailyProductBudget !== undefined) patch.dailyProductBudget = integer(body.dailyProductBudget, "dailyProductBudget", 1, 100_000, 500);
     if (body.category !== undefined) patch.category = text(body.category, "category", 80);
+    if (body.resetCircuit !== undefined) {
+      if (body.resetCircuit !== true) throw new Error("resetCircuit doit être true.");
+      patch.circuitState = "closed";
+      patch.failureStreak = 0;
+      patch.antiBotStreak = 0;
+      patch.circuitOpenedAt = null;
+      patch.cooldownUntil = null;
+      patch.lastErrorCode = null;
+      patch.pausedReason = null;
+    }
     const [item] = await getDb().update(sourceConfigurations).set(patch).where(eq(sourceConfigurations.id, id)).returning();
     if (!item) return adminJson({ ok: false, code: "SOURCE_CONFIG_NOT_FOUND", error: "Source introuvable." }, 404);
     return adminJson({ ok: true, item });

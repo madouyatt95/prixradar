@@ -293,16 +293,26 @@ export class KeepaClient {
     }
   }
 
-  async deals(market: Market, options: { page?: number; minimumDropPercent?: number } = {}): Promise<KeepaDeal[]> {
+  async deals(market: Market, options: {
+    page?: number;
+    minimumDropPercent?: number;
+    categoryIds?: readonly number[];
+    minPriceCents?: number;
+    maxPriceCents?: number;
+  } = {}): Promise<KeepaDeal[]> {
     const config = KEEPA_MARKETS[market];
+    const minPriceCents = Math.max(1, Math.round(options.minPriceCents ?? 1));
+    const maxPriceCents = Math.max(minPriceCents, Math.round(options.maxPriceCents ?? 100_000_000));
     const selection = {
       page: options.page ?? 0,
       domainId: config.domainId,
-      includeCategories: [],
+      includeCategories: [...new Set(options.categoryIds ?? [])]
+        .filter((value) => Number.isSafeInteger(value) && value > 0)
+        .slice(0, 20),
       excludeCategories: [],
       priceTypes: [PRICE_INDEXES.amazon, PRICE_INDEXES.new, PRICE_INDEXES.buyBox],
       deltaRange: [options.minimumDropPercent ?? 30, 100],
-      currentRange: [1, 100_000_000],
+      currentRange: [minPriceCents, maxPriceCents],
       isLowest: true,
       sortType: 4,
     };
@@ -432,7 +442,15 @@ export function mergeKeepaWithLive(
 export async function scanKeepaMarket(
   client: KeepaClient,
   market: Market,
-  options: { page?: number; limit?: number; minimumDropPercent?: number; fixture?: boolean } = {},
+  options: {
+    page?: number;
+    limit?: number;
+    minimumDropPercent?: number;
+    fixture?: boolean;
+    categoryIds?: readonly number[];
+    minPriceCents?: number;
+    maxPriceCents?: number;
+  } = {},
 ): Promise<VerifiedObservation[]> {
   const deals = (await client.deals(market, options)).slice(0, options.limit ?? 50);
   if (deals.length === 0) return [];

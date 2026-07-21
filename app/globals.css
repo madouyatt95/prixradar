@@ -1145,6 +1145,44 @@ a {
 .admin-source-row em { margin-top: 7px; color: var(--mint); font-size: 9px; font-style: normal; font-weight: 760; }
 .admin-source-row em.is-warning { color: var(--coral); }
 
+.admin-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.admin-subgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.admin-review-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.admin-review-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 13px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+}
+
+.admin-review-list strong,
+.admin-review-list small,
+.admin-review-list em { display: block; }
+.admin-review-list small { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.admin-review-list em { margin-top: 5px; color: var(--violet-dark); font-size: 9px; font-style: normal; }
+
 .danger-button {
   min-height: 38px;
   padding: 0 13px;
@@ -1167,13 +1205,20 @@ a {
 .feedback-actions button { min-height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--paper); cursor: pointer; }
 .preference-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 12px; }
 .preference-fields label { display: grid; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 760; }
-.preference-fields input:not([type="range"]) { width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #fff; }
+.preference-fields input:not([type="range"]),
+.preference-fields select { width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #fff; }
+.location-preferences { grid-column: 1 / -1; }
+.compact-toggle { align-items: center; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.compact-toggle strong { font-size: 11px; }
 .consent-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; }
 .consent-actions label { display: flex; align-items: center; gap: 7px; color: #667169; font-size: 10px; }
 
 @media (max-width: 850px) {
   .admin-grid { grid-template-columns: 1fr; }
   .admin-source-row { align-items: flex-start; }
+  .admin-subgrid { grid-template-columns: 1fr; }
+  .admin-row-actions { justify-content: flex-start; }
+  .admin-review-list article { align-items: flex-start; flex-direction: column; }
 }
 
 .trust-note > span,

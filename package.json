@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit --pretty false",
     "check": "npm run lint && npm run typecheck && npm test",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern services/collector",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "smoke:production": "node scripts/smoke-production.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

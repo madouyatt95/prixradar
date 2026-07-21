@@ -1,8 +1,8 @@
 import { runtimeEnv as env } from "@/lib/runtime-env";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { sourceConfigurations } from "@/db/schema";
+import { discoverySegments, sourceConfigurations } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +38,17 @@ function effectiveCadence(cadenceMinutes: number, volatilityScore: number) {
   return cadenceMinutes;
 }
 
+function categoryIds(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter((item): item is number => Number.isSafeInteger(item) && item > 0))].slice(0, 20)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(request: Request) {
   const expected = ingestSecret();
   const token = /^Bearer ([^\s]{1,512})$/.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
@@ -45,18 +56,28 @@ export async function GET(request: Request) {
   if (!token || !(await equalSecret(token, expected))) return json({ ok: false, code: "UNAUTHORIZED" }, 401);
 
   try {
-    const rows = await getDb()
-      .select()
-      .from(sourceConfigurations)
-      .where(eq(sourceConfigurations.enabled, true))
-      .orderBy(asc(sourceConfigurations.lastRunAt), asc(sourceConfigurations.source));
+    const database = getDb();
+    const [rows, segments] = await Promise.all([
+      database
+        .select()
+        .from(sourceConfigurations)
+        .where(eq(sourceConfigurations.enabled, true))
+        .orderBy(asc(sourceConfigurations.lastRunAt), asc(sourceConfigurations.source)),
+      database
+        .select()
+        .from(discoverySegments)
+        .where(eq(discoverySegments.enabled, true))
+        .orderBy(desc(discoverySegments.priority), asc(discoverySegments.lastRunAt)),
+    ]);
     const now = Date.now();
     const seen = new Set<string>();
     const items = rows.flatMap((row) => {
       const cadenceMinutes = effectiveCadence(row.cadenceMinutes, row.volatilityScore);
       const due = row.lastRunAt === null || now - Date.parse(row.lastRunAt) >= cadenceMinutes * 60_000;
+      const probeOnly = row.circuitState === "open";
+      const cooldownElapsed = row.cooldownUntil === null || Date.parse(row.cooldownUntil) <= now;
       const normalizedUrl = row.discoveryUrl.toLowerCase().replace(/\/$/u, "");
-      if (!due || seen.has(normalizedUrl)) return [];
+      if (!due || seen.has(normalizedUrl) || (probeOnly && !cooldownElapsed)) return [];
       seen.add(normalizedUrl);
       return [{
         id: row.id,
@@ -66,9 +87,47 @@ export async function GET(request: Request) {
         discoveryUrl: row.discoveryUrl,
         cadenceMinutes,
         volatilityScore: row.volatilityScore,
+        circuitState: row.circuitState,
+        probeOnly,
+        productLimit: probeOnly ? 1 : row.dailyProductBudget,
       }];
     });
-    return json({ ok: true, generatedAt: new Date(now).toISOString(), count: items.length, items });
+    const discoveryItems = segments.flatMap((segment) => {
+      const due = segment.lastRunAt === null || now - Date.parse(segment.lastRunAt) >= segment.cadenceMinutes * 60_000;
+      if (!due) return [];
+      const runsPerDay = Math.max(1, Math.ceil(1_440 / segment.cadenceMinutes));
+      const perRunLimit = Math.max(1, Math.min(100, Math.floor(segment.dailyTokenBudget / runsPerDay)));
+      const page = Math.floor(now / (segment.cadenceMinutes * 60_000)) % 10;
+      return [{
+        id: segment.id,
+        source: "amazon" as const,
+        market: segment.market,
+        label: segment.label,
+        categoryIds: categoryIds(segment.categoryIdsJson),
+        minPriceCents: segment.minPriceCents,
+        maxPriceCents: segment.maxPriceCents,
+        minimumDropPercent: segment.minimumDropPercent,
+        limit: perRunLimit,
+        page,
+        priority: segment.priority,
+        dailyTokenBudget: segment.dailyTokenBudget,
+      }];
+    });
+    if (discoveryItems.length > 0) {
+      const claimedAt = new Date(now).toISOString();
+      for (const segment of discoveryItems) {
+        await database.update(discoverySegments).set({ lastRunAt: claimedAt, updatedAt: claimedAt })
+          .where(eq(discoverySegments.id, segment.id));
+      }
+    }
+    return json({
+      ok: true,
+      generatedAt: new Date(now).toISOString(),
+      count: items.length,
+      items,
+      discoveryCount: discoveryItems.length,
+      discoverySegments: discoveryItems,
+    });
   } catch {
     return json({ ok: false, code: "SOURCE_PLAN_UNAVAILABLE" }, 503);
   }

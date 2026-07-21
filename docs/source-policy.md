@@ -31,3 +31,22 @@ Les erreurs 403, 429, CAPTCHA, `access denied` et `blocked` sont classées
 `ANTI_BOT_BLOCKED`. Les connecteurs sont testés chaque jour sur des pages de
 référence sans notification. Le centre de pilotage permet de suspendre une source
 sans déploiement de code.
+
+Trois échecs consécutifs, ou deux blocages anti-bot, ouvrent automatiquement le
+circuit. Le délai de refroidissement part de 30 minutes et augmente jusqu'à
+24 heures. Une seule page sert ensuite de sonde ; la cadence normale ne reprend
+qu'après son succès. Réarmer manuellement ne contourne jamais un CAPTCHA.
+
+## Localisation et minimisation
+
+Le calcul de disponibilité peut utiliser le pays, un préfixe postal court et le
+mode de livraison. L'adresse complète n'est ni demandée ni conservée. Quand un
+utilisateur exige une correspondance locale, toute offre non vérifiée pour sa
+zone est exclue des notifications au lieu d'être supposée livrable.
+
+## Référentiel produit
+
+Une comparaison entre enseignes est automatique avec un GTIN valide. À défaut,
+marque et modèle normalisés peuvent proposer un rapprochement, mais les cas
+incertains restent en revue. Une décision « Séparer » crée une identité isolée :
+un prix ne doit jamais être comparé à une variante ou un produit voisin.

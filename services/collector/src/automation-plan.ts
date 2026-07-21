@@ -48,6 +48,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         minimumDropPercent: 30,
         verifyAmazonPage: true,
         liveVerificationLimit: 5,
+        useRemoteDiscovery: true,
       }, 1_024)],
     },
   }];
@@ -68,6 +69,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
           notify: true,
           browserFallback: true,
           limit: 30,
+          scanAmazon: false,
         }, 1_024)],
       },
     });
@@ -88,6 +90,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         notify: false,
         browserFallback: true,
         limit: 5,
+        scanAmazon: false,
       }, 1_024)],
     },
   });

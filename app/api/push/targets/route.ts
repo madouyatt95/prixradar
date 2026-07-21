@@ -31,6 +31,10 @@ export async function GET(request: Request) {
   const source = search.get("source")?.trim().toLowerCase() ?? "";
   const market = search.get("market")?.trim().toUpperCase() ?? "";
   const category = search.get("category")?.trim() ?? "";
+  const deliveryCountry = search.get("deliveryCountry")?.trim().toUpperCase() ?? "";
+  const deliveryPostalPrefix = search.get("deliveryPostalPrefix")?.trim().toUpperCase() ?? "";
+  const deliveryMode = search.get("deliveryMode")?.trim().toLowerCase() ?? "";
+  const locationVerified = search.get("locationVerified") === "true";
   if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null) {
     return serverJson(
       {
@@ -78,6 +82,10 @@ export async function GET(request: Request) {
           marketsJson: userPreferences.marketsJson,
           categoriesJson: userPreferences.categoriesJson,
           sourcesJson: userPreferences.sourcesJson,
+          deliveryCountry: userPreferences.deliveryCountry,
+          postalCode: userPreferences.postalCode,
+          deliveryMode: userPreferences.deliveryMode,
+          requireLocationMatch: userPreferences.requireLocationMatch,
         })
         .from(pushSubscriptions)
         .innerJoin(
@@ -113,12 +121,25 @@ export async function GET(request: Request) {
         const markets = parseList(row.marketsJson);
         const categories = parseList(row.categoriesJson);
         const sources = parseList(row.sourcesJson);
+        const userPostalPrefix = row.postalCode
+          ? row.deliveryCountry === "GB"
+            ? row.postalCode.replace(/\s.+$/u, "").slice(0, 4)
+            : row.postalCode.slice(0, 2)
+          : "";
+        const compatibleDeliveryMode = row.deliveryMode === "either" || deliveryMode === "either" || row.deliveryMode === deliveryMode;
+        const locationMismatch = row.requireLocationMatch && (
+          !locationVerified ||
+          row.deliveryCountry !== deliveryCountry ||
+          !compatibleDeliveryMode ||
+          (userPostalPrefix !== "" && userPostalPrefix !== deliveryPostalPrefix)
+        );
         const filtered =
           discount < row.minDiscount ||
           (row.maxPriceCents !== null && priceCents > row.maxPriceCents) ||
           (markets.length > 0 && !markets.includes(market)) ||
           (categories.length > 0 && !categories.includes(category)) ||
-          (sources.length > 0 && !sources.includes(source));
+          (sources.length > 0 && !sources.includes(source)) ||
+          locationMismatch;
         if (isQuietNow(row, now)) {
           suppressedQuietHours += 1;
         } else if (filtered) {

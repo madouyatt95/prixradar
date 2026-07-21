@@ -45,6 +45,8 @@ type AlertItem = {
   promotionLabel?: string | null;
   marketMedian?: number | null;
   marketSources?: number;
+  locationLabel?: string;
+  locationVerified?: boolean;
 };
 
 type SourceRuntimeStatus = {
@@ -348,6 +350,7 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const usualPriceCents = finite(item.usualPriceCents, priceCents);
   const totalCents = finite(item.totalCents, priceCents);
   const evidence = record(item.evidence);
+  const deliveryContext = record(item.deliveryContext);
   let reasons: string[] = [];
   if (Array.isArray(item.reasons)) {
     reasons = item.reasons.filter((reason): reason is string => typeof reason === "string");
@@ -450,6 +453,10 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     promotionLabel: typeof item.promotionLabel === "string" ? item.promotionLabel : null,
     marketMedian: typeof evidence?.marketMedianCents === "number" ? finite(evidence.marketMedianCents) / 100 : null,
     marketSources: finite(evidence?.marketSources),
+    locationVerified: deliveryContext?.verified === true,
+    locationLabel: deliveryContext?.verified === true
+      ? `${typeof deliveryContext.country === "string" ? deliveryContext.country : ""} ${typeof deliveryContext.postalPrefix === "string" ? `${deliveryContext.postalPrefix}…` : ""}`.trim()
+      : "Prix national · zone non vérifiée",
   };
 }
 
@@ -501,6 +508,10 @@ export function PriceRadarApp() {
   const [maxPriceEuros, setMaxPriceEuros] = useState("");
   const [preferredMarkets, setPreferredMarkets] = useState("FR");
   const [preferredCategories, setPreferredCategories] = useState("");
+  const [deliveryCountry, setDeliveryCountry] = useState("FR");
+  const [postalCode, setPostalCode] = useState("");
+  const [deliveryMode, setDeliveryMode] = useState<"home" | "pickup" | "either">("either");
+  const [requireLocationMatch, setRequireLocationMatch] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [affiliateConsent, setAffiliateConsent] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
@@ -620,6 +631,10 @@ export function PriceRadarApp() {
         if (typeof preferences.maxPriceCents === "number") setMaxPriceEuros(String(preferences.maxPriceCents / 100));
         if (Array.isArray(preferences.markets)) setPreferredMarkets(preferences.markets.join(", "));
         if (Array.isArray(preferences.categories)) setPreferredCategories(preferences.categories.join(", "));
+        if (typeof preferences.deliveryCountry === "string") setDeliveryCountry(preferences.deliveryCountry);
+        if (typeof preferences.postalCode === "string") setPostalCode(preferences.postalCode);
+        if (preferences.deliveryMode === "home" || preferences.deliveryMode === "pickup" || preferences.deliveryMode === "either") setDeliveryMode(preferences.deliveryMode);
+        if (typeof preferences.requireLocationMatch === "boolean") setRequireLocationMatch(preferences.requireLocationMatch);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -643,11 +658,15 @@ export function PriceRadarApp() {
           maxPriceCents: maxPriceEuros.trim() ? Math.max(1, Math.round(Number(maxPriceEuros) * 100)) : null,
           markets: preferredMarkets.split(",").map((item) => item.trim()).filter(Boolean),
           categories: preferredCategories.split(",").map((item) => item.trim()).filter(Boolean),
+          deliveryCountry,
+          postalCode,
+          deliveryMode,
+          requireLocationMatch,
         }),
       }).catch(() => undefined);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [maxPriceEuros, minDiscount, minScore, preferredCategories, preferredMarkets, preferencesReady, quietHours]);
+  }, [deliveryCountry, deliveryMode, maxPriceEuros, minDiscount, minScore, postalCode, preferredCategories, preferredMarkets, preferencesReady, quietHours, requireLocationMatch]);
 
   useEffect(() => {
     fetch("/api/consent", { headers: { accept: "application/json" } }).then(async (response) => response.ok ? response.json() : null).then((data: unknown) => {
@@ -994,6 +1013,14 @@ export function PriceRadarApp() {
           setPreferredMarkets={setPreferredMarkets}
           preferredCategories={preferredCategories}
           setPreferredCategories={setPreferredCategories}
+          deliveryCountry={deliveryCountry}
+          setDeliveryCountry={setDeliveryCountry}
+          postalCode={postalCode}
+          setPostalCode={setPostalCode}
+          deliveryMode={deliveryMode}
+          setDeliveryMode={setDeliveryMode}
+          requireLocationMatch={requireLocationMatch}
+          setRequireLocationMatch={setRequireLocationMatch}
           analyticsConsent={analyticsConsent}
           setAnalyticsConsent={setAnalyticsConsent}
           affiliateConsent={affiliateConsent}
@@ -1800,6 +1827,14 @@ function SettingsView({
   setPreferredMarkets,
   preferredCategories,
   setPreferredCategories,
+  deliveryCountry,
+  setDeliveryCountry,
+  postalCode,
+  setPostalCode,
+  deliveryMode,
+  setDeliveryMode,
+  requireLocationMatch,
+  setRequireLocationMatch,
   analyticsConsent,
   setAnalyticsConsent,
   affiliateConsent,
@@ -1821,6 +1856,14 @@ function SettingsView({
   setPreferredMarkets: (value: string) => void;
   preferredCategories: string;
   setPreferredCategories: (value: string) => void;
+  deliveryCountry: string;
+  setDeliveryCountry: (value: string) => void;
+  postalCode: string;
+  setPostalCode: (value: string) => void;
+  deliveryMode: "home" | "pickup" | "either";
+  setDeliveryMode: (value: "home" | "pickup" | "either") => void;
+  requireLocationMatch: boolean;
+  setRequireLocationMatch: (value: boolean) => void;
   analyticsConsent: boolean;
   setAnalyticsConsent: (value: boolean) => void;
   affiliateConsent: boolean;
@@ -1850,6 +1893,17 @@ function SettingsView({
           <button type="button" className="primary-button" onClick={onInstall}>
             {installReady ? "Installer l’application" : "Voir comment installer"}
           </button>
+        </section>
+
+        <section className="setting-card location-preferences">
+          <div className="setting-row-heading"><div><span className="eyebrow">Prix livré chez vous</span><h2>Zone et mode de livraison</h2></div><span className="setting-status">Facultatif</span></div>
+          <div className="preference-fields">
+            <label>Pays<select value={deliveryCountry} onChange={(event) => { setDeliveryCountry(event.target.value); setPostalCode(""); }}><option value="FR">France</option><option value="DE">Allemagne</option><option value="IT">Italie</option><option value="ES">Espagne</option><option value="GB">Royaume-Uni</option></select></label>
+            <label>Code postal<input value={postalCode} onChange={(event) => setPostalCode(event.target.value.toUpperCase())} inputMode={deliveryCountry === "GB" ? "text" : "numeric"} autoComplete="postal-code" maxLength={10} placeholder={deliveryCountry === "GB" ? "SW1A 1AA" : "75011"} /></label>
+            <label>Livraison<select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as "home" | "pickup" | "either")}><option value="either">Domicile ou retrait</option><option value="home">Domicile</option><option value="pickup">Retrait magasin</option></select></label>
+          </div>
+          <div className="toggle-row compact-toggle"><div><strong>Exiger une vérification locale</strong><p>Si activé, aucune notification n’est envoyée tant que le prix et la livraison n’ont pas été confirmés pour cette zone.</p></div><button type="button" className={`switch ${requireLocationMatch ? "is-on" : ""}`} role="switch" aria-checked={requireLocationMatch} onClick={() => setRequireLocationMatch(!requireLocationMatch)} aria-label="Exiger une vérification locale"><span /></button></div>
+          <p>Le collecteur ne reçoit que le contexte nécessaire à la vérification. L’alerte publique n’affiche jamais votre code postal complet.</p>
         </section>
 
         <section className="setting-card">
@@ -2059,6 +2113,7 @@ function AlertDetail({
           <div><span>Vendeur</span><strong>{alert.seller}</strong></div>
           <div><span>État</span><strong>{alert.condition}</strong></div>
           <div><span>Livraison</span><strong>{alert.shipping}</strong></div>
+          <div><span>Zone</span><strong>{alert.locationVerified ? alert.locationLabel : "Non vérifiée localement"}</strong></div>
           <div><span>Dernier contrôle</span><strong>{alert.verifiedAt}</strong></div>
         </section>
 

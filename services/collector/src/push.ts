@@ -102,7 +102,17 @@ export async function fetchPushTargets(
   score: number,
   config: PushConfig,
   fetchImpl: typeof fetch = fetch,
-  filters?: { discount: number; priceCents: number; source: string; market: string; category: string },
+  filters?: {
+    discount: number;
+    priceCents: number;
+    source: string;
+    market: string;
+    category: string;
+    deliveryCountry?: string;
+    deliveryPostalPrefix?: string;
+    deliveryMode?: string;
+    locationVerified?: boolean;
+  },
 ): Promise<PushSubscriptionTarget[]> {
   const targets: PushSubscriptionTarget[] = [];
   let after = 0;
@@ -118,6 +128,10 @@ export async function fetchPushTargets(
         source: filters.source,
         market: filters.market,
         category: filters.category,
+        deliveryCountry: filters.deliveryCountry ?? "",
+        deliveryPostalPrefix: filters.deliveryPostalPrefix ?? "",
+        deliveryMode: filters.deliveryMode ?? "",
+        locationVerified: String(filters.locationVerified === true),
       } : {}),
     }).toString();
     const payload = await protectedJson<TargetResponse>(config, endpoint, { method: "GET" }, fetchImpl);
@@ -181,6 +195,10 @@ export async function sendPushForObservation(
     source: observation.offer.product.source,
     market: observation.offer.product.market,
     category: observation.offer.product.category ?? "",
+    deliveryCountry: observation.offer.deliveryContext?.country ?? "",
+    deliveryPostalPrefix: observation.offer.deliveryContext?.postalPrefix ?? "",
+    deliveryMode: observation.offer.deliveryContext?.mode ?? "",
+    locationVerified: observation.offer.deliveryContext?.verified === true,
   });
   const summary: PushDeliverySummary = { eligible: true, targets: targets.length, reserved: 0, sent: 0, failed: 0 };
   const total = observation.offer.total;

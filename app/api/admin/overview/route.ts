@@ -8,7 +8,7 @@ import { adminJson, authorizeAdmin } from "@/lib/admin";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const authorization = authorizeAdmin(request);
+  const authorization = await authorizeAdmin(request);
   if (!authorization.ok) return authorization.response;
   const database = getDb();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();

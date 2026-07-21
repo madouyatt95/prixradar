@@ -43,6 +43,13 @@ export interface OfferSnapshot {
     label: string | null;
     accessibleToAll: boolean;
   };
+  deliveryContext?: {
+    country: Market;
+    postalCode: string;
+    postalPrefix: string;
+    mode: "home" | "pickup" | "either";
+    verified: boolean;
+  };
 }
 
 export interface VerificationEvidence {
@@ -121,5 +128,7 @@ export interface SourceStatusEvent {
   duplicatesSkipped?: number;
   antiBotBlocked?: boolean;
   keepaRequests?: number;
+  discoverySegmentId?: string | null;
+  discoveryYieldCount?: number;
   apifyCostMicros?: number | null;
 }

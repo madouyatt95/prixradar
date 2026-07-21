@@ -1,11 +1,12 @@
 import { runtimeEnv as env } from "@/lib/runtime-env";
-import { and, desc, eq, gte, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, ne, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
   alerts,
   alertFeedback,
   collectionRuns,
+  discoverySegments,
   ingestEvents,
   keepaCache,
   keepaUsage,
@@ -22,6 +23,14 @@ import {
   type ProductCondition,
   type SourceMode,
 } from "@/lib/anomaly";
+import {
+  deliveryCountry as parseDeliveryCountry,
+  deliveryMode as parseDeliveryMode,
+  postalCode as parsePostalCode,
+  postalPrefix,
+  type DeliveryMode,
+} from "@/lib/delivery";
+import { resolveCanonicalProduct } from "@/lib/product-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +88,10 @@ type ParsedAlert = {
   priceAccessibleToAll: boolean;
   promotionType: string;
   promotionLabel: string | null;
+  deliveryCountry: string | null;
+  deliveryPostalPrefix: string | null;
+  deliveryMode: DeliveryMode | null;
+  locationVerified: boolean;
 };
 
 type ParsedHistoricalPrice = {
@@ -102,6 +115,8 @@ type ParsedSourceStatus = {
   duplicatesSkipped: number;
   antiBotBlocked: boolean;
   keepaRequests: number;
+  discoverySegmentId: string | null;
+  discoveryYieldCount: number;
   apifyCostMicros: number | null;
 };
 
@@ -265,6 +280,10 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "priceAccessibleToAll",
     "promotionType",
     "promotionLabel",
+    "deliveryCountry",
+    "deliveryPostalCode",
+    "deliveryMode",
+    "locationVerified",
   ]);
 
   const id = requiredString(value.id, "id", 160);
@@ -307,6 +326,20 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     };
   });
 
+  const deliveryCountry = value.deliveryCountry === undefined
+    ? null
+    : parseDeliveryCountry(value.deliveryCountry);
+  const deliveryPostalCode = deliveryCountry === null
+    ? null
+    : parsePostalCode(value.deliveryPostalCode, deliveryCountry);
+  const deliveryMode = value.deliveryMode === undefined
+    ? null
+    : parseDeliveryMode(value.deliveryMode);
+  const locationVerified = optionalBoolean(value.locationVerified, "locationVerified", false);
+  if (locationVerified && (deliveryCountry === null || deliveryPostalCode === null || deliveryMode === null)) {
+    throw new Error("Une vérification locale exige le pays, le code postal et le mode de livraison.");
+  }
+
   const parsed: ParsedAlert = {
     id,
     sourceMode,
@@ -341,6 +374,10 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     priceAccessibleToAll: optionalBoolean(value.priceAccessibleToAll, "priceAccessibleToAll", true),
     promotionType: value.promotionType === undefined ? "public_price" : requiredString(value.promotionType, "promotionType", 32),
     promotionLabel: optionalString(value.promotionLabel, "promotionLabel", 240),
+    deliveryCountry,
+    deliveryPostalPrefix: postalPrefix(deliveryPostalCode, deliveryCountry ?? "FR"),
+    deliveryMode,
+    locationVerified,
   };
   if (!PROMOTION_TYPES.has(parsed.promotionType)) throw new Error("promotionType est invalide.");
   if (parsed.priceAccessibleToAll && parsed.publicPriceCents === null) parsed.publicPriceCents = parsed.priceCents;
@@ -389,6 +426,8 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     "duplicatesSkipped",
     "antiBotBlocked",
     "keepaRequests",
+    "discoverySegmentId",
+    "discoveryYieldCount",
     "apifyCostMicros",
   ]);
   const market = normalizeMarket(source, value.market);
@@ -419,6 +458,8 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     duplicatesSkipped: value.duplicatesSkipped === undefined ? 0 : integerInRange(value.duplicatesSkipped, "duplicatesSkipped", 0, 1_000_000_000),
     antiBotBlocked: optionalBoolean(value.antiBotBlocked, "antiBotBlocked", false),
     keepaRequests: value.keepaRequests === undefined ? 0 : integerInRange(value.keepaRequests, "keepaRequests", 0, 1_000_000_000),
+    discoverySegmentId: optionalString(value.discoverySegmentId, "discoverySegmentId", 160),
+    discoveryYieldCount: value.discoveryYieldCount === undefined ? 0 : integerInRange(value.discoveryYieldCount, "discoveryYieldCount", 0, 1_000_000_000),
     apifyCostMicros: value.apifyCostMicros === undefined ? null : nullableMoney(value.apifyCostMicros, "apifyCostMicros"),
   };
   const maximumFuture = Date.now() + 5 * 60_000;
@@ -458,6 +499,12 @@ function serverIngestSecret() {
   if (typeof workerSecret === "string" && workerSecret.length >= 24) return workerSecret;
   const nodeSecret = process.env.INGEST_SECRET;
   return typeof nodeSecret === "string" && nodeSecret.length >= 24 ? nodeSecret : null;
+}
+
+function alertDeliveryMode() {
+  const workerValue = (env as unknown as { ALERT_DELIVERY_MODE?: unknown }).ALERT_DELIVERY_MODE;
+  const value = typeof workerValue === "string" ? workerValue : process.env.ALERT_DELIVERY_MODE;
+  return value?.trim().toLowerCase() === "live" ? "live" as const : "shadow" as const;
 }
 
 async function authenticate(request: Request) {
@@ -501,6 +548,20 @@ function duplicateResponse(existing: { payloadHash: string; accepted: boolean },
 
 async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloadHash: string) {
   const database = getDb();
+  const canonicalMatch = await resolveCanonicalProduct({
+    source: envelope.source,
+    market: parsed.market,
+    externalId: parsed.productId,
+    identityKey: parsed.identityKey,
+    gtin: parsed.gtin,
+    title: parsed.title,
+    brand: parsed.brand,
+    model: parsed.model,
+    category: parsed.category,
+    url: parsed.url,
+    variantKey: parsed.observedVariantId,
+    observedAt: parsed.observedAt,
+  });
   const [priorRows, existingAlerts, comparableRows, feedbackRows] = await Promise.all([
     database
       .select({
@@ -520,14 +581,14 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       .from(alerts)
       .where(eq(alerts.id, parsed.id))
       .limit(1),
-    parsed.identityKey === null
+    !canonicalMatch.comparisonEligible
       ? Promise.resolve([])
       : database
           .select({ source: alerts.source, publicPriceCents: alerts.publicPriceCents })
           .from(alerts)
           .where(and(
-            eq(alerts.identityKey, parsed.identityKey),
-            ne(alerts.source, envelope.source),
+            eq(alerts.canonicalProductId, canonicalMatch.canonicalProductId),
+            or(ne(alerts.source, envelope.source), ne(alerts.market, parsed.market)),
             eq(alerts.currency, parsed.currency),
             eq(alerts.priceAccessibleToAll, true),
             gte(alerts.observedAt, new Date(Date.parse(parsed.observedAt) - 7 * 86_400_000).toISOString()),
@@ -599,6 +660,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
   const adaptiveScoreAdjustment = Math.max(0, Math.min(15, (Number(feedback.falsePositive) - Number(feedback.useful)) * 2));
   const adaptiveMinimumScore = 65 + adaptiveScoreAdjustment;
   const notificationEligible = evaluation.notificationEligible && evaluation.score >= adaptiveMinimumScore;
+  const deliveryMode = alertDeliveryMode();
+  const deliveryEligible = notificationEligible && deliveryMode === "live";
   const now = new Date().toISOString();
   const alertStatus = notificationEligible
     ? "active"
@@ -610,6 +673,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     provider: envelope.source === "amazon" ? "keepa" : envelope.source,
     notificationRequested: parsed.notify,
     notificationEligible,
+    deliveryEligible,
+    deliveryMode,
     adaptiveMinimumScore,
     feedbackSample: Number(feedback.falsePositive) + Number(feedback.useful),
     expectedVariantId: parsed.expectedVariantId,
@@ -617,6 +682,18 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     sellerTrusted: parsed.sellerTrusted,
     historyProvider: parsed.historicalPrices.length > 0 ? "keepa" : null,
     importedHistoryPoints: parsed.historicalPrices.length,
+    canonicalProduct: {
+      id: canonicalMatch.canonicalProductId,
+      method: canonicalMatch.method,
+      score: canonicalMatch.score,
+      reviewStatus: canonicalMatch.reviewStatus,
+    },
+    deliveryContext: {
+      country: parsed.deliveryCountry,
+      postalPrefix: parsed.deliveryPostalPrefix,
+      mode: parsed.deliveryMode,
+      verified: parsed.locationVerified,
+    },
     analysis: evaluation,
   });
   const rawHash =
@@ -650,6 +727,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       merchant: parsed.merchant,
       market: parsed.market,
       productId: parsed.productId,
+      canonicalProductId: canonicalMatch.canonicalProductId,
       identityKey: parsed.identityKey,
       title: parsed.title,
       brand: parsed.brand,
@@ -671,6 +749,10 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
       priceAccessibleToAll: parsed.priceAccessibleToAll,
       promotionType: parsed.promotionType,
       promotionLabel: parsed.promotionLabel,
+      deliveryCountry: parsed.deliveryCountry,
+      deliveryPostalPrefix: parsed.deliveryPostalPrefix,
+      deliveryMode: parsed.deliveryMode,
+      locationVerified: parsed.locationVerified,
       evidenceJson,
       observedAt: parsed.observedAt,
       verifiedAt: parsed.verifiedAt,
@@ -684,6 +766,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         merchant: parsed.merchant,
         market: parsed.market,
         productId: parsed.productId,
+        canonicalProductId: canonicalMatch.canonicalProductId,
         identityKey: parsed.identityKey,
         title: parsed.title,
         brand: parsed.brand,
@@ -705,6 +788,10 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         priceAccessibleToAll: parsed.priceAccessibleToAll,
         promotionType: parsed.promotionType,
         promotionLabel: parsed.promotionLabel,
+        deliveryCountry: parsed.deliveryCountry,
+        deliveryPostalPrefix: parsed.deliveryPostalPrefix,
+        deliveryMode: parsed.deliveryMode,
+        locationVerified: parsed.locationVerified,
         evidenceJson,
         observedAt: parsed.observedAt,
         verifiedAt: parsed.verifiedAt,
@@ -754,7 +841,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         score: evaluation.score,
         confidence: evaluation.confidence,
         notificationRequested: parsed.notify,
-        notificationEligible,
+        notificationEligible: deliveryEligible,
+        deliveryMode,
         blockingReasons: evaluation.blockingReasons,
       },
     },
@@ -766,6 +854,13 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
   const database = getDb();
   const nowDate = new Date();
   const now = nowDate.toISOString();
+  const configurations = await database
+    .select()
+    .from(sourceConfigurations)
+    .where(and(
+      eq(sourceConfigurations.source, envelope.source),
+      eq(sourceConfigurations.market, parsed.market),
+    ));
   const eventInsert = database.insert(ingestEvents).values({
     idempotencyKey: envelope.idempotencyKey,
     source: envelope.source,
@@ -814,24 +909,62 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
     duplicatesSkipped: parsed.duplicatesSkipped,
     antiBotBlocked: parsed.antiBotBlocked,
     keepaRequests: parsed.keepaRequests,
+    discoverySegmentId: parsed.discoverySegmentId,
     apifyCostMicros: parsed.apifyCostMicros,
     errorCode: parsed.lastErrorCode,
     attemptedAt: parsed.lastAttemptAt,
     createdAt: now,
   }).onConflictDoNothing({ target: collectionRuns.id });
-  const configurationUpdate = database.update(sourceConfigurations).set({
-    lastRunAt: parsed.lastAttemptAt,
-    ...(parsed.lastSuccessAt ? { lastSuccessAt: parsed.lastSuccessAt } : {}),
-    productsSeen: parsed.productsSeen,
-    duplicateUrls: parsed.duplicatesSkipped,
-    updatedAt: now,
-  }).where(and(eq(sourceConfigurations.source, envelope.source), eq(sourceConfigurations.market, parsed.market)));
+  const configurationUpdates = configurations.map((configuration) => {
+    const healthy = parsed.status === "healthy";
+    const failureStreak = healthy ? 0 : configuration.failureStreak + 1;
+    const antiBotStreak = healthy
+      ? 0
+      : parsed.antiBotBlocked
+        ? configuration.antiBotStreak + 1
+        : Math.max(0, configuration.antiBotStreak - 1);
+    const shouldOpen = !healthy && (
+      parsed.status === "offline" || failureStreak >= 3 || antiBotStreak >= 2
+    );
+    const openLevel = Math.max(0, Math.max(failureStreak - 3, antiBotStreak - 2));
+    const cooldownMinutes = Math.min(1_440, 30 * (2 ** Math.min(5, openLevel)));
+    const circuitState = healthy ? "closed" : shouldOpen ? "open" : configuration.circuitState;
+    return database.update(sourceConfigurations).set({
+      lastRunAt: parsed.lastAttemptAt,
+      ...(parsed.lastSuccessAt ? { lastSuccessAt: parsed.lastSuccessAt } : {}),
+      productsSeen: parsed.productsSeen,
+      duplicateUrls: parsed.duplicatesSkipped,
+      lastErrorCode: parsed.lastErrorCode,
+      failureStreak,
+      antiBotStreak,
+      circuitState,
+      circuitOpenedAt: shouldOpen ? now : healthy ? null : configuration.circuitOpenedAt,
+      cooldownUntil: shouldOpen
+        ? new Date(nowDate.getTime() + cooldownMinutes * 60_000).toISOString()
+        : healthy ? null : configuration.cooldownUntil,
+      pausedReason: shouldOpen
+        ? parsed.antiBotBlocked ? "AUTO_ANTI_BOT" : "AUTO_FAILURE_STREAK"
+        : healthy ? null : configuration.pausedReason,
+      updatedAt: now,
+    }).where(eq(sourceConfigurations.id, configuration.id));
+  });
   const daysAgo = (days: number) => new Date(nowDate.getTime() - days * 86_400_000).toISOString();
+  const discoveryUpdate = parsed.discoverySegmentId === null
+    ? null
+    : database.update(discoverySegments).set({
+        lastRunAt: parsed.lastAttemptAt,
+        lastYieldCount: parsed.discoveryYieldCount,
+        updatedAt: now,
+      }).where(and(
+        eq(discoverySegments.id, parsed.discoverySegmentId),
+        eq(discoverySegments.market, parsed.market),
+      ));
   await database.batch([
     eventInsert,
     statusUpsert,
     runInsert,
-    configurationUpdate,
+    ...configurationUpdates,
+    ...(discoveryUpdate ? [discoveryUpdate] : []),
     database
       .update(alerts)
       .set({ status: "expired", updatedAt: now })

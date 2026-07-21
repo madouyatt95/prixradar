@@ -27,10 +27,26 @@ interface ActorInput {
   verifyAmazonPage?: boolean;
   liveVerificationLimit?: number;
   useRemoteCoverage?: boolean;
+  useRemoteDiscovery?: boolean;
+  scanAmazon?: boolean;
 }
 
-async function remoteCoverageUrls(config: CollectorConfig): Promise<string[]> {
-  if (!config.priceRadarBaseUrl || !config.ingestSecret) return [];
+type RemoteDiscoverySegment = {
+  id: string;
+  market: Market;
+  label: string;
+  categoryIds: number[];
+  minPriceCents: number;
+  maxPriceCents: number;
+  minimumDropPercent: number;
+  limit: number;
+  page: number;
+};
+
+type RemotePlan = { urls: string[]; discoverySegments: RemoteDiscoverySegment[] };
+
+async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
+  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { urls: [], discoverySegments: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
@@ -40,8 +56,37 @@ async function remoteCoverageUrls(config: CollectorConfig): Promise<string[]> {
     signal: AbortSignal.timeout(config.httpTimeoutMs),
   });
   if (!response.ok) throw new Error(`Plan de couverture indisponible (HTTP ${response.status}).`);
-  const payload = await response.json() as { items?: Array<{ discoveryUrl?: unknown }> };
-  return (payload.items ?? []).flatMap((item) => typeof item.discoveryUrl === "string" ? [item.discoveryUrl] : []);
+  const payload = await response.json() as {
+    items?: Array<{ discoveryUrl?: unknown }>;
+    discoverySegments?: unknown;
+  };
+  const segments = Array.isArray(payload.discoverySegments)
+    ? payload.discoverySegments.flatMap((candidate): RemoteDiscoverySegment[] => {
+        if (!candidate || typeof candidate !== "object") return [];
+        const value = candidate as Record<string, unknown>;
+        const market = String(value.market ?? "").toUpperCase() as Market;
+        if (!["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
+        const categoryIds = Array.isArray(value.categoryIds)
+          ? value.categoryIds.filter((item): item is number => Number.isSafeInteger(item) && Number(item) > 0).slice(0, 20)
+          : [];
+        const number = (field: string, fallback: number) => Number.isSafeInteger(value[field]) ? Number(value[field]) : fallback;
+        return [{
+          id: String(value.id ?? `${market}:default`),
+          market,
+          label: String(value.label ?? "Découverte"),
+          categoryIds,
+          minPriceCents: Math.max(1, number("minPriceCents", 1)),
+          maxPriceCents: Math.max(1, number("maxPriceCents", 100_000_000)),
+          minimumDropPercent: Math.max(20, Math.min(90, number("minimumDropPercent", 30))),
+          limit: Math.max(1, Math.min(100, number("limit", 10))),
+          page: Math.max(0, Math.min(10, number("page", 0))),
+        }];
+      })
+    : [];
+  return {
+    urls: (payload.items ?? []).flatMap((item) => typeof item.discoveryUrl === "string" ? [item.discoveryUrl] : []),
+    discoverySegments: segments,
+  };
 }
 
 function inputUrls(value: ActorInput["urls"]): string[] {
@@ -86,9 +131,12 @@ export async function runActor(config: CollectorConfig): Promise<void> {
 
     const source = input.source ?? "all";
     const configuredUrls = inputUrls(input.urls);
+    const usesRemotePlan = (configuredUrls.length === 0 && input.useRemoteCoverage !== false)
+      || input.useRemoteDiscovery === true;
+    const plan = usesRemotePlan ? await remotePlan(config) : { urls: [], discoverySegments: [] };
     const urls = [...new Set(configuredUrls.length > 0 || input.useRemoteCoverage === false
       ? configuredUrls
-      : await remoteCoverageUrls(config))];
+      : plan.urls)];
     const seenProductUrls = new Set<string>();
     for (const url of urls) {
       const connector = connectorForUrl(url);
@@ -134,8 +182,24 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       });
     }
 
-    if ((source === "amazon" || source === "all") && config.keepaApiKey) {
-      for (const market of inputMarkets(input)) {
+    if ((source === "amazon" || (source === "all" && input.scanAmazon !== false)) && config.keepaApiKey) {
+      const segments: RemoteDiscoverySegment[] = input.useRemoteDiscovery === true && plan.discoverySegments.length > 0
+        ? plan.discoverySegments
+        : inputMarkets(input).map((market) => ({
+            id: `${market}:fallback`,
+            market,
+            label: "Découverte générale",
+            categoryIds: [],
+            minPriceCents: 1,
+            maxPriceCents: 100_000_000,
+            minimumDropPercent,
+            limit,
+            page,
+          }));
+      const seenAmazonProducts = new Set<string>();
+      const verifiedByMarket = new Map<Market, number>();
+      for (const segment of segments) {
+        const market = segment.market;
         await runReportedSourceAttempt({
           reporter: statusReporter,
           attempt: sourceAttempt("amazon", market, fixture),
@@ -146,31 +210,47 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             maxQuotaWaitMs: config.keepaMaxQuotaWaitMs,
           });
           const observations = await scanKeepaMarket(client, market, {
-            limit,
-            page,
-            minimumDropPercent,
+            limit: segment.limit,
+            page: segment.page,
+            minimumDropPercent: segment.minimumDropPercent,
+            categoryIds: segment.categoryIds,
+            minPriceCents: segment.minPriceCents,
+            maxPriceCents: segment.maxPriceCents,
             fixture,
           });
-          for (const [index, observation] of observations.entries()) {
-            const live = input.verifyAmazonPage !== false && index < liveVerificationLimit
+          const uniqueObservations = observations.filter((observation) => {
+            if (seenAmazonProducts.has(observation.alertCandidateId)) return false;
+            seenAmazonProducts.add(observation.alertCandidateId);
+            return true;
+          });
+          for (const observation of uniqueObservations) {
+            const alreadyVerified = verifiedByMarket.get(market) ?? 0;
+            const live = input.verifyAmazonPage !== false && alreadyVerified < liveVerificationLimit
               ? await liveVerifyKeepaObservation(observation, config, {
                   browserFallback: input.browserFallback ?? config.browserFallback,
                 })
               : { observation, liveVerified: false, errorCode: "AMAZON_LIVE_SKIPPED" };
+            if (live.liveVerified) verifiedByMarket.set(market, alreadyVerified + 1);
             if (!fixture) {
               await deliverObservation(live.observation, config, { allowPush: input.notify === true });
             }
             await Actor.pushData({
               dataKind: "verified-observation",
+              discoverySegmentId: segment.id,
+              discoverySegmentLabel: segment.label,
               liveVerified: live.liveVerified,
               liveVerificationErrorCode: live.errorCode,
               ...live.observation,
             });
           }
-            return observations.length;
+            return uniqueObservations.length;
           },
           productsSeen: (count) => count,
-          metrics: () => ({ keepaRequests: 2 }),
+          metrics: (count) => ({
+            keepaRequests: 2,
+            discoverySegmentId: segment.id,
+            discoveryYieldCount: count,
+          }),
           queueLag: () => 0,
         });
       }

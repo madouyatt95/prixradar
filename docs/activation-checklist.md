@@ -34,9 +34,18 @@ Ajouter aux variables serveur du Site :
 - `NEXT_PUBLIC_SITE_URL`, avec l’URL publique finale
 - `KEEPA_API_KEY`, après souscription Keepa
 - `ADMIN_EMAILS`, avec les adresses autorisées à piloter les sources
+- `CF_ACCESS_TEAM_DOMAIN`, par exemple `votre-equipe.cloudflareaccess.com`
+- `CF_ACCESS_AUD`, l'audience de l'application Cloudflare Access
+- `ALERT_DELIVERY_MODE=shadow` pendant la recette
 
 Après redéploiement, `/api/health` doit répondre sans révéler les valeurs et
 afficher les capacités correspondantes à `true`.
+
+Dans Cloudflare Zero Trust, créer une application Access **Self-hosted** sur
+`https://votre-domaine/api/admin/*`, autoriser seulement les e-mails voulus et
+reporter son `AUD` dans `CF_ACCESS_AUD`. `ADMIN_EMAILS` constitue une seconde
+barrière côté application. Le radar reste public et ne demande donc aucune
+connexion ChatGPT ; seul l'onglet Pilotage déclenche l'accès Cloudflare.
 
 ## 3. Publier le collecteur Apify
 
@@ -56,7 +65,6 @@ l’Actor, ajouter :
 - `INGEST_SECRET`
 - `PUSH_DELIVERY_SECRET`
 - `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
-- `OAI_SITES_AUTH_TOKEN` uniquement tant que le Site reste privé
 - `ENABLE_BROWSER_FALLBACK=true`
 
 Ne pas ajouter `APIFY_TOKEN` à l’Actor : il sert seulement à créer les plannings
@@ -87,7 +95,7 @@ npm run plan
 Le plan doit montrer :
 
 - Amazon EU5 dans une seule exécution toutes les 15 minutes ;
-- 15 candidats Keepa maximum par marché ;
+- les segments Keepa EU5 récupérés depuis le pilotage, chacun avec un budget ;
 - 5 contrôles de page Amazon maximum par marché ;
 - les enseignes françaises regroupées toutes les 30 minutes ;
 - 1 024 Mo et 15 minutes maximum par exécution ;
@@ -112,14 +120,22 @@ puis une semaine, avant d’augmenter `limit` ou le nombre de pages.
 
 Le parcours de recette est :
 
-1. lancer un Actor avec `notify=false` et vérifier son dataset ;
+1. conserver `ALERT_DELIVERY_MODE=shadow`, lancer un Actor et vérifier son dataset ;
 2. constater les cinq statuts Amazon dans la vue Sources ;
-3. contrôler qu’un frais de port inconnu bloque la notification ;
-4. activer les notifications sur un téléphone de test ;
-5. lancer avec `notify=true` ;
-6. vérifier l’audit de livraison Push et l’absence de doublons ;
-7. rendre finalement le Site public pour supprimer la connexion ChatGPT, puis
-   retirer `OAI_SITES_AUTH_TOKEN` du collecteur si elle n’est plus nécessaire.
+3. initialiser la rotation EU5 et vérifier les budgets consommés ;
+4. contrôler qu’un frais de port inconnu ou une zone non vérifiée bloque la notification ;
+5. confirmer les rapprochements de produits incertains ;
+6. activer les notifications sur un téléphone de test ;
+7. mesurer pendant au moins sept jours les faux positifs et les alertes expirées ;
+8. passer `ALERT_DELIVERY_MODE=live`, redéployer, puis vérifier une livraison réelle ;
+9. lancer le contrôle public :
+
+```bash
+PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production
+```
+
+Si le smoke test n'identifie pas `cloudflare-d1`, le lien testé est un aperçu
+Vercel ou un déploiement incomplet, pas la production PrixRadar.
 
 Une « erreur de prix » reste un signal probabiliste : la PWA doit conserver le
 libellé de confiance et le conseil de vérification avant achat.

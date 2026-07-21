@@ -3,6 +3,12 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { userPreferences } from "../../../db/schema";
 import {
+  deliveryCountry,
+  deliveryMode,
+  postalCode,
+  type DeliveryMode,
+} from "../../../lib/delivery";
+import {
   deviceDatabaseError,
   deviceError,
   deviceJson,
@@ -23,6 +29,10 @@ const DEFAULT_PREFERENCES = {
   marketsJson: "[]",
   categoriesJson: "[]",
   sourcesJson: "[]",
+  deliveryCountry: "FR",
+  postalCode: null,
+  deliveryMode: "either",
+  requireLocationMatch: false,
 } as const;
 
 const EDITABLE_FIELDS = new Set([
@@ -36,6 +46,10 @@ const EDITABLE_FIELDS = new Set([
   "markets",
   "categories",
   "sources",
+  "deliveryCountry",
+  "postalCode",
+  "deliveryMode",
+  "requireLocationMatch",
 ]);
 
 type PreferencesPatch = {
@@ -49,6 +63,10 @@ type PreferencesPatch = {
   marketsJson?: string;
   categoriesJson?: string;
   sourcesJson?: string;
+  deliveryCountry?: string;
+  postalCode?: string | null;
+  deliveryMode?: DeliveryMode;
+  requireLocationMatch?: boolean;
 };
 
 function stringList(value: unknown, field: string, maxItems = 20) {
@@ -84,6 +102,10 @@ function serializePreferences(
     markets: parseJsonList(value.marketsJson),
     categories: parseJsonList(value.categoriesJson),
     sources: parseJsonList(value.sourcesJson),
+    deliveryCountry: value.deliveryCountry,
+    postalCode: value.postalCode,
+    deliveryMode: value.deliveryMode,
+    requireLocationMatch: value.requireLocationMatch,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   };
@@ -133,7 +155,7 @@ function parsePatch(body: Record<string, unknown>) {
     patch.maxPriceCents = body.maxPriceCents as number | null;
   }
 
-  for (const field of ["quietHours", "notificationEnabled"] as const) {
+  for (const field of ["quietHours", "notificationEnabled", "requireLocationMatch"] as const) {
     if (body[field] !== undefined) {
       if (typeof body[field] !== "boolean") {
         throw new Error(`${field} doit être un booléen.`);
@@ -151,6 +173,13 @@ function parsePatch(body: Record<string, unknown>) {
   if (body.markets !== undefined) patch.marketsJson = JSON.stringify(stringList(body.markets, "markets").map((item) => item.toUpperCase()));
   if (body.categories !== undefined) patch.categoriesJson = JSON.stringify(stringList(body.categories, "categories"));
   if (body.sources !== undefined) patch.sourcesJson = JSON.stringify(stringList(body.sources, "sources").map((item) => item.toLowerCase()));
+  if (body.deliveryCountry !== undefined) patch.deliveryCountry = deliveryCountry(body.deliveryCountry);
+  if (body.deliveryMode !== undefined) patch.deliveryMode = deliveryMode(body.deliveryMode);
+  if (body.postalCode !== undefined) {
+    if (body.deliveryCountry === undefined) throw new Error("deliveryCountry est requis avec postalCode.");
+    const country = deliveryCountry(body.deliveryCountry);
+    patch.postalCode = postalCode(body.postalCode, country);
+  }
 
   return patch;
 }

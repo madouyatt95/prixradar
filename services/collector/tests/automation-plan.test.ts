@@ -14,6 +14,7 @@ test("regroupe Amazon EU5 dans un seul Actor toutes les quinze minutes", () => {
   assert.deepEqual(input.markets, ["FR", "DE", "IT", "ES", "GB"]);
   assert.equal(input.liveVerificationLimit, 5);
   assert.equal(input.notify, true);
+  assert.equal(input.useRemoteDiscovery, true);
 });
 
 test("récupère la couverture distante et teste les connecteurs chaque jour", () => {
@@ -23,6 +24,7 @@ test("récupère la couverture distante et teste les connecteurs chaque jour", (
   if (!remoteAction || remoteAction.type !== "RUN_ACTOR") assert.fail("Action retail attendue");
   const remoteInput = JSON.parse(remoteAction.runInput?.body ?? "{}") as Record<string, unknown>;
   assert.equal(remoteInput.useRemoteCoverage, true);
+  assert.equal(remoteInput.scanAmazon, false);
   const plan = buildAutomationPlan("actor", ["https://www.boulanger.com/c/electromenager"]);
   assert.equal(plan.length, 3);
   assert.equal(plan[1]?.definition.cronExpression, "7,37 * * * *");

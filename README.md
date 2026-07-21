@@ -16,6 +16,12 @@ présenter une remise comme une « erreur certaine ».
 | Amazon Europe | prêt à déployer | Keepa EU5 + historique borné + double contrôle de page avant notification |
 | Web Push | prêt à activer | souscriptions, heures calmes, réservation atomique et audit ; requiert VAPID + collecteur |
 | Automatisation Apify | prête, non appliquée | plan EU5 toutes les 15 min + enseignes FR toutes les 30 min, provisionnement idempotent |
+| Graphe produit multi-enseignes | actif | GTIN validé, marque/modèle normalisés, file de rapprochements incertains |
+| Livraison localisée | actif | pays, préfixe postal et mode de livraison ; aucune adresse complète conservée |
+| Coupe-circuits connecteurs | actif | ouverture après incidents répétés, temporisation exponentielle, sonde de reprise |
+| Découverte Amazon sous budget | actif | rotation EU5 par gamme de prix/catégorie, enveloppe et cadence par segment |
+| Pilotage administrateur | actif côté code | JWT Cloudflare Access + liste blanche d'e-mails ; requiert la configuration Access |
+| Envoi d'alertes | mode prudent | `shadow` par défaut : décisions auditées sans Push réel jusqu'à recette |
 
 Les six cartes affichées quand aucune source n’est active portent **DÉMO**. Elles
 ne sont jamais ingérées, notifiées ou présentées comme des prix disponibles.
@@ -51,13 +57,11 @@ Puis ouvrir `http://localhost:3000`.
 
 ### Cibles de déploiement
 
-- Sur Vercel (`VERCEL=1`), le build utilise Next.js natif afin de publier la
-  PWA et ses routes HTTP au lieu d’un bundle Worker non routable.
-- Sur Cloudflare/Sites, le build par défaut reste `vinext` et reçoit le binding
-  D1 `DB` via le Worker. C’est cette cible qui active les données persistantes.
-- Un déploiement Vercel sans adaptateur de base affiche correctement la PWA,
-  mais les fonctions dépendantes de D1 restent indisponibles et échouent
-  explicitement au lieu de simuler une base active.
+- **Cloudflare/Sites est la production de référence.** Le build `vinext` reçoit
+  le binding D1 `DB` et exécute les migrations persistantes.
+- **Vercel reste un aperçu de l'interface.** Avec `VERCEL=1`, Next.js natif
+  publie la PWA, mais les fonctions dépendantes de D1 échouent explicitement :
+  ce déploiement ne doit pas être communiqué comme le service de production.
 
 Contrôles complets :
 
@@ -65,11 +69,13 @@ Contrôles complets :
 npm run check
 npm run db:generate
 npm audit
+# après publication
+PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production
 ```
 
 La base D1 utilise le binding `DB` de `.openai/hosting.json`. Les migrations
-Drizzle sont dans `drizzle/` ; `0000` conserve la watchlist initiale et `0001`
-ajoute alertes, observations, sources, cache/quota Keepa et notifications.
+Drizzle sont dans `drizzle/`. La migration `0003` ajoute le graphe produit, les
+préférences de livraison, les budgets de découverte et l'état des circuits.
 
 ## Variables serveur de la PWA
 
@@ -84,6 +90,9 @@ le préfixe `NEXT_PUBLIC_` pour ces valeurs.
 | `PUSH_DELIVERY_SECRET` | lecture des cibles et audit Push, distinct du précédent |
 | `VAPID_PUBLIC_KEY` | souscription Web Push dans la PWA |
 | `VAPID_PRIVATE_KEY` | signature des Push côté collecteur |
+| `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` | validation cryptographique de l'identité Cloudflare Access |
+| `ADMIN_EMAILS` | seconde liste blanche des administrateurs autorisés |
+| `ALERT_DELIVERY_MODE` | `shadow` par défaut, `live` seulement après recette |
 
 La route `/api/health` n’expose que des booléens de capacité, jamais les secrets.
 
@@ -106,13 +115,10 @@ Le mode `fixture` est bloqué à trois niveaux : sink, ingestion et Push. Le ser
 comprend BullMQ/Redis, Docker Compose et un packaging Apify Actor. Voir
 `services/collector/README.md` pour le déploiement.
 
-Le Site étant privé, le collecteur doit aussi envoyer :
-
-```text
-OAI-Sites-Authorization: Bearer <OAI_SITES_AUTH_TOKEN>
-```
-
-en plus du secret métier de la route appelée.
+La PWA peut être publique sans exposer le pilotage : seules les routes
+`/api/admin/*` sont placées derrière Cloudflare Access. Le collecteur s'authentifie
+sur ses routes privées avec `INGEST_SECRET` et `PUSH_DELIVERY_SECRET` ; aucune
+connexion ChatGPT et aucun jeton de navigateur ne sont requis.
 
 Le plan d’activation complet, y compris les variables, les contrôles de coût et
 le passage en accès public sans connexion ChatGPT, se trouve dans
@@ -129,6 +135,9 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `GET /api/push/targets` : cibles autorisées, sans `ownerId` ;
 - `POST /api/push/deliveries` : réservation/déduplication puis résultat d’envoi ;
 - `GET /api/keepa` : snapshot historique mis en cache et limité par appareil.
+- `GET|POST|PATCH /api/admin/sources` : couverture, budgets et réarmement des circuits ;
+- `GET|POST|PATCH /api/admin/discovery` : rotation Amazon EU5 sous budget ;
+- `GET|PATCH /api/admin/products` : contrôle des rapprochements multi-enseignes.
 
 Les API privées ne sont jamais mises en cache par le service worker. La rétention
 est appliquée lors des rapports de source : observations 180 jours, événements et

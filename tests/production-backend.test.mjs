@@ -74,3 +74,31 @@ test("ships the incremental D1 schema for collection and notification audit", as
   assert.match(migration, /`shipping_cents` integer,/);
   assert.match(migration, /`total_cents` integer,/);
 });
+
+test("ships canonical matching, local delivery rules and automatic source circuits", async () => {
+  const [schema, identity, preferences, sourcePlan, admin, adminView, migration] = await Promise.all([
+    source("../db/schema.ts"),
+    source("../lib/product-identity.ts"),
+    source("../app/api/preferences/route.ts"),
+    source("../app/api/source-plan/route.ts"),
+    source("../lib/admin.ts"),
+    source("../app/components/admin-view.tsx"),
+    source("../drizzle/0003_kind_mauler.sql"),
+  ]);
+
+  assert.match(schema, /canonicalProducts/);
+  assert.match(schema, /merchantProducts/);
+  assert.match(schema, /discoverySegments/);
+  assert.match(schema, /circuitState/);
+  assert.match(identity, /normalizeGtin/);
+  assert.match(identity, /brand_model/);
+  assert.match(preferences, /requireLocationMatch/);
+  assert.match(sourcePlan, /probeOnly/);
+  assert.match(sourcePlan, /dailyTokenBudget/);
+  assert.match(admin, /cf-access-jwt-assertion/);
+  assert.match(admin, /crypto\.subtle\.verify/);
+  assert.doesNotMatch(adminView, /signin-with-chatgpt/i);
+  assert.match(migration, /CREATE TABLE `canonical_products`/);
+  assert.match(migration, /CREATE TABLE `discovery_segments`/);
+  assert.match(migration, /SELECT[\s\S]*'closed', 0, 0, NULL, NULL, NULL, 500/);
+});

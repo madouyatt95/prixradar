@@ -16,6 +16,8 @@ export interface SourceAttemptMetrics {
   duplicatesSkipped?: number;
   antiBotBlocked?: boolean;
   keepaRequests?: number;
+  discoverySegmentId?: string | null;
+  discoveryYieldCount?: number;
   apifyCostMicros?: number | null;
 }
 
@@ -118,6 +120,8 @@ export class SourceStatusReporter {
         duplicatesSkipped: safeCount(metrics.duplicatesSkipped ?? 0),
         antiBotBlocked: metrics.antiBotBlocked === true,
         keepaRequests: safeCount(metrics.keepaRequests ?? 0),
+        discoverySegmentId: metrics.discoverySegmentId ?? null,
+        discoveryYieldCount: safeCount(metrics.discoveryYieldCount ?? 0),
         apifyCostMicros: metrics.apifyCostMicros ?? null,
       }, {
         baseUrl: this.#config.priceRadarBaseUrl,

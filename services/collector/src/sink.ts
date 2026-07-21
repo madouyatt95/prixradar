@@ -52,6 +52,10 @@ export interface AlertIngestEnvelope {
     priceAccessibleToAll: boolean;
     promotionType: "public_price" | "coupon" | "membership" | "cashback" | "trade_in" | "bundle" | "unknown";
     promotionLabel: string | null;
+    deliveryCountry?: string;
+    deliveryPostalCode?: string;
+    deliveryMode?: "home" | "pickup" | "either";
+    locationVerified?: boolean;
     historicalPrices?: Array<{
       provider: "keepa";
       priceCents: number;
@@ -79,6 +83,8 @@ export interface SourceStatusEnvelope {
     duplicatesSkipped: number;
     antiBotBlocked: boolean;
     keepaRequests: number;
+    discoverySegmentId: string | null;
+    discoveryYieldCount: number;
     apifyCostMicros: number | null;
   };
 }
@@ -207,6 +213,12 @@ export function toAlertIngestEnvelope(
       priceAccessibleToAll: promotion.accessibleToAll,
       promotionType: promotion.type,
       promotionLabel: promotion.label,
+      ...(observation.offer.deliveryContext ? {
+        deliveryCountry: observation.offer.deliveryContext.country,
+        deliveryPostalCode: observation.offer.deliveryContext.postalCode,
+        deliveryMode: observation.offer.deliveryContext.mode,
+        locationVerified: observation.offer.deliveryContext.verified,
+      } : {}),
       ...(historicalPrices && historicalPrices.length > 0 ? { historicalPrices } : {}),
     },
   };
@@ -239,6 +251,8 @@ export function toSourceStatusEnvelope(status: SourceStatusEvent): SourceStatusE
       duplicatesSkipped: status.duplicatesSkipped ?? 0,
       antiBotBlocked: status.antiBotBlocked ?? false,
       keepaRequests: status.keepaRequests ?? 0,
+      discoverySegmentId: status.discoverySegmentId ?? null,
+      discoveryYieldCount: status.discoveryYieldCount ?? 0,
       apifyCostMicros: status.apifyCostMicros ?? null,
     },
   };

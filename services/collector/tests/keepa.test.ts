@@ -11,6 +11,7 @@ test("déclare exactement les cinq marchés Amazon Europe couverts", () => {
 
 test("enchaîne /deal puis /product, normalise les centimes et expose le quota", async () => {
   const paths: string[] = [];
+  let dealSelection: Record<string, unknown> = {};
   const client = new KeepaClient({
     apiKey: "KEEPA_SECRET_TEST",
     fetchImpl: async (input) => {
@@ -18,6 +19,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
       paths.push(url.pathname);
       if (url.pathname === "/deal") {
         const selection = JSON.parse(url.searchParams.get("selection") ?? "{}") as { domainId?: number };
+        dealSelection = selection;
         assert.equal(selection.domainId, 4);
         return Response.json({
           tokensLeft: 12,
@@ -48,7 +50,12 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
     },
   });
 
-  const observations = await scanKeepaMarket(client, "FR", { fixture: true });
+  const observations = await scanKeepaMarket(client, "FR", {
+    fixture: true,
+    categoryIds: [172282, 172282],
+    minPriceCents: 10_000,
+    maxPriceCents: 50_000,
+  });
   assert.deepEqual(paths, ["/deal", "/product"]);
   assert.equal(observations[0]?.offer.price.amountMinor, 5_000);
   assert.equal(observations[0]?.offer.total, null);
@@ -57,6 +64,8 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(observations[0]?.offer.fixture, true);
   assert.equal(observations[0]?.historicalPrices?.length, 6);
   assert.equal(client.quota.tokensLeft, 10);
+  assert.deepEqual(dealSelection.includeCategories, [172282]);
+  assert.deepEqual(dealSelection.currentRange, [10_000, 50_000]);
 
   const keepa = observations[0];
   assert.ok(keepa);
