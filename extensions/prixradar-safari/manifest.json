@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "PrixRadar — Vérifier ce prix",
+  "short_name": "PrixRadar",
+  "version": "0.6.0",
+  "description": "Envoie la fiche produit ouverte vers une vérification PrixRadar, sans acheter ni modifier la page.",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_title": "Vérifier avec PrixRadar",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}

@@ -30,4 +30,5 @@ test("injects Cloudflare bindings without importing them in Vercel bundles", asy
   assert.match(runtimeEnv, /__PRIXRADAR_RUNTIME_ENV__/);
   assert.match(worker, /setRuntimeEnv\(env\)/);
   assert.match(health, /runtimeEnv as env/);
+  assert.match(health, /version: "0\.6\.0"/);
 });

@@ -13,9 +13,11 @@ export interface SourceAttempt {
 export interface SourceAttemptMetrics {
   productsSeen: number;
   queueLag: number;
+  sourceConfigurationId?: string | null;
   duplicatesSkipped?: number;
   antiBotBlocked?: boolean;
   keepaRequests?: number;
+  nextPageCursor?: string | null;
   discoverySegmentId?: string | null;
   discoveryYieldCount?: number;
   apifyCostMicros?: number | null;
@@ -102,13 +104,14 @@ export class SourceStatusReporter {
     if (attempt.fixture || !this.#config.priceRadarBaseUrl || !this.#config.ingestSecret) return false;
 
     const now = this.#now().toISOString();
-    const key = `${attempt.source}:${attempt.market}`;
+    const key = `${attempt.source}:${attempt.market}:${metrics.sourceConfigurationId ?? "unscoped"}`;
     if (status === "healthy") this.#lastSuccessBySource.set(key, now);
 
     try {
       await this.#send({
         source: attempt.source,
         market: attempt.market,
+        sourceConfigurationId: metrics.sourceConfigurationId ?? null,
         displayName: attempt.displayName,
         mode: "live",
         status,
@@ -120,6 +123,7 @@ export class SourceStatusReporter {
         duplicatesSkipped: safeCount(metrics.duplicatesSkipped ?? 0),
         antiBotBlocked: metrics.antiBotBlocked === true,
         keepaRequests: safeCount(metrics.keepaRequests ?? 0),
+        ...(metrics.nextPageCursor !== undefined ? { nextPageCursor: metrics.nextPageCursor } : {}),
         discoverySegmentId: metrics.discoverySegmentId ?? null,
         discoveryYieldCount: safeCount(metrics.discoveryYieldCount ?? 0),
         apifyCostMicros: metrics.apifyCostMicros ?? null,
@@ -142,7 +146,9 @@ export async function runReportedSourceAttempt<T>(options: {
   attempt: SourceAttempt;
   run: () => Promise<T>;
   productsSeen: (result: T) => number;
+  baseMetrics?: Partial<SourceAttemptMetrics>;
   metrics?: (result: T) => Partial<SourceAttemptMetrics>;
+  degradedErrorCode?: (result: T) => string | null;
   queueLag: () => number | Promise<number>;
 }): Promise<T> {
   try {
@@ -153,11 +159,18 @@ export async function runReportedSourceAttempt<T>(options: {
     } catch {
       // Metrics must not change the outcome of the source attempt.
     }
-    await options.reporter.healthy(options.attempt, {
+    const metrics = {
+      ...(options.baseMetrics ?? {}),
       ...(options.metrics?.(result) ?? {}),
       productsSeen: options.productsSeen(result),
       queueLag,
-    });
+    };
+    const degradedErrorCode = options.degradedErrorCode?.(result) ?? null;
+    if (degradedErrorCode === null) {
+      await options.reporter.healthy(options.attempt, metrics);
+    } else {
+      await options.reporter.degraded(options.attempt, metrics, degradedErrorCode);
+    }
     return result;
   } catch (primaryError) {
     let queueLag = 0;
@@ -170,7 +183,7 @@ export async function runReportedSourceAttempt<T>(options: {
     const antiBotBlocked = /(?:403|429|captcha|blocked|access denied|robot)/u.test(message);
     await options.reporter.degraded(
       options.attempt,
-      { productsSeen: 0, queueLag, antiBotBlocked },
+      { ...(options.baseMetrics ?? {}), productsSeen: 0, queueLag, antiBotBlocked },
       antiBotBlocked ? "ANTI_BOT_BLOCKED" : "COLLECTOR_JOB_FAILED",
     );
     throw primaryError;

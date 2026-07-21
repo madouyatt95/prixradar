@@ -2,12 +2,12 @@ import { and, desc, eq, gt, gte, inArray, isNotNull, lte, or, sql, type SQL } fr
 import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
-import { alertFeedback, alertIntelligence, alerts } from "@/db/schema";
+import { alertFeedback, alertIntelligence, alerts, priceObservations } from "@/db/schema";
 import { ANOMALY_LIMITS, type AnomalyEvaluation } from "@/lib/anomaly";
+import { isActiveSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
-const SOURCES = new Set(["amazon", "boulanger", "cdiscount", "darty"]);
 const CONFIDENCE = new Set(["very_likely", "likely", "review", "insufficient"]);
 const MAX_ALERT_AGE_MS = 120 * 60_000;
 
@@ -106,7 +106,17 @@ function serializeIntelligence(row?: typeof alertIntelligence.$inferSelect) {
   };
 }
 
-function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySummary, intelligence?: typeof alertIntelligence.$inferSelect) {
+type PublicHistoryPoint = Pick<
+  typeof priceObservations.$inferSelect,
+  "priceCents" | "shippingCents" | "totalCents" | "available" | "observedAt"
+>;
+
+function serializeAlert(
+  row: typeof alerts.$inferSelect,
+  community?: CommunitySummary,
+  intelligence?: typeof alertIntelligence.$inferSelect,
+  history: PublicHistoryPoint[] = [],
+) {
   const evidence = parseEvidence(row.evidenceJson);
   const liveEligible =
     row.sourceMode === "live" &&
@@ -166,6 +176,26 @@ function serializeAlert(row: typeof alerts.$inferSelect, community?: CommunitySu
     observedAt: row.observedAt,
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
+    certificateUrl: row.sourceMode === "live" ? `/certified/${encodeURIComponent(row.id)}` : null,
+    certificateApiUrl: row.sourceMode === "live" ? `/api/certified/${encodeURIComponent(row.id)}` : null,
+    history: row.sourceMode === "live" ? {
+      mode: "live",
+      count: Math.min(history.length, 60),
+      truncated: history.length > 60,
+      points: history.slice(0, 60).map((point) => ({
+        observedAt: point.observedAt,
+        priceCents: point.priceCents,
+        shippingCents: point.shippingCents,
+        totalCents: point.totalCents,
+        available: point.available,
+      })),
+    } : {
+      mode: "unavailable",
+      count: 0,
+      truncated: false,
+      points: [],
+      reason: "demo_data",
+    },
     community: community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 },
     intelligence: serializeIntelligence(intelligence),
     evidence: evidence === null ? null : {
@@ -218,7 +248,7 @@ export async function GET(request: Request) {
 
   const includeDemo = url.searchParams.get("includeDemo") === "true";
   const source = url.searchParams.get("source")?.trim().toLowerCase() ?? null;
-  if (source !== null && !SOURCES.has(source)) {
+  if (source !== null && !isActiveSource(source)) {
     return apiError(400, "INVALID_SOURCE", "source n’est pas prise en charge.");
   }
   const market = url.searchParams.get("market")?.trim().toUpperCase() ?? null;
@@ -280,7 +310,7 @@ export async function GET(request: Request) {
       database.select({ count: sql<number>`count(*)` }).from(alerts).where(where),
     ]);
     const total = Number(countRows[0]?.count ?? 0);
-    const [feedbackRows, intelligenceRows] = rows.length === 0 ? [[], []] : await Promise.all([
+    const [feedbackRows, intelligenceRows, observationRows] = rows.length === 0 ? [[], [], []] : await Promise.all([
       database.select({
         alertId: alertFeedback.alertId,
         total: sql<number>`count(*)`,
@@ -290,12 +320,28 @@ export async function GET(request: Request) {
         purchased: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'purchased' then 1 else 0 end), 0)`,
       }).from(alertFeedback).where(inArray(alertFeedback.alertId, rows.map((row) => row.id))).groupBy(alertFeedback.alertId),
       database.select().from(alertIntelligence).where(inArray(alertIntelligence.alertId, rows.map((row) => row.id))),
+      database.select({
+        alertId: priceObservations.alertId,
+        priceCents: priceObservations.priceCents,
+        shippingCents: priceObservations.shippingCents,
+        totalCents: priceObservations.totalCents,
+        available: priceObservations.available,
+        observedAt: priceObservations.observedAt,
+      }).from(priceObservations)
+        .where(inArray(priceObservations.alertId, rows.filter((row) => row.sourceMode === "live").map((row) => row.id)))
+        .orderBy(desc(priceObservations.observedAt)),
     ]);
     const community = new Map(feedbackRows.map((row) => [row.alertId, {
       total: Number(row.total), positive: Number(row.positive), negative: Number(row.negative),
       expired: Number(row.expired), purchased: Number(row.purchased),
     }]));
     const intelligence = new Map(intelligenceRows.map((row) => [row.alertId, row]));
+    const history = new Map<string, PublicHistoryPoint[]>();
+    for (const observation of observationRows) {
+      const points = history.get(observation.alertId) ?? [];
+      if (points.length < 61) points.push(observation);
+      history.set(observation.alertId, points);
+    }
 
     return json(
       {
@@ -303,7 +349,7 @@ export async function GET(request: Request) {
         mode: includeDemo ? "live_and_demo" : "live",
         generatedAt: now,
         count: rows.length,
-        items: rows.map((row) => serializeAlert(row, community.get(row.id), intelligence.get(row.id))),
+        items: rows.map((row) => serializeAlert(row, community.get(row.id), intelligence.get(row.id), history.get(row.id))),
         pagination: {
           limit,
           offset,

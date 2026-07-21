@@ -1,7 +1,7 @@
 import webPush from "web-push";
 
 import { privateApiHeaders, SinkConfigurationError, SinkRequestError } from "./sink.js";
-import { notificationEligible } from "./verify.js";
+import { hasExactVariantEvidence, notificationEligible } from "./verify.js";
 import type {
   PushReservation,
   PushSubscriptionTarget,
@@ -123,6 +123,11 @@ export async function fetchPushTargets(
     brand?: string | null;
     condition?: string | null;
     accessibleToAll: boolean;
+    sellerScore: number;
+    exactVariantConfirmed: boolean;
+    cartConfirmed: boolean;
+    historyPoints: number;
+    verifiedAgeMinutes: number;
     tier: "urgent" | "personal";
   },
 ): Promise<PushSubscriptionTarget[]> {
@@ -148,6 +153,11 @@ export async function fetchPushTargets(
         brand: filters.brand ?? "",
         condition: filters.condition ?? "",
         accessibleToAll: String(filters.accessibleToAll),
+        sellerScore: String(Math.max(0, Math.min(100, Math.round(filters.sellerScore)))),
+        exactVariantConfirmed: String(filters.exactVariantConfirmed),
+        cartConfirmed: String(filters.cartConfirmed),
+        historyPoints: String(Math.max(0, Math.min(1_000, Math.round(filters.historyPoints)))),
+        verifiedAgeMinutes: String(Math.max(0, Math.min(10_080, Math.round(filters.verifiedAgeMinutes)))),
         tier: filters.tier,
       } : {}),
     }).toString();
@@ -220,6 +230,16 @@ export async function sendPushForObservation(
     brand: observation.offer.product.brand,
     condition: observation.offer.condition,
     accessibleToAll: observation.offer.promotion?.accessibleToAll !== false,
+    sellerScore: observation.offer.sellerTrusted ? 100 : 0,
+    exactVariantConfirmed: hasExactVariantEvidence(observation.offer),
+    cartConfirmed: observation.offer.cartProbe?.status === "confirmed"
+      && observation.offer.cartProbe.identityConfirmed
+      && observation.offer.cartProbe.explicitShipping
+      && observation.offer.cartProbe.explicitTotal
+      && observation.offer.cartProbe.couponApplied
+      && observation.offer.cartProbe.totalCents !== null,
+    historyPoints: observation.historicalPrices?.length ?? 0,
+    verifiedAgeMinutes: Math.max(0, (Date.now() - Date.parse(observation.verification.secondObservedAt)) / 60_000),
     tier: backendScore >= 88 && (observation.anomaly.discountPercent ?? 0) >= 35 ? "urgent" : "personal",
   });
   const summary: PushDeliverySummary = { eligible: true, targets: targets.length, reserved: 0, sent: 0, failed: 0 };

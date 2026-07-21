@@ -34,6 +34,9 @@ export interface CartProbeInput {
   totalCents: number | null;
   stockConfirmed: boolean;
   addToCartAvailable: boolean;
+  identityConfirmed: boolean;
+  explicitShipping: boolean;
+  explicitTotal: boolean;
   couponApplied: boolean;
   checkedAt: string | null;
 }
@@ -148,10 +151,17 @@ export function evaluateShadowCart(input: CartProbeInput, fallback: {
   const shippingCents = input.shippingCents ?? fallback.shippingCents;
   const computedTotal = shippingCents === null ? null : itemCents + shippingCents;
   const finalTotalCents = input.totalCents ?? computedTotal;
-  const consistent = input.totalCents === null || computedTotal === null
-    ? true
-    : Math.abs(input.totalCents - computedTotal) <= 1;
-  const verified = input.status === "confirmed" && input.stockConfirmed && consistent;
+  const consistent = input.explicitTotal
+    && input.explicitShipping
+    && input.totalCents !== null
+    && input.shippingCents !== null
+    && input.itemCents !== null
+    && Math.abs(input.totalCents - (input.itemCents + input.shippingCents)) <= 1;
+  const verified = input.status === "confirmed"
+    && input.stockConfirmed
+    && input.identityConfirmed
+    && input.couponApplied
+    && consistent;
   return {
     ...input,
     itemCents,

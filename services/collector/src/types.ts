@@ -24,8 +24,25 @@ export interface ProductIdentity {
   imageUrl: string | null;
 }
 
+/**
+ * Independent proof of the requested and rendered merchant variant.
+ * `expectedId` is derived from the requested URL (or the Keepa deal), while
+ * `observedId` must come from the rendered merchant document (or Keepa
+ * product). They must never be populated from the same fallback value.
+ */
+export interface VariantIdentityEvidence {
+  expectedId: string | null;
+  observedId: string | null;
+  expectedSource: "request_url" | "keepa_deal" | "unknown";
+  observedSource: "merchant_dom" | "canonical_link" | "json_ld" | "keepa_product" | "unknown";
+  merchantProductId: string | null;
+  gtin: string | null;
+  selectedOptions: Record<string, string>;
+}
+
 export interface OfferSnapshot {
   product: ProductIdentity;
+  variantIdentity?: VariantIdentityEvidence;
   price: Money;
   shipping: Money | null;
   /** Null means shipping is unknown; it must never be interpreted as free. */
@@ -57,6 +74,9 @@ export interface OfferSnapshot {
     totalCents: number | null;
     stockConfirmed: boolean;
     addToCartAvailable: boolean;
+    identityConfirmed: boolean;
+    explicitShipping: boolean;
+    explicitTotal: boolean;
     couponApplied: boolean;
     checkedAt: string | null;
   };
@@ -76,6 +96,13 @@ export interface VerificationEvidence {
   secondObservedAt: string;
   matchingPrice: boolean;
   matchingIdentity: boolean;
+  matchingSeller?: boolean;
+  matchingCondition?: boolean;
+  matchingAvailability?: boolean;
+  matchingShipping?: boolean;
+  matchingTotal?: boolean;
+  matchingDelivery?: boolean;
+  matchingCart?: boolean;
 }
 
 export interface AnomalyScore {
@@ -136,6 +163,7 @@ export interface PushReservation {
 export interface SourceStatusEvent {
   source: RetailSource;
   market: Market;
+  sourceConfigurationId?: string | null;
   displayName: string;
   mode: "live" | "fixture";
   status: "healthy" | "degraded" | "offline" | "not_configured";
@@ -147,6 +175,7 @@ export interface SourceStatusEvent {
   duplicatesSkipped?: number;
   antiBotBlocked?: boolean;
   keepaRequests?: number;
+  nextPageCursor?: string | null;
   discoverySegmentId?: string | null;
   discoveryYieldCount?: number;
   apifyCostMicros?: number | null;

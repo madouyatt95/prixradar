@@ -1,6 +1,7 @@
 import { Actor } from "apify";
 
 import { connectorForUrl } from "./connectors/index.js";
+import { parseCoverageTargets, type CoverageTarget } from "./coverage-plan.js";
 import { scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import type { CollectorConfig } from "./config.js";
 import { KeepaClient, scanKeepaMarket } from "./keepa.js";
@@ -47,7 +48,8 @@ type RemoteDiscoverySegment = {
 
 type RemoteRecheck = { id: string; alertId: string; source: RetailSource; market: Market; url: string };
 type RemotePriority = { id: string; source: RetailSource; market: Market; url: string; kind: "inspection" | "frontier"; shadowCart: boolean };
-type RemotePlan = { urls: string[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[] };
+type ActorCoverageTarget = Omit<CoverageTarget, "sourceConfigurationId"> & { sourceConfigurationId: string | null };
+type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[] };
 
 function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePriority[] {
   if (!Array.isArray(value)) return [];
@@ -64,7 +66,7 @@ function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePrio
 }
 
 async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
-  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { urls: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
+  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
@@ -75,7 +77,13 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
   });
   if (!response.ok) throw new Error(`Plan de couverture indisponible (HTTP ${response.status}).`);
   const payload = await response.json() as {
-    items?: Array<{ discoveryUrl?: unknown }>;
+    items?: Array<{
+      id?: unknown;
+      discoveryUrl?: unknown;
+      discoveryStrategy?: unknown;
+      pageCursor?: unknown;
+      productLimit?: unknown;
+    }>;
     discoverySegments?: unknown;
     rechecks?: unknown;
     inspections?: unknown;
@@ -105,7 +113,7 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
       })
     : [];
   return {
-    urls: (payload.items ?? []).flatMap((item) => typeof item.discoveryUrl === "string" ? [item.discoveryUrl] : []),
+    coverageTargets: parseCoverageTargets(payload.items),
     discoverySegments: segments,
     rechecks: Array.isArray(payload.rechecks) ? payload.rechecks.flatMap((candidate): RemoteRecheck[] => {
       if (!candidate || typeof candidate !== "object") return [];
@@ -182,12 +190,17 @@ export async function runActor(config: CollectorConfig): Promise<void> {
 
     const source = input.source ?? "all";
     const configuredUrls = inputUrls(input.urls);
-    const usesRemotePlan = (configuredUrls.length === 0 && input.useRemoteCoverage !== false)
+    const shouldUseRemoteCoverage = configuredUrls.length === 0 && input.useRemoteCoverage !== false;
+    const usesRemotePlan = shouldUseRemoteCoverage
       || input.useRemoteDiscovery === true;
-    const plan = usesRemotePlan ? await remotePlan(config) : { urls: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
-    const urls = [...new Set(configuredUrls.length > 0 || input.useRemoteCoverage === false
-      ? configuredUrls
-      : plan.urls)];
+    const plan = usesRemotePlan ? await remotePlan(config) : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
+    const rawCoverageTargets: ActorCoverageTarget[] = configuredUrls.length > 0
+      ? configuredUrls.map((url) => ({ url, sourceConfigurationId: null, productLimit: null }))
+      : shouldUseRemoteCoverage ? plan.coverageTargets : [];
+    const coverageTargets = [...new Map(rawCoverageTargets.map((target) => [
+      `${target.sourceConfigurationId ?? "manual"}:${target.url}`,
+      target,
+    ])).values()];
     const seenProductUrls = new Set<string>();
     for (const task of plan.priorityTasks) {
       if (seenProductUrls.has(task.url)) continue;
@@ -210,7 +223,8 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       seenProductUrls.add(recheck.url);
       await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
     }
-    for (const url of urls) {
+    for (const coverageTarget of coverageTargets) {
+      const { url, sourceConfigurationId, productLimit } = coverageTarget;
       const connector = connectorForUrl(url);
       if (source !== "all" && source !== connector.source) {
         throw new Error(`L’URL ne correspond pas à la source ${source}.`);
@@ -218,12 +232,22 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       await runReportedSourceAttempt({
         reporter: statusReporter,
         attempt: sourceAttempt(connector.source, connector.market, fixture),
+        baseMetrics: { sourceConfigurationId },
         run: async () => {
+          const coverageScanOptions = {
+            ...scanOptions,
+            maxDiscoveredUrls: Math.min(productLimit ?? limit, config.maxDiscoveredUrls),
+          };
           if (mode === "discover") {
-            const result = await scanSourceUrl(url, scanOptions);
+            const result = await scanSourceUrl(url, coverageScanOptions);
             await Actor.pushData({ dataKind: "discovery", fixture, ...result });
             if (!fixture && config.priceRadarBaseUrl && config.ingestSecret) {
-              await postFrontierItems(result.discoveredUrls.map((productUrl) => ({ url: productUrl, discoveredFrom: result.loadedUrl, depth: 1 })), {
+              await postFrontierItems(result.discoveredUrls.map((productUrl) => ({
+                url: productUrl,
+                discoveredFrom: result.loadedUrl,
+                depth: 1,
+                sourceConfigurationId,
+              })), {
                 baseUrl: config.priceRadarBaseUrl,
                 ingestSecret: config.ingestSecret,
                 ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
@@ -232,11 +256,23 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             }
             const unseen = result.discoveredUrls.filter((productUrl) => !seenProductUrls.has(productUrl));
             unseen.forEach((productUrl) => seenProductUrls.add(productUrl));
-            return { productsSeen: unseen.length, duplicatesSkipped: result.discoveredUrls.length - unseen.length };
+            return {
+              productsSeen: unseen.length,
+              duplicatesSkipped: result.discoveredUrls.length - unseen.length,
+              nextPageCursor: result.nextPageUrl,
+              attemptedProducts: 0,
+              verificationFailures: 0,
+              antiBotBlocked: false,
+            };
           }
-          const initialScan = mode === "full" ? await scanSourceUrl(url, scanOptions) : null;
+          const initialScan = mode === "full" ? await scanSourceUrl(url, coverageScanOptions) : null;
           if (initialScan && !fixture && config.priceRadarBaseUrl && config.ingestSecret && initialScan.discoveredUrls.length > 0) {
-            await postFrontierItems(initialScan.discoveredUrls.map((productUrl) => ({ url: productUrl, discoveredFrom: initialScan.loadedUrl, depth: 1 })), {
+            await postFrontierItems(initialScan.discoveredUrls.map((productUrl) => ({
+              url: productUrl,
+              discoveredFrom: initialScan.loadedUrl,
+              depth: 1,
+              sourceConfigurationId,
+            })), {
               baseUrl: config.priceRadarBaseUrl,
               ingestSecret: config.ingestSecret,
               ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
@@ -244,7 +280,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             });
           }
           const targetUrls = initialScan
-            ? (initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, limit))
+            ? (initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, productLimit ?? limit))
             : [url];
           const candidates = targetUrls.length > 0 ? targetUrls : [url];
           const targets = candidates.filter((targetUrl) => {
@@ -252,21 +288,53 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             seenProductUrls.add(targetUrl);
             return true;
           });
+          let verifiedProducts = 0;
+          let verificationFailures = 0;
+          let antiBotBlocked = false;
           for (const targetUrl of targets) {
-            const observation = await verifySourceUrl(targetUrl, {
-              ...scanOptions,
-              verifyDelayMs: config.verifyDelayMs,
-              shadowCart: input.shadowCart ?? mode === "verify",
-            });
-            if (!fixture) {
-              await deliverObservation(observation, config, { allowPush: input.notify === true });
+            try {
+              const observation = await verifySourceUrl(targetUrl, {
+                ...scanOptions,
+                verifyDelayMs: config.verifyDelayMs,
+                shadowCart: input.shadowCart ?? mode === "verify",
+              });
+              if (!fixture) {
+                await deliverObservation(observation, config, { allowPush: input.notify === true });
+              }
+              await Actor.pushData({ dataKind: "verified-observation", ...observation });
+              verifiedProducts += 1;
+            } catch (error) {
+              verificationFailures += 1;
+              const message = error instanceof Error ? error.message.toLowerCase() : "";
+              const blocked = /(?:403|429|captcha|blocked|access denied|robot)/u.test(message);
+              antiBotBlocked ||= blocked;
+              await Actor.pushData({
+                dataKind: "verification-failure",
+                url: targetUrl,
+                errorCode: blocked ? "ANTI_BOT_BLOCKED" : "PRODUCT_VERIFICATION_FAILED",
+              });
             }
-            await Actor.pushData({ dataKind: "verified-observation", ...observation });
           }
-          return { productsSeen: targets.length, duplicatesSkipped: candidates.length - targets.length };
+          return {
+            productsSeen: verifiedProducts,
+            duplicatesSkipped: candidates.length - targets.length,
+            nextPageCursor: initialScan ? initialScan.nextPageUrl : undefined,
+            attemptedProducts: targets.length,
+            verificationFailures,
+            antiBotBlocked,
+          };
         },
         productsSeen: (result) => result.productsSeen,
-        metrics: (result) => ({ duplicatesSkipped: result.duplicatesSkipped }),
+        metrics: (result) => ({
+          duplicatesSkipped: result.duplicatesSkipped,
+          antiBotBlocked: result.antiBotBlocked,
+          ...(result.nextPageCursor !== undefined ? { nextPageCursor: result.nextPageCursor } : {}),
+        }),
+        degradedErrorCode: (result) => result.antiBotBlocked
+          ? "ANTI_BOT_BLOCKED"
+          : result.attemptedProducts > 0 && result.verificationFailures === result.attemptedProducts
+            ? "PRODUCT_VERIFICATION_FAILED"
+            : null,
         queueLag: () => 0,
       });
     }

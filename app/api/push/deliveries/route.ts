@@ -1,10 +1,16 @@
 import { and, eq } from "drizzle-orm";
 
 import { getDb } from "../../../../db";
+import { evidenceBoolean, evidenceEligible, evidenceNumber } from "../../../../lib/alert-evidence";
+import { verifiedCartEvidence } from "../../../../lib/cart-proof.js";
+import { alertMatchesPushPreferences } from "../../../../lib/push-preferences";
+import { radarIntentMatches, type RadarIntent } from "../../../../lib/radar-intent";
 import {
   alerts,
+  alertIntelligence,
   notificationDeliveries,
   pushSubscriptions,
+  radarRules,
   userPreferences,
 } from "../../../../db/schema";
 import { authorizePushDelivery, serverJson } from "../server-auth";
@@ -50,15 +56,6 @@ async function readBody(request: Request) {
   }
 }
 
-function evidenceEligible(value: string) {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) && parsed.notificationEligible === true;
-  } catch {
-    return false;
-  }
-}
-
 async function reserve(body: UnknownRecord) {
   const alertId = requiredId(body.alertId, "alertId");
   const subscriptionId = requiredInteger(body.subscriptionId, "subscriptionId");
@@ -78,6 +75,21 @@ async function reserve(body: UnknownRecord) {
         timezone: userPreferences.timezone,
         notificationEnabled: userPreferences.notificationEnabled,
         minScore: userPreferences.minScore,
+        minSellerScore: userPreferences.minSellerScore,
+        requireExactVariant: userPreferences.requireExactVariant,
+        requireCartConfirmation: userPreferences.requireCartConfirmation,
+        maxAlertAgeMinutes: userPreferences.maxAlertAgeMinutes,
+        minimumHistoryPoints: userPreferences.minimumHistoryPoints,
+        minDiscount: userPreferences.minDiscount,
+        maxPriceCents: userPreferences.maxPriceCents,
+        marketsJson: userPreferences.marketsJson,
+        categoriesJson: userPreferences.categoriesJson,
+        sourcesJson: userPreferences.sourcesJson,
+        deliveryCountry: userPreferences.deliveryCountry,
+        postalCode: userPreferences.postalCode,
+        deliveryMode: userPreferences.deliveryMode,
+        requireLocationMatch: userPreferences.requireLocationMatch,
+        notificationSpeed: userPreferences.notificationSpeed,
       })
       .from(pushSubscriptions)
       .innerJoin(
@@ -91,13 +103,32 @@ async function reserve(body: UnknownRecord) {
         sourceMode: alerts.sourceMode,
         status: alerts.status,
         score: alerts.score,
+        source: alerts.source,
+        market: alerts.market,
+        category: alerts.category,
+        title: alerts.title,
+        brand: alerts.brand,
+        discountPercent: alerts.discountPercent,
+        priceCents: alerts.priceCents,
+        publicPriceCents: alerts.publicPriceCents,
+        priceAccessibleToAll: alerts.priceAccessibleToAll,
+        condition: alerts.condition,
+        deliveryCountry: alerts.deliveryCountry,
+        deliveryPostalPrefix: alerts.deliveryPostalPrefix,
+        deliveryMode: alerts.deliveryMode,
+        locationVerified: alerts.locationVerified,
         shippingCents: alerts.shippingCents,
         observedAt: alerts.observedAt,
         verifiedAt: alerts.verifiedAt,
         expiresAt: alerts.expiresAt,
         evidenceJson: alerts.evidenceJson,
+        sellerScore: alertIntelligence.sellerScore,
+        variantConfidence: alertIntelligence.variantConfidence,
+        shadowCartStatus: alertIntelligence.shadowCartStatus,
+        shadowCartJson: alertIntelligence.shadowCartJson,
       })
       .from(alerts)
+      .leftJoin(alertIntelligence, eq(alertIntelligence.alertId, alerts.id))
       .where(eq(alerts.id, alertId))
       .limit(1),
   ]);
@@ -110,7 +141,50 @@ async function reserve(body: UnknownRecord) {
   }
 
   const now = Date.now();
-  const freshAfter = now - 120 * 60_000;
+  const freshAfter = now - subscription.maxAlertAgeMinutes * 60_000;
+  const historyPoints = alert ? evidenceNumber(alert.evidenceJson, "historyPoints") ?? 0 : 0;
+  const ruleRows = await database.select({ intentJson: radarRules.intentJson }).from(radarRules).where(and(
+    eq(radarRules.ownerId, subscription.ownerId),
+    eq(radarRules.enabled, true),
+  ));
+  const intents = ruleRows.flatMap((rule): RadarIntent[] => {
+    try { return [JSON.parse(rule.intentJson) as RadarIntent]; } catch { return []; }
+  });
+  const radarMatches = alert !== undefined && (intents.length === 0 || intents.some((intent) => radarIntentMatches(intent, {
+    title: alert.title,
+    brand: alert.brand,
+    category: alert.category,
+    market: alert.market,
+    priceCents: alert.publicPriceCents ?? alert.priceCents,
+    discountPercent: alert.discountPercent,
+    condition: alert.condition,
+    accessibleToAll: alert.priceAccessibleToAll,
+    deliveryCountry: alert.deliveryCountry,
+  })));
+  const preferenceEligible = alert !== undefined && alertMatchesPushPreferences({
+    preferences: subscription,
+    alert: {
+      score: alert.score,
+      sellerScore: Number(alert.sellerScore ?? 0),
+      historyPoints,
+      exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true && Number(alert.variantConfidence ?? 0) >= 90,
+      cartConfirmed: alert.shadowCartStatus === "confirmed" && verifiedCartEvidence(alert.shadowCartJson ?? "{}"),
+      verifiedAt: alert.verifiedAt,
+      discountPercent: alert.discountPercent,
+      priceCents: alert.priceCents,
+      publicPriceCents: alert.publicPriceCents,
+      source: alert.source,
+      market: alert.market,
+      category: alert.category,
+      deliveryCountry: alert.deliveryCountry,
+      deliveryPostalPrefix: alert.deliveryPostalPrefix,
+      deliveryMode: alert.deliveryMode,
+      locationVerified: alert.locationVerified,
+    },
+    tier,
+    radarMatches,
+    nowMs: now,
+  });
   const alertEligible =
     alert?.sourceMode === "live" &&
     alert.status === "active" &&
@@ -121,7 +195,8 @@ async function reserve(body: UnknownRecord) {
     Date.parse(alert.observedAt) >= freshAfter &&
     Date.parse(alert.verifiedAt) >= freshAfter &&
     Date.parse(alert.expiresAt) > now &&
-    evidenceEligible(alert.evidenceJson);
+    evidenceEligible(alert.evidenceJson) &&
+    preferenceEligible;
   if (!alert || !alertEligible) {
     return serverJson(
       { ok: false, code: "alert_not_eligible", error: "Cette alerte n’est pas éligible à une notification." },

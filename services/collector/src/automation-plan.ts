@@ -49,6 +49,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         minimumDropPercent: 30,
         verifyAmazonPage: true,
         liveVerificationLimit: 5,
+        useRemoteCoverage: false,
         useRemoteDiscovery: true,
       }, 1_024)],
     },

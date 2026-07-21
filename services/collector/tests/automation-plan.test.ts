@@ -14,6 +14,7 @@ test("regroupe Amazon EU5 dans un seul Actor toutes les quinze minutes", () => {
   assert.deepEqual(input.markets, ["FR", "DE", "IT", "ES", "GB"]);
   assert.equal(input.liveVerificationLimit, 5);
   assert.equal(input.notify, true);
+  assert.equal(input.useRemoteCoverage, false);
   assert.equal(input.useRemoteDiscovery, true);
 });
 

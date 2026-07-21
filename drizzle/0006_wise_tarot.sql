@@ -1,0 +1,125 @@
+PRAGMA foreign_keys=OFF;--> statement-breakpoint
+CREATE TABLE `__new_source_configurations` (
+	`id` text PRIMARY KEY NOT NULL,
+	`source` text NOT NULL,
+	`market` text NOT NULL,
+	`display_name` text NOT NULL,
+	`discovery_url` text NOT NULL,
+	`category` text DEFAULT 'Général' NOT NULL,
+	`discovery_strategy` text DEFAULT 'links' NOT NULL,
+	`page_cursor` text,
+	`estimated_product_count` integer,
+	`unique_products_seen` integer DEFAULT 0 NOT NULL,
+	`coverage_percent` integer DEFAULT 0 NOT NULL,
+	`contract_status` text DEFAULT 'untested' NOT NULL,
+	`last_contract_check_at` text,
+	`enabled` integer DEFAULT true NOT NULL,
+	`cadence_minutes` integer DEFAULT 60 NOT NULL,
+	`volatility_score` integer DEFAULT 50 NOT NULL,
+	`last_run_at` text,
+	`last_success_at` text,
+	`products_seen` integer DEFAULT 0 NOT NULL,
+	`duplicate_urls` integer DEFAULT 0 NOT NULL,
+	`paused_reason` text,
+	`circuit_state` text DEFAULT 'closed' NOT NULL,
+	`failure_streak` integer DEFAULT 0 NOT NULL,
+	`anti_bot_streak` integer DEFAULT 0 NOT NULL,
+	`circuit_opened_at` text,
+	`cooldown_until` text,
+	`last_error_code` text,
+	`daily_product_budget` integer DEFAULT 500 NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	CONSTRAINT `source_config_cadence_range` CHECK(`cadence_minutes` BETWEEN 15 AND 1440),
+	CONSTRAINT `source_config_volatility_range` CHECK(`volatility_score` BETWEEN 0 AND 100),
+	CONSTRAINT `source_config_products_nonnegative` CHECK(`products_seen` >= 0),
+	CONSTRAINT `source_config_duplicates_nonnegative` CHECK(`duplicate_urls` >= 0),
+	CONSTRAINT `source_config_discovery_strategy_allowed` CHECK(`discovery_strategy` IN ('links', 'sitemap', 'feed', 'api')),
+	CONSTRAINT `source_config_estimated_products_positive` CHECK(`estimated_product_count` > 0),
+	CONSTRAINT `source_config_unique_products_nonnegative` CHECK(`unique_products_seen` >= 0),
+	CONSTRAINT `source_config_coverage_range` CHECK(`coverage_percent` BETWEEN 0 AND 100),
+	CONSTRAINT `source_config_contract_status_allowed` CHECK(`contract_status` IN ('untested', 'passing', 'degraded', 'failing')),
+	CONSTRAINT `source_config_circuit_allowed` CHECK(`circuit_state` IN ('closed', 'open', 'half_open')),
+	CONSTRAINT `source_config_failure_nonnegative` CHECK(`failure_streak` >= 0),
+	CONSTRAINT `source_config_antibot_nonnegative` CHECK(`anti_bot_streak` >= 0),
+	CONSTRAINT `source_config_daily_budget_range` CHECK(`daily_product_budget` BETWEEN 1 AND 100000)
+);--> statement-breakpoint
+INSERT INTO `__new_source_configurations` (
+	`id`, `source`, `market`, `display_name`, `discovery_url`, `category`,
+	`discovery_strategy`, `page_cursor`, `estimated_product_count`, `unique_products_seen`,
+	`coverage_percent`, `contract_status`, `last_contract_check_at`, `enabled`,
+	`cadence_minutes`, `volatility_score`, `last_run_at`, `last_success_at`,
+	`products_seen`, `duplicate_urls`, `paused_reason`, `circuit_state`, `failure_streak`,
+	`anti_bot_streak`, `circuit_opened_at`, `cooldown_until`, `last_error_code`,
+	`daily_product_budget`, `created_at`, `updated_at`
+) SELECT
+	`id`, `source`, `market`, `display_name`, `discovery_url`, `category`,
+	'links', NULL, NULL, 0, 0, 'untested', NULL, `enabled`,
+	`cadence_minutes`, `volatility_score`, `last_run_at`, `last_success_at`,
+	`products_seen`, `duplicate_urls`, `paused_reason`, `circuit_state`, `failure_streak`,
+	`anti_bot_streak`, `circuit_opened_at`, `cooldown_until`, `last_error_code`,
+	`daily_product_budget`, `created_at`, `updated_at`
+FROM `source_configurations`;--> statement-breakpoint
+DROP TABLE `source_configurations`;--> statement-breakpoint
+ALTER TABLE `__new_source_configurations` RENAME TO `source_configurations`;--> statement-breakpoint
+CREATE UNIQUE INDEX `source_config_source_market_url_unique` ON `source_configurations` (`source`,`market`,`discovery_url`);--> statement-breakpoint
+CREATE INDEX `source_config_enabled_due_idx` ON `source_configurations` (`enabled`,`last_run_at`);--> statement-breakpoint
+CREATE TABLE `__new_user_preferences` (
+	`owner_id` text PRIMARY KEY NOT NULL,
+	`experience_level` text DEFAULT 'essential' NOT NULL,
+	`preset` text DEFAULT 'balanced' NOT NULL,
+	`min_score` integer DEFAULT 75 NOT NULL,
+	`min_seller_score` integer DEFAULT 70 NOT NULL,
+	`require_exact_variant` integer DEFAULT true NOT NULL,
+	`require_cart_confirmation` integer DEFAULT true NOT NULL,
+	`max_alert_age_minutes` integer DEFAULT 60 NOT NULL,
+	`minimum_history_points` integer DEFAULT 5 NOT NULL,
+	`close_expired_minutes` integer DEFAULT 10 NOT NULL,
+	`quiet_hours` integer DEFAULT false NOT NULL,
+	`quiet_start` text DEFAULT '22:00' NOT NULL,
+	`quiet_end` text DEFAULT '08:00' NOT NULL,
+	`timezone` text DEFAULT 'Europe/Paris' NOT NULL,
+	`notification_enabled` integer DEFAULT true NOT NULL,
+	`notification_speed` text DEFAULT 'balanced' NOT NULL,
+	`min_discount` integer DEFAULT 20 NOT NULL,
+	`max_price_cents` integer,
+	`markets_json` text DEFAULT '[]' NOT NULL,
+	`categories_json` text DEFAULT '[]' NOT NULL,
+	`sources_json` text DEFAULT '[]' NOT NULL,
+	`delivery_country` text DEFAULT 'FR' NOT NULL,
+	`postal_code` text,
+	`delivery_mode` text DEFAULT 'either' NOT NULL,
+	`require_location_match` integer DEFAULT false NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	CONSTRAINT `user_preferences_experience_level_allowed` CHECK(`experience_level` IN ('essential', 'expert')),
+	CONSTRAINT `user_preferences_preset_allowed` CHECK(`preset` IN ('safe', 'balanced', 'fast')),
+	CONSTRAINT `user_preferences_min_score_range` CHECK(`min_score` BETWEEN 60 AND 95),
+	CONSTRAINT `user_preferences_min_seller_score_range` CHECK(`min_seller_score` BETWEEN 0 AND 100),
+	CONSTRAINT `user_preferences_max_alert_age_range` CHECK(`max_alert_age_minutes` BETWEEN 5 AND 180),
+	CONSTRAINT `user_preferences_min_history_range` CHECK(`minimum_history_points` BETWEEN 3 AND 60),
+	CONSTRAINT `user_preferences_close_expired_range` CHECK(`close_expired_minutes` BETWEEN 2 AND 60),
+	CONSTRAINT `user_preferences_min_discount_range` CHECK(`min_discount` BETWEEN 0 AND 90),
+	CONSTRAINT `user_preferences_max_price_positive` CHECK(`max_price_cents` > 0),
+	CONSTRAINT `user_preferences_delivery_country_format` CHECK(length(`delivery_country`) = 2),
+	CONSTRAINT `user_preferences_delivery_mode_allowed` CHECK(`delivery_mode` IN ('home', 'pickup', 'either')),
+	CONSTRAINT `user_preferences_notification_speed_allowed` CHECK(`notification_speed` IN ('instant', 'balanced', 'digest'))
+);--> statement-breakpoint
+INSERT INTO `__new_user_preferences` (
+	`owner_id`, `experience_level`, `preset`, `min_score`, `min_seller_score`,
+	`require_exact_variant`, `require_cart_confirmation`, `max_alert_age_minutes`,
+	`minimum_history_points`, `close_expired_minutes`, `quiet_hours`, `quiet_start`,
+	`quiet_end`, `timezone`, `notification_enabled`, `notification_speed`, `min_discount`,
+	`max_price_cents`, `markets_json`, `categories_json`, `sources_json`,
+	`delivery_country`, `postal_code`, `delivery_mode`, `require_location_match`,
+	`created_at`, `updated_at`
+) SELECT
+	`owner_id`, 'essential', 'balanced', `min_score`, 70, true, true, 60, 5, 10,
+	`quiet_hours`, `quiet_start`, `quiet_end`, `timezone`, `notification_enabled`,
+	`notification_speed`, `min_discount`, `max_price_cents`, `markets_json`,
+	`categories_json`, `sources_json`, `delivery_country`, `postal_code`,
+	`delivery_mode`, `require_location_match`, `created_at`, `updated_at`
+FROM `user_preferences`;--> statement-breakpoint
+DROP TABLE `user_preferences`;--> statement-breakpoint
+ALTER TABLE `__new_user_preferences` RENAME TO `user_preferences`;--> statement-breakpoint
+PRAGMA foreign_keys=ON;

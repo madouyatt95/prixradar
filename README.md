@@ -1,4 +1,4 @@
-# PrixRadar
+# PrixRadar v0.6.0
 
 PWA mobile-first pour détecter, vérifier et suivre des anomalies de prix sans
 présenter une remise comme une « erreur certaine ».
@@ -31,6 +31,11 @@ présenter une remise comme une « erreur certaine ».
 | Sentinelle autonome | actif | frontière d’URL dédupliquée, priorisée et rescannée à cadence adaptative |
 | Notifications à trois vitesses | actif | instantané, équilibré, ou urgent + résumé quotidien à 18 h |
 | Budget auto-adaptatif | actif | rendement par 1 000 produits, coût/alerte et pression anti-bot |
+| Configuration Essentiel / Expert | actif | trois profils compréhensibles, puis seuils détaillés persistés par appareil |
+| Transparence publique | actif | taux LIVE à échantillon minimal, indice de sincérité et méthode sur `/transparence` |
+| Passeport de preuve | actif | dossier public par alerte LIVE ; le statut « certifié » n’apparaît que si tous les contrôles passent |
+| Registre de couverture | actif | identités produit persistées par segment, pagination durable et déduplication inter-pages, estimation calibrée et tests de contrat ; sitemap/flux/API restent désactivés |
+| Parcours iPhone Safari | prêt à signer | PWA plein écran + WebExtension minimale ; publication TestFlight/App Store requiert un compte Apple |
 
 Les six cartes affichées quand aucune source n’est active portent **DÉMO**. Elles
 ne sont jamais ingérées, notifiées ou présentées comme des prix disponibles.
@@ -84,7 +89,28 @@ PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production
 
 La base D1 utilise le binding `DB` de `.openai/hosting.json`. Les migrations
 Drizzle sont dans `drizzle/`. La migration `0005` ajoute l’intelligence autonome,
-les inspections issues du partage PWA et la frontière de la sentinelle.
+les inspections issues du partage PWA et la frontière de la sentinelle. La
+migration `0006` ajoute les profils Essentiel/Expert et les mesures de couverture,
+sans recréer ni vider les tables existantes. La migration `0007` ajoute le registre
+durable des identités produit par segment afin que les paramètres de suivi et les
+chevauchements entre catégories ne gonflent pas le taux de couverture.
+
+## Configuration utilisateur
+
+Le mode **Essentiel** expose d’abord les choix utiles à tout le monde : catégories,
+budget, pays et l’un des trois profils suivants.
+
+| Profil | Usage | Principaux garde-fous |
+| --- | --- | --- |
+| Fiable | priorité à la qualité | score 85, vendeur 85, panier confirmé, 10 points d’historique, fraîcheur 30 min |
+| Équilibré | réglage recommandé | score 75, vendeur 70, panier confirmé, 5 points, fraîcheur 60 min |
+| Rapide | recevoir davantage de signaux | score 65, vendeur 60, variante exacte, 3 points, fraîcheur 90 min |
+
+Le volet **Expert** révèle ensuite les seuils individuels : remise et score,
+vendeur, variante, confirmation panier, profondeur historique, fraîcheur,
+fermeture automatique, mode de livraison, localisation, cadence des notifications
+et heures calmes. Les réglages sont persistés dans D1 et réappliqués au routage
+Push, pas seulement à l’affichage.
 
 ## Variables serveur de la PWA
 
@@ -139,7 +165,7 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `GET /api/alerts` : alertes LIVE, vérifiées, fraîches et non expirées ;
 - `GET /api/sources` : santé réelle calculée depuis le dernier succès ;
 - `GET|POST|DELETE /api/watchlist` : suivis par appareil signé ;
-- `GET|PUT /api/preferences` : score minimal et heures calmes ;
+- `GET|PUT /api/preferences` : profil Essentiel/Expert, presets, seuils de preuve, budget et heures calmes ;
 - `GET|POST|DELETE /api/push` : souscriptions (cinq maximum par appareil) ;
 - `GET /api/push/targets` : cibles autorisées, sans `ownerId` ;
 - `POST /api/push/deliveries` : réservation/déduplication puis résultat d’envoi ;
@@ -147,11 +173,20 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `GET|POST|DELETE /api/radars` : alertes en langage naturel, durables par appareil ;
 - `GET|POST /api/recheck` : vérification prioritaire et état de son traitement ;
 - `GET|POST /api/inspections` : URL partagée, file durable et résultat par appareil ;
-- `POST /api/frontier` : nouvelles fiches découvertes par la sentinelle privée ;
+- `POST /api/frontier` : nouvelles fiches découvertes par la sentinelle privée et rattachement dédupliqué au segment de couverture ;
 - `GET /api/push/digests` : résumés quotidiens privés préparés pour le collecteur ;
 - `GET|POST|PATCH /api/admin/sources` : couverture, budgets et réarmement des circuits ;
+- `GET /api/admin/coverage` : couverture estimée, versions des adaptateurs et tests de contrat ;
 - `GET|POST|PATCH /api/admin/discovery` : rotation Amazon EU5 sous budget ;
 - `GET|PATCH /api/admin/products` : contrôle des rapprochements multi-enseignes.
+- `GET /api/public/metrics?days=7|30` : fiabilité observée, sans taux publié sous le minimum requis ;
+- `GET /api/integrity` : indice de cohérence des promotions face aux 30 jours antérieurs et au marché ;
+- `GET /api/certified/:id` : preuve JSON publique d’une alerte LIVE ; `/certified/:id` en est la lecture humaine.
+
+Le prototype Safari se trouve dans `extensions/prixradar-safari`. Il transmet
+uniquement l’URL de l’onglet marchand courant vers le flux d’inspection de la
+PWA. Il ne lit pas l’historique du navigateur et ne peut jamais aller jusqu’à la
+commande ou au paiement. Voir son README pour la conversion Xcode et la signature.
 
 Les API privées ne sont jamais mises en cache par le service worker. La rétention
 est appliquée lors des rapports de source : observations 180 jours, événements et

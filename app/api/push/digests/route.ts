@@ -1,19 +1,15 @@
 import { and, desc, eq, gt, gte, inArray } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { alerts, pushSubscriptions, radarRules, userPreferences } from "@/db/schema";
+import { evidenceBoolean, evidenceNumber } from "@/lib/alert-evidence";
+import { verifiedCartEvidence } from "@/lib/cart-proof.js";
+import { alertMatchesPushPreferences } from "@/lib/push-preferences";
+import { alertIntelligence, alerts, pushSubscriptions, radarRules, userPreferences } from "@/db/schema";
 import { radarIntentMatches, type RadarIntent } from "@/lib/radar-intent";
 import { authorizePushDelivery, serverJson } from "../server-auth";
 import { isQuietNow } from "../quiet-hours";
 
 export const dynamic = "force-dynamic";
-
-function list(value: string) {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch { return []; }
-}
 
 function intent(value: string): RadarIntent | null {
   try { return JSON.parse(value) as RadarIntent; } catch { return null; }
@@ -36,6 +32,11 @@ export async function GET(request: Request) {
         auth: pushSubscriptions.auth,
         contentEncoding: pushSubscriptions.contentEncoding,
         minScore: userPreferences.minScore,
+        minSellerScore: userPreferences.minSellerScore,
+        requireExactVariant: userPreferences.requireExactVariant,
+        requireCartConfirmation: userPreferences.requireCartConfirmation,
+        maxAlertAgeMinutes: userPreferences.maxAlertAgeMinutes,
+        minimumHistoryPoints: userPreferences.minimumHistoryPoints,
         quietHours: userPreferences.quietHours,
         quietStart: userPreferences.quietStart,
         quietEnd: userPreferences.quietEnd,
@@ -45,6 +46,11 @@ export async function GET(request: Request) {
         marketsJson: userPreferences.marketsJson,
         categoriesJson: userPreferences.categoriesJson,
         sourcesJson: userPreferences.sourcesJson,
+        deliveryCountry: userPreferences.deliveryCountry,
+        postalCode: userPreferences.postalCode,
+        deliveryMode: userPreferences.deliveryMode,
+        requireLocationMatch: userPreferences.requireLocationMatch,
+        notificationSpeed: userPreferences.notificationSpeed,
       }).from(pushSubscriptions).innerJoin(userPreferences, eq(userPreferences.ownerId, pushSubscriptions.ownerId))
         .where(and(
           eq(pushSubscriptions.enabled, true),
@@ -56,6 +62,14 @@ export async function GET(request: Request) {
         gte(alerts.updatedAt, since), gt(alerts.expiresAt, nowIso),
       )).orderBy(desc(alerts.buyNowScore), desc(alerts.score)).limit(60),
     ]);
+    const intelligenceRows = candidates.length === 0 ? [] : await database.select({
+      alertId: alertIntelligence.alertId,
+      sellerScore: alertIntelligence.sellerScore,
+      variantConfidence: alertIntelligence.variantConfidence,
+      shadowCartStatus: alertIntelligence.shadowCartStatus,
+      shadowCartJson: alertIntelligence.shadowCartJson,
+    }).from(alertIntelligence).where(inArray(alertIntelligence.alertId, candidates.map((candidate) => candidate.id)));
+    const intelligenceByAlert = new Map(intelligenceRows.map((item) => [item.alertId, item]));
     const owners = [...new Set(subscriptions.map((row) => row.ownerId))];
     const rules = owners.length === 0 ? [] : await database.select({ ownerId: radarRules.ownerId, intentJson: radarRules.intentJson })
       .from(radarRules).where(and(inArray(radarRules.ownerId, owners), eq(radarRules.enabled, true)));
@@ -66,24 +80,39 @@ export async function GET(request: Request) {
     }
     const targets = subscriptions.flatMap((subscription) => {
       if (isQuietNow(subscription, now)) return [];
-      const markets = list(subscription.marketsJson);
-      const categories = list(subscription.categoriesJson);
-      const sources = list(subscription.sourcesJson);
       const ownerRules = rulesByOwner.get(subscription.ownerId) ?? [];
       const matches = candidates.filter((alert) => {
+        const intelligence = intelligenceByAlert.get(alert.id);
         const priceCents = alert.publicPriceCents ?? alert.priceCents;
-        const globalMatch = alert.score >= subscription.minScore
-          && alert.discountPercent >= subscription.minDiscount
-          && (subscription.maxPriceCents === null || priceCents <= subscription.maxPriceCents)
-          && (markets.length === 0 || markets.includes(alert.market))
-          && (categories.length === 0 || categories.includes(alert.category ?? ""))
-          && (sources.length === 0 || sources.includes(alert.source));
         const radarMatch = ownerRules.length === 0 || ownerRules.some((rule) => radarIntentMatches(rule, {
           title: alert.title, brand: alert.brand, category: alert.category, market: alert.market,
           priceCents, discountPercent: alert.discountPercent, condition: alert.condition,
           accessibleToAll: alert.priceAccessibleToAll, deliveryCountry: alert.deliveryCountry,
         }));
-        return globalMatch && radarMatch;
+        return alertMatchesPushPreferences({
+          preferences: subscription,
+          alert: {
+            score: alert.score,
+            sellerScore: Number(intelligence?.sellerScore ?? 0),
+            historyPoints: evidenceNumber(alert.evidenceJson, "historyPoints") ?? 0,
+            exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true && Number(intelligence?.variantConfidence ?? 0) >= 90,
+            cartConfirmed: intelligence?.shadowCartStatus === "confirmed" && verifiedCartEvidence(intelligence?.shadowCartJson ?? "{}"),
+            verifiedAt: alert.verifiedAt,
+            discountPercent: alert.discountPercent,
+            priceCents: alert.priceCents,
+            publicPriceCents: alert.publicPriceCents,
+            source: alert.source,
+            market: alert.market,
+            category: alert.category,
+            deliveryCountry: alert.deliveryCountry,
+            deliveryPostalPrefix: alert.deliveryPostalPrefix,
+            deliveryMode: alert.deliveryMode,
+            locationVerified: alert.locationVerified,
+          },
+          tier: "digest",
+          radarMatches: radarMatch,
+          nowMs: now.getTime(),
+        });
       }).slice(0, 5);
       if (matches.length === 0) return [];
       const lead = matches[0];

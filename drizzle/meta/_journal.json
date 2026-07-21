@@ -43,6 +43,20 @@
       "when": 1784670771632,
       "tag": "0005_violet_charles_xavier",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784673344856,
+      "tag": "0006_wise_tarot",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1784676249592,
+      "tag": "0007_mushy_randall",
+      "breakpoints": true
     }
   ]
 }

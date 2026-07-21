@@ -374,7 +374,18 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
 }
 
 export function verifyKeepaDeal(deal: KeepaDeal, product: KeepaProduct, fixture = false): VerifiedObservation {
-  const offer = keepaOffer(product, fixture);
+  const offer: OfferSnapshot = {
+    ...keepaOffer(product, fixture),
+    variantIdentity: {
+      expectedId: `asin:${deal.asin.toLowerCase()}`,
+      observedId: `asin:${product.asin.toLowerCase()}`,
+      expectedSource: "keepa_deal",
+      observedSource: "keepa_product",
+      merchantProductId: product.asin.toLowerCase(),
+      gtin: null,
+      selectedOptions: {},
+    },
+  };
   const matchingIdentity = deal.asin === product.asin;
   const matchingPrice = deal.currentMinor === null || deal.currentMinor === product.currentMinor;
   const anomaly = scoreOffer(offer, product.referenceMinor);

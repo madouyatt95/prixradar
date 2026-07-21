@@ -2,10 +2,10 @@ import { and, asc, eq, inArray, type SQL } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { sourceStatuses } from "@/db/schema";
+import { isActiveSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
-const SOURCES = new Set(["amazon", "boulanger", "cdiscount", "darty"]);
 const STALE_AFTER_MINUTES = 30;
 
 function json(body: unknown, status = 200, cache = false) {
@@ -70,7 +70,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const includeDemo = url.searchParams.get("includeDemo") === "true";
   const source = url.searchParams.get("source")?.trim().toLowerCase() ?? null;
-  if (source !== null && !SOURCES.has(source)) {
+  if (source !== null && !isActiveSource(source)) {
     return apiError(400, "INVALID_SOURCE", "source n’est pas prise en charge.");
   }
   const market = url.searchParams.get("market")?.trim().toUpperCase() ?? null;

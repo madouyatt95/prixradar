@@ -403,6 +403,13 @@ export const sourceConfigurations = sqliteTable(
     displayName: text("display_name").notNull(),
     discoveryUrl: text("discovery_url").notNull(),
     category: text("category").notNull().default("Général"),
+    discoveryStrategy: text("discovery_strategy").notNull().default("links"),
+    pageCursor: text("page_cursor"),
+    estimatedProductCount: integer("estimated_product_count"),
+    uniqueProductsSeen: integer("unique_products_seen").notNull().default(0),
+    coveragePercent: integer("coverage_percent").notNull().default(0),
+    contractStatus: text("contract_status").notNull().default("untested"),
+    lastContractCheckAt: text("last_contract_check_at"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     cadenceMinutes: integer("cadence_minutes").notNull().default(60),
     volatilityScore: integer("volatility_score").notNull().default(50),
@@ -432,6 +439,11 @@ export const sourceConfigurations = sqliteTable(
     check("source_config_volatility_range", sql`${table.volatilityScore} BETWEEN 0 AND 100`),
     check("source_config_products_nonnegative", sql`${table.productsSeen} >= 0`),
     check("source_config_duplicates_nonnegative", sql`${table.duplicateUrls} >= 0`),
+    check("source_config_discovery_strategy_allowed", sql`${table.discoveryStrategy} IN ('links', 'sitemap', 'feed', 'api')`),
+    check("source_config_estimated_products_positive", sql`${table.estimatedProductCount} > 0`),
+    check("source_config_unique_products_nonnegative", sql`${table.uniqueProductsSeen} >= 0`),
+    check("source_config_coverage_range", sql`${table.coveragePercent} BETWEEN 0 AND 100`),
+    check("source_config_contract_status_allowed", sql`${table.contractStatus} IN ('untested', 'passing', 'degraded', 'failing')`),
     check(
       "source_config_circuit_allowed",
       sql`${table.circuitState} IN ('closed', 'open', 'half_open')`
@@ -493,6 +505,28 @@ export const discoverySegments = sqliteTable(
     check("discovery_segments_priority_range", sql`${table.priority} BETWEEN 0 AND 100`),
     check("discovery_segments_yield_nonnegative", sql`${table.lastYieldCount} >= 0`),
   ]
+);
+
+export const sourceCoverageProducts = sqliteTable(
+  "source_coverage_products",
+  {
+    sourceConfigurationId: text("source_configuration_id")
+      .notNull()
+      .references(() => sourceConfigurations.id, { onDelete: "cascade" }),
+    productKey: text("product_key").notNull(),
+    productUrl: text("product_url").notNull(),
+    firstSeenAt: text("first_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("source_coverage_config_product_unique").on(
+      table.sourceConfigurationId,
+      table.productKey,
+    ),
+    index("source_coverage_product_key_idx").on(table.productKey),
+    index("source_coverage_product_url_idx").on(table.productUrl),
+    index("source_coverage_config_last_seen_idx").on(table.sourceConfigurationId, table.lastSeenAt),
+  ],
 );
 
 export const collectionRuns = sqliteTable(
@@ -659,7 +693,19 @@ export const userPreferences = sqliteTable(
   "user_preferences",
   {
     ownerId: text("owner_id").primaryKey(),
+    experienceLevel: text("experience_level").notNull().default("essential"),
+    preset: text("preset").notNull().default("balanced"),
     minScore: integer("min_score").notNull().default(75),
+    minSellerScore: integer("min_seller_score").notNull().default(70),
+    requireExactVariant: integer("require_exact_variant", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    requireCartConfirmation: integer("require_cart_confirmation", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    maxAlertAgeMinutes: integer("max_alert_age_minutes").notNull().default(60),
+    minimumHistoryPoints: integer("minimum_history_points").notNull().default(5),
+    closeExpiredMinutes: integer("close_expired_minutes").notNull().default(10),
     quietHours: integer("quiet_hours", { mode: "boolean" })
       .notNull()
       .default(false),
@@ -686,9 +732,21 @@ export const userPreferences = sqliteTable(
   },
   (table) => [
     check(
+      "user_preferences_experience_level_allowed",
+      sql`${table.experienceLevel} IN ('essential', 'expert')`
+    ),
+    check(
+      "user_preferences_preset_allowed",
+      sql`${table.preset} IN ('safe', 'balanced', 'fast')`
+    ),
+    check(
       "user_preferences_min_score_range",
       sql`${table.minScore} BETWEEN 60 AND 95`
     ),
+    check("user_preferences_min_seller_score_range", sql`${table.minSellerScore} BETWEEN 0 AND 100`),
+    check("user_preferences_max_alert_age_range", sql`${table.maxAlertAgeMinutes} BETWEEN 5 AND 180`),
+    check("user_preferences_min_history_range", sql`${table.minimumHistoryPoints} BETWEEN 3 AND 60`),
+    check("user_preferences_close_expired_range", sql`${table.closeExpiredMinutes} BETWEEN 2 AND 60`),
     check("user_preferences_min_discount_range", sql`${table.minDiscount} BETWEEN 0 AND 90`),
     check("user_preferences_max_price_positive", sql`${table.maxPriceCents} > 0`),
     check(

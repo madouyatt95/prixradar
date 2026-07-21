@@ -1,4 +1,4 @@
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
@@ -29,12 +29,18 @@ export async function GET(request: Request) {
         conditional: sql<number>`coalesce(sum(case when ${alerts.priceAccessibleToAll} = 0 then 1 else 0 end), 0)`,
       }).from(alerts).where(gte(alerts.updatedAt, since)),
       database.select({
-        total: sql<number>`count(*)`,
-        useful: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'useful' then 1 else 0 end), 0)`,
-        falsePositive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'false_positive' then 1 else 0 end), 0)`,
-        expired: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'expired' then 1 else 0 end), 0)`,
-        averageLifetimeMinutes: sql<number>`coalesce(avg(case when ${alertFeedback.verdict} = 'expired' then (julianday(${alertFeedback.updatedAt}) - julianday(${alerts.observedAt})) * 1440 end), 0)`,
-      }).from(alertFeedback).innerJoin(alerts, eq(alerts.id, alertFeedback.alertId)).where(gte(alertFeedback.updatedAt, since)),
+        total: sql<number>`count(distinct ${alertFeedback.id})`,
+        useful: sql<number>`count(distinct case when ${alertFeedback.verdict} = 'useful' then ${alertFeedback.id} end)`,
+        falsePositive: sql<number>`count(distinct case when ${alertFeedback.verdict} = 'false_positive' then ${alertFeedback.id} end)`,
+        expired: sql<number>`count(distinct case when ${alertFeedback.verdict} = 'expired' then ${alertFeedback.id} end)`,
+        averageLifetimeMinutes: sql<number>`coalesce(avg(distinct case when ${alertFeedback.verdict} = 'expired' then (julianday(${alertFeedback.updatedAt}) - julianday(${alerts.observedAt})) * 1440 end), 0)`,
+      }).from(alertFeedback)
+        .innerJoin(alerts, eq(alerts.id, alertFeedback.alertId))
+        .innerJoin(notificationDeliveries, and(
+          eq(notificationDeliveries.alertId, alertFeedback.alertId),
+          eq(notificationDeliveries.ownerId, alertFeedback.ownerId),
+          eq(notificationDeliveries.status, "sent"),
+        )).where(gte(alertFeedback.updatedAt, since)),
       database.select({
         sent: sql<number>`coalesce(sum(case when ${notificationDeliveries.status} = 'sent' then 1 else 0 end), 0)`,
         failed: sql<number>`coalesce(sum(case when ${notificationDeliveries.status} = 'failed' then 1 else 0 end), 0)`,

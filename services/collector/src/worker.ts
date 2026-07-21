@@ -3,7 +3,7 @@ import { loadConfig, type CollectorConfig } from "./config.js";
 import { connectorForUrl } from "./connectors/index.js";
 import { KeepaClient, mergeKeepaWithLive, scanKeepaMarket } from "./keepa.js";
 import { logger } from "./logger.js";
-import { CollectorQueue, createCollectorWorker, type CollectorJob } from "./queue.js";
+import { CollectorQueue, createCollectorWorker, MAX_PAGINATION_DEPTH, type CollectorJob } from "./queue.js";
 import { sendPushForObservation } from "./push.js";
 import { postObservation } from "./sink.js";
 import {
@@ -109,7 +109,23 @@ export async function processCollectorJob(
       url,
       fixture: job.fixture,
     })));
-    return { transport: scan.transport, discovered: scan.discoveredUrls.length, enqueued: ids.length };
+    const paginationDepth = Math.max(0, Math.min(MAX_PAGINATION_DEPTH, job.paginationDepth ?? 0));
+    const nextPageJobId = scan.nextPageUrl && paginationDepth < MAX_PAGINATION_DEPTH
+      ? await queue.add({
+          kind: "discover-source",
+          url: scan.nextPageUrl,
+          fixture: job.fixture,
+          paginationDepth: paginationDepth + 1,
+        })
+      : null;
+    return {
+      transport: scan.transport,
+      discovered: scan.discoveredUrls.length,
+      enqueued: ids.length,
+      nextPageUrl: scan.nextPageUrl,
+      nextPageEnqueued: nextPageJobId !== null,
+      paginationDepth,
+    };
   }
 
   if (job.kind === "verify-source") {

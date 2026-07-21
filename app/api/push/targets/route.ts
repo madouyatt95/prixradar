@@ -41,8 +41,13 @@ export async function GET(request: Request) {
   const brand = search.get("brand")?.trim().slice(0, 100) ?? "";
   const condition = search.get("condition")?.trim().toLowerCase().slice(0, 30) ?? "";
   const accessibleToAll = search.get("accessibleToAll") !== "false";
+  const sellerScore = positiveInteger(search.get("sellerScore"), 0, 100);
+  const historyPoints = positiveInteger(search.get("historyPoints"), 0, 10_000);
+  const verifiedAgeMinutes = positiveInteger(search.get("verifiedAgeMinutes"), 1_440, 1_440);
+  const exactVariantConfirmed = search.get("exactVariantConfirmed") === "true";
+  const cartConfirmed = search.get("cartConfirmed") === "true";
   const tier = search.get("tier") === "urgent" ? "urgent" as const : "personal" as const;
-  if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null) {
+  if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null || sellerScore === null || historyPoints === null || verifiedAgeMinutes === null) {
     return serverJson(
       {
         ok: false,
@@ -81,6 +86,11 @@ export async function GET(request: Request) {
           auth: pushSubscriptions.auth,
           contentEncoding: pushSubscriptions.contentEncoding,
           minScore: userPreferences.minScore,
+          minSellerScore: userPreferences.minSellerScore,
+          requireExactVariant: userPreferences.requireExactVariant,
+          requireCartConfirmation: userPreferences.requireCartConfirmation,
+          maxAlertAgeMinutes: userPreferences.maxAlertAgeMinutes,
+          minimumHistoryPoints: userPreferences.minimumHistoryPoints,
           deviceOwner: pushSubscriptions.ownerId,
           notificationSpeed: userPreferences.notificationSpeed,
           quietHours: userPreferences.quietHours,
@@ -178,6 +188,11 @@ export async function GET(request: Request) {
         );
         const filtered =
           discount < row.minDiscount ||
+          sellerScore < row.minSellerScore ||
+          historyPoints < row.minimumHistoryPoints ||
+          verifiedAgeMinutes > row.maxAlertAgeMinutes ||
+          (row.requireExactVariant && !exactVariantConfirmed) ||
+          (row.requireCartConfirmation && !cartConfirmed) ||
           (row.maxPriceCents !== null && priceCents > row.maxPriceCents) ||
           (markets.length > 0 && !markets.includes(market)) ||
           (categories.length > 0 && !categories.includes(category)) ||

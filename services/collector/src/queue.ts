@@ -5,9 +5,10 @@ import { stableHash } from "./normalize.js";
 import type { Market } from "./types.js";
 
 export const COLLECTOR_QUEUE = "prixradar-collector-v1";
+export const MAX_PAGINATION_DEPTH = 19;
 
 export type CollectorJob =
-  | { kind: "discover-source"; url: string; fixture: boolean }
+  | { kind: "discover-source"; url: string; fixture: boolean; paginationDepth?: number }
   | { kind: "verify-source"; url: string; fixture: boolean }
   | { kind: "scan-keepa"; market: Market; fixture: boolean; limit: number };
 

@@ -3,17 +3,11 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { sourceConfigurations } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
+import { isActiveSource, sourceDefinition } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
-const SOURCES = new Set(["amazon", "boulanger", "darty", "cdiscount"]);
 const MARKETS = new Set(["FR", "DE", "IT", "ES", "GB"]);
-const HOSTS: Record<string, readonly string[]> = {
-  amazon: ["amazon.fr", "amazon.de", "amazon.it", "amazon.es", "amazon.co.uk"],
-  boulanger: ["boulanger.com"],
-  darty: ["darty.com"],
-  cdiscount: ["cdiscount.com"],
-};
 
 function text(value: unknown, field: string, max = 160) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max) throw new Error(`${field} est invalide.`);
@@ -22,7 +16,7 @@ function text(value: unknown, field: string, max = 160) {
 
 function sourceValue(value: unknown) {
   const source = text(value, "source", 24).toLowerCase();
-  if (!SOURCES.has(source)) throw new Error("source n’est pas prise en charge.");
+  if (!isActiveSource(source)) throw new Error("source n’est pas prise en charge.");
   return source;
 }
 
@@ -35,7 +29,8 @@ function marketValue(source: string, value: unknown) {
 function discoveryUrl(source: string, value: unknown) {
   const url = new URL(text(value, "discoveryUrl", 2_048));
   const host = url.hostname.toLowerCase();
-  if (url.protocol !== "https:" || url.username || url.password || !HOSTS[source]?.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
+  const definition = sourceDefinition(source);
+  if (url.protocol !== "https:" || url.username || url.password || !definition?.hosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
     throw new Error("L’URL ne correspond pas à la source déclarée.");
   }
   url.hash = "";
@@ -45,6 +40,22 @@ function discoveryUrl(source: string, value: unknown) {
 function integer(value: unknown, field: string, min: number, max: number, fallback: number) {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || (value as number) < min || (value as number) > max) throw new Error(`${field} est invalide.`);
+  return value as number;
+}
+
+function discoveryStrategy(value: unknown) {
+  const strategy = value === undefined ? "links" : text(value, "discoveryStrategy", 16).toLowerCase();
+  if (strategy !== "links") {
+    throw new Error("Seule la découverte par liens est active. Sitemap, flux et API restent désactivés jusqu’à leur connecteur dédié.");
+  }
+  return strategy;
+}
+
+function optionalPositiveInteger(value: unknown, field: string) {
+  if (value === undefined || value === null || value === "") return null;
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 100_000_000) {
+    throw new Error(`${field} est invalide.`);
+  }
   return value as number;
 }
 
@@ -81,6 +92,8 @@ export async function POST(request: Request) {
       displayName: text(body.displayName ?? source, "displayName", 120),
       discoveryUrl: url,
       category: text(body.category ?? "Général", "category", 80),
+      discoveryStrategy: discoveryStrategy(body.discoveryStrategy),
+      estimatedProductCount: optionalPositiveInteger(body.estimatedProductCount, "estimatedProductCount"),
       enabled: body.enabled !== false,
       cadenceMinutes: integer(body.cadenceMinutes, "cadenceMinutes", 15, 1_440, 60),
       volatilityScore: integer(body.volatilityScore, "volatilityScore", 0, 100, 50),
@@ -92,6 +105,8 @@ export async function POST(request: Request) {
       set: {
         displayName: values.displayName,
         category: values.category,
+        discoveryStrategy: values.discoveryStrategy,
+        estimatedProductCount: values.estimatedProductCount,
         enabled: values.enabled,
         cadenceMinutes: values.cadenceMinutes,
         volatilityScore: values.volatilityScore,
@@ -121,6 +136,8 @@ export async function PATCH(request: Request) {
     if (body.volatilityScore !== undefined) patch.volatilityScore = integer(body.volatilityScore, "volatilityScore", 0, 100, 50);
     if (body.dailyProductBudget !== undefined) patch.dailyProductBudget = integer(body.dailyProductBudget, "dailyProductBudget", 1, 100_000, 500);
     if (body.category !== undefined) patch.category = text(body.category, "category", 80);
+    if (body.discoveryStrategy !== undefined) patch.discoveryStrategy = discoveryStrategy(body.discoveryStrategy);
+    if (body.estimatedProductCount !== undefined) patch.estimatedProductCount = optionalPositiveInteger(body.estimatedProductCount, "estimatedProductCount");
     if (body.resetCircuit !== undefined) {
       if (body.resetCircuit !== true) throw new Error("resetCircuit doit être true.");
       patch.circuitState = "closed";

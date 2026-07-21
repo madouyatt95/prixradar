@@ -15,11 +15,20 @@ import {
   readJsonObject,
   resolveDevice,
 } from "../push/device";
+import { preferencePreset, publicPreferencePresets, type ExperienceLevel, type PreferencePresetId } from "../../../lib/preference-presets";
 
 export const dynamic = "force-dynamic";
 
 const DEFAULT_PREFERENCES = {
+  experienceLevel: "essential",
+  preset: "balanced",
   minScore: 75,
+  minSellerScore: 70,
+  requireExactVariant: true,
+  requireCartConfirmation: true,
+  maxAlertAgeMinutes: 60,
+  minimumHistoryPoints: 5,
+  closeExpiredMinutes: 10,
   quietHours: false,
   quietStart: "22:00",
   quietEnd: "08:00",
@@ -37,7 +46,15 @@ const DEFAULT_PREFERENCES = {
 } as const;
 
 const EDITABLE_FIELDS = new Set([
+  "experienceLevel",
+  "preset",
   "minScore",
+  "minSellerScore",
+  "requireExactVariant",
+  "requireCartConfirmation",
+  "maxAlertAgeMinutes",
+  "minimumHistoryPoints",
+  "closeExpiredMinutes",
   "quietHours",
   "quietStart",
   "quietEnd",
@@ -55,7 +72,15 @@ const EDITABLE_FIELDS = new Set([
 ]);
 
 type PreferencesPatch = {
+  experienceLevel?: ExperienceLevel;
+  preset?: PreferencePresetId;
   minScore?: number;
+  minSellerScore?: number;
+  requireExactVariant?: boolean;
+  requireCartConfirmation?: boolean;
+  maxAlertAgeMinutes?: number;
+  minimumHistoryPoints?: number;
+  closeExpiredMinutes?: number;
   quietHours?: boolean;
   quietStart?: string;
   quietEnd?: string;
@@ -94,7 +119,15 @@ function serializePreferences(
   value: typeof userPreferences.$inferSelect
 ) {
   return {
+    experienceLevel: value.experienceLevel,
+    preset: value.preset,
     minScore: value.minScore,
+    minSellerScore: value.minSellerScore,
+    requireExactVariant: value.requireExactVariant,
+    requireCartConfirmation: value.requireCartConfirmation,
+    maxAlertAgeMinutes: value.maxAlertAgeMinutes,
+    minimumHistoryPoints: value.minimumHistoryPoints,
+    closeExpiredMinutes: value.closeExpiredMinutes,
     quietHours: value.quietHours,
     quietStart: value.quietStart,
     quietEnd: value.quietEnd,
@@ -135,6 +168,20 @@ function parsePatch(body: Record<string, unknown>) {
 
   const patch: PreferencesPatch = {};
 
+  if (body.experienceLevel !== undefined) {
+    if (body.experienceLevel !== "essential" && body.experienceLevel !== "expert") {
+      throw new Error("experienceLevel doit être essential ou expert.");
+    }
+    patch.experienceLevel = body.experienceLevel;
+  }
+  if (body.preset !== undefined) {
+    if (body.preset !== "safe" && body.preset !== "balanced" && body.preset !== "fast") {
+      throw new Error("preset doit être safe, balanced ou fast.");
+    }
+    patch.preset = body.preset;
+    Object.assign(patch, preferencePreset(body.preset).values);
+  }
+
   if (body.minScore !== undefined) {
     if (
       typeof body.minScore !== "number" ||
@@ -145,6 +192,19 @@ function parsePatch(body: Record<string, unknown>) {
       throw new Error("minScore doit être un entier compris entre 60 et 95.");
     }
     patch.minScore = body.minScore;
+  }
+  for (const [field, min, max] of [
+    ["minSellerScore", 0, 100],
+    ["maxAlertAgeMinutes", 5, 180],
+    ["minimumHistoryPoints", 3, 60],
+    ["closeExpiredMinutes", 2, 60],
+  ] as const) {
+    if (body[field] !== undefined) {
+      if (!Number.isInteger(body[field]) || (body[field] as number) < min || (body[field] as number) > max) {
+        throw new Error(`${field} doit être compris entre ${min} et ${max}.`);
+      }
+      patch[field] = body[field] as number;
+    }
   }
   if (body.minDiscount !== undefined) {
     if (!Number.isInteger(body.minDiscount) || (body.minDiscount as number) < 0 || (body.minDiscount as number) > 90) {
@@ -159,7 +219,7 @@ function parsePatch(body: Record<string, unknown>) {
     patch.maxPriceCents = body.maxPriceCents as number | null;
   }
 
-  for (const field of ["quietHours", "notificationEnabled", "requireLocationMatch"] as const) {
+  for (const field of ["quietHours", "notificationEnabled", "requireLocationMatch", "requireExactVariant", "requireCartConfirmation"] as const) {
     if (body[field] !== undefined) {
       if (typeof body[field] !== "boolean") {
         throw new Error(`${field} doit être un booléen.`);
@@ -222,6 +282,7 @@ export async function GET(request: Request) {
     return deviceJson(device, {
       ok: true,
       preferences: serializePreferences(preferences),
+      presets: publicPreferencePresets(),
     });
   } catch (error) {
     return deviceDatabaseError(device, error);
@@ -260,6 +321,7 @@ export async function PUT(request: Request) {
     return deviceJson(device, {
       ok: true,
       preferences: serializePreferences(preferences),
+      presets: publicPreferencePresets(),
     });
   } catch (error) {
     return deviceDatabaseError(device, error);

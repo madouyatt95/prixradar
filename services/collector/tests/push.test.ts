@@ -21,6 +21,15 @@ function alert(fixture = false): VerifiedObservation {
         url: "https://www.amazon.fr/dp/B012345678",
         imageUrl: null,
       },
+      variantIdentity: {
+        expectedId: "asin:b012345678",
+        observedId: "asin:b012345678",
+        expectedSource: "keepa_deal",
+        observedSource: "keepa_product",
+        merchantProductId: "b012345678",
+        gtin: null,
+        selectedOptions: {},
+      },
       price: { amountMinor: 5_000, currency: "EUR" },
       shipping: { amountMinor: 0, currency: "EUR" },
       total: { amountMinor: 5_000, currency: "EUR" },
@@ -32,6 +41,19 @@ function alert(fixture = false): VerifiedObservation {
       observedAt: "2026-07-21T10:00:00.000Z",
       strategy: "keepa",
       fixture,
+      cartProbe: {
+        status: "confirmed",
+        itemCents: 5_000,
+        shippingCents: 0,
+        totalCents: 5_000,
+        stockConfirmed: true,
+        addToCartAvailable: true,
+        identityConfirmed: true,
+        explicitShipping: true,
+        explicitTotal: true,
+        couponApplied: true,
+        checkedAt: "2026-07-21T10:00:00.000Z",
+      },
     },
     verification: {
       status: "confirmed",
@@ -41,6 +63,12 @@ function alert(fixture = false): VerifiedObservation {
       matchingPrice: true,
     },
     anomaly: { score: 90, classification: "strong", discountPercent: 50, reasons: [] },
+    historicalPrices: [{
+      provider: "keepa",
+      priceMinor: 10_000,
+      observedAt: "2026-07-20T10:00:00.000Z",
+      rawHash: "a".repeat(64),
+    }],
   };
 }
 
@@ -75,6 +103,11 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
       assert.equal(init?.method, "GET");
       assert.equal(url.searchParams.get("score"), "90");
       assert.equal(url.searchParams.get("tier"), "urgent");
+      assert.equal(url.searchParams.get("sellerScore"), "100");
+      assert.equal(url.searchParams.get("exactVariantConfirmed"), "true");
+      assert.equal(url.searchParams.get("cartConfirmed"), "true");
+      assert.equal(url.searchParams.get("historyPoints"), "1");
+      assert.ok(Number(url.searchParams.get("verifiedAgeMinutes")) >= 0);
       return Response.json({ ok: true, targets: [{
         id: 1,
         endpoint: "https://push.example/subscription-1",

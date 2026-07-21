@@ -3,7 +3,8 @@
 Service Node.js 22 autonome. Il collecte uniquement des hôtes explicitement
 autorisés, privilégie HTTP + JSON-LD, puis utilise Playwright seulement lorsque
 le repli est activé. Une offre doit être identique pendant deux lectures avant
-d'être envoyée à PrixRadar.
+d'être envoyée à PrixRadar : variante demandée et rendue, vendeur, état, prix,
+livraison, total et résultat du panier sont comparés séparément.
 
 ## Installation et contrôles
 
@@ -40,7 +41,9 @@ OAI-Sites-Authorization: Bearer <token>
 - `POST /api/ingest` utilise exclusivement `INGEST_SECRET`, transmet
   `Idempotency-Key` et une `VerifiedObservation` versionnée.
 - `GET /api/push/targets?score=…&after=…&limit=…` utilise exclusivement
-  `PUSH_DELIVERY_SECRET`. La réponse paginée attendue contient
+  `PUSH_DELIVERY_SECRET`. La sélection reçoit aussi `sellerScore`,
+  `exactVariantConfirmed`, `cartConfirmed`, `historyPoints` et
+  `verifiedAgeMinutes`. La réponse paginée attendue contient
   `{ "ok": true, "targets": [{ "id", "endpoint", "keys", "contentEncoding", "minScore", "tier" }], "nextAfter": … }`.
 - `GET /api/push/digests` prépare à 18 h les résumés des appareils ayant choisi
   cette cadence, sans exposer leur identifiant dans la réponse publique.
@@ -55,6 +58,30 @@ d'erreur, journaux structurés et sorties CLI n'incluent jamais les clés.
 URL dues de la sentinelle. `POST /api/frontier` renvoie les fiches découvertes.
 Une inspection peut activer Playwright et un panier fantôme isolé : ajout au
 panier seulement, sans identification, adresse, commande ni paiement.
+
+Chaque enseigne possède son propre adaptateur panier. Le collecteur ne cherche
+jamais un bouton générique et refuse tout contrôle dont le libellé, le lien ou
+le formulaire évoque achat immédiat, commande, checkout ou paiement. Une
+confirmation n'est acquise que si la couche panier contient aussi l'identité du
+produit, le prix d'article, la livraison et un total explicite dont l’addition
+est cohérente.
+
+## Connecteurs et couverture
+
+Le registre `RETAIL_CONNECTORS` expose un `connectorId` et une `version` pour
+Boulanger, Darty, Cdiscount et chacun des cinq marchés Amazon. L'identifiant de
+variante attendu provient exclusivement de l'URL demandée; l'identifiant
+observé provient du DOM marchand ou du lien canonical rendu. Un snapshot ancien
+sans ces deux preuves reste non certifié au lieu de recevoir deux valeurs de
+repli artificiellement égales.
+
+La découverte renvoie séparément `discoveredUrls` et `nextPageUrl`. Une page
+suivante doit rester sur le même connecteur, utiliser un paramètre de pagination
+connu, avancer exactement d'une page et ne jamais dépasser la page 20. Le worker
+ré-enfile au maximum 19 sauts de pagination; BullMQ conserve la déduplication.
+Dans l’Actor planifié, le curseur suivant est renvoyé avec l’identifiant du
+segment puis persisté par la PWA : la cadence suivante reprend donc à la page
+suivante et revient à la graine uniquement après la dernière page.
 
 ## Files et débit
 

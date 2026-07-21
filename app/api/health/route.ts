@@ -25,7 +25,7 @@ export async function GET() {
   const body = {
     ok: database,
     service: "prixradar",
-    version: "0.4.0",
+    version: "0.6.0",
     checkedAt: new Date().toISOString(),
     runtime: database ? "cloudflare-d1" : process.env.VERCEL === "1" ? "vercel-preview" : "unconfigured",
     alertDeliveryMode: ((env as unknown as { ALERT_DELIVERY_MODE?: unknown }).ALERT_DELIVERY_MODE ?? process.env.ALERT_DELIVERY_MODE) === "live" ? "live" : "shadow",

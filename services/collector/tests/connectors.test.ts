@@ -27,6 +27,10 @@ test("autorise les cinq domaines Amazon EU et extrait les garde-fous de la page"
   assert.equal(offer.availability, "in_stock");
   assert.equal(offer.condition, "new");
   assert.equal(offer.promotion?.accessibleToAll, true);
+  assert.equal(offer.variantIdentity?.expectedId, "asin:b012345678");
+  assert.equal(offer.variantIdentity?.observedId, "asin:b012345678");
+  assert.equal(offer.variantIdentity?.expectedSource, "request_url");
+  assert.equal(offer.variantIdentity?.observedSource, "merchant_dom");
 });
 
 test("sépare un coupon conditionnel du prix public", () => {

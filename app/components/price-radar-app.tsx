@@ -13,6 +13,8 @@ import { AdminView } from "./admin-view";
 type Tab = "radar" | "watchlist" | "sources" | "admin" | "settings";
 type Confidence = "Très probable" | "Probable" | "À vérifier";
 type SourceMode = "live" | "fixture";
+type ExperienceLevel = "essential" | "expert";
+type AlertPreset = "safe" | "balanced" | "fast";
 
 type AlertItem = {
   id: string;
@@ -108,6 +110,129 @@ type WatchItem = {
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
+type PublicMeasurement = {
+  status: "measured" | "insufficient_sample" | "unavailable" | "incomplete_data";
+  value: number | null;
+  unit: "percent" | "minutes";
+  sampleSize: number;
+  minimumSampleSize: number;
+};
+
+type PublicMetricsResponse = {
+  ok: boolean;
+  generatedAt: string;
+  reliability: {
+    status: "measured" | "insufficient_sample" | "incomplete_data";
+    sample: {
+      alerts: number;
+      assessedAlerts: number;
+      notificationsSent: number;
+      followUpObservations: number;
+    };
+    metrics: {
+      usefulAlertRate: PublicMeasurement;
+      falsePositiveRate: PublicMeasurement;
+      notificationLatencyMedian: PublicMeasurement;
+      totalPriceKnownRate: PublicMeasurement;
+      doubleVerificationRate: PublicMeasurement;
+    };
+    bySource: Array<{
+      key: string;
+      alerts: number;
+      falsePositiveRate: PublicMeasurement;
+      totalPriceKnownRate: PublicMeasurement;
+    }>;
+  };
+};
+
+type IntegrityResponse = {
+  ok: boolean;
+  status: string;
+  period: { historyDays: number };
+  index: {
+    status: string;
+    score: number | null;
+    sampleSize: number;
+    minimumSampleSize: number;
+    label: string;
+  };
+  items: Array<{
+    alertId: string;
+    source: string;
+    merchant: string;
+    market: string;
+    title: string;
+    status: string;
+    score: number | null;
+    label: string;
+    inputs: {
+      observedDiscountPercent: number;
+      observationsPrior30d: number;
+    };
+    measures: {
+      verified30dDiscountPercent: number | null;
+    };
+  }>;
+};
+
+const ALERT_PRESETS: Record<AlertPreset, {
+  label: string;
+  shortDescription: string;
+  explanation: string;
+  minScore: number;
+  minDiscount: number;
+  minSellerScore: number;
+  requireExactVariant: boolean;
+  requireCartConfirmation: boolean;
+  maxAlertAgeMinutes: number;
+  minimumHistoryPoints: number;
+  closeExpiredMinutes: number;
+  notificationSpeed: "instant" | "balanced" | "digest";
+}> = {
+  safe: {
+    label: "Fiable",
+    shortDescription: "Peu d’alertes, preuves maximales",
+    explanation: "Variante exacte, panier confirmé et historique renforcé avant de vous prévenir.",
+    minScore: 85,
+    minDiscount: 25,
+    minSellerScore: 85,
+    requireExactVariant: true,
+    requireCartConfirmation: true,
+    maxAlertAgeMinutes: 30,
+    minimumHistoryPoints: 10,
+    closeExpiredMinutes: 5,
+    notificationSpeed: "balanced",
+  },
+  balanced: {
+    label: "Équilibré",
+    shortDescription: "Le meilleur compromis",
+    explanation: "Les signaux solides arrivent vite, avec des contrôles stricts sur la variante et le vendeur.",
+    minScore: 75,
+    minDiscount: 20,
+    minSellerScore: 70,
+    requireExactVariant: true,
+    requireCartConfirmation: true,
+    maxAlertAgeMinutes: 60,
+    minimumHistoryPoints: 5,
+    closeExpiredMinutes: 10,
+    notificationSpeed: "balanced",
+  },
+  fast: {
+    label: "Rapide",
+    shortDescription: "Plus de signaux, plus tôt",
+    explanation: "Vous êtes prévenu dès qu’un signal sérieux apparaît, même si le panier final reste à confirmer.",
+    minScore: 65,
+    minDiscount: 15,
+    minSellerScore: 60,
+    requireExactVariant: true,
+    requireCartConfirmation: false,
+    maxAlertAgeMinutes: 90,
+    minimumHistoryPoints: 3,
+    closeExpiredMinutes: 15,
+    notificationSpeed: "instant",
+  },
 };
 
 const ALERTS: AlertItem[] = [
@@ -386,6 +511,20 @@ function relativeTime(value: unknown) {
   return hours < 24 ? `il y a ${hours} h` : `il y a ${Math.round(hours / 24)} j`;
 }
 
+function localAlertFreshness(
+  alert: AlertItem,
+  maxAgeMinutes: number,
+  closeAfterMinutes: number,
+) {
+  if (alert.sourceMode !== "live" || !alert.observedAt) return "fresh" as const;
+  const observedAt = Date.parse(alert.observedAt);
+  if (!Number.isFinite(observedAt)) return "fresh" as const;
+  const ageMinutes = Math.max(0, (Date.now() - observedAt) / 60_000);
+  if (ageMinutes > maxAgeMinutes + closeAfterMinutes) return "closed" as const;
+  if (ageMinutes > maxAgeMinutes) return "stale" as const;
+  return "fresh" as const;
+}
+
 function alertAccent(source: string): AlertItem["accent"] {
   if (source === "amazon" || source === "keepa") return "coral";
   if (source === "boulanger") return "violet";
@@ -630,7 +769,17 @@ export function PriceRadarApp() {
   });
   const [minScore, setMinScore] = useState(75);
   const [quietHours, setQuietHours] = useState(true);
+  const [quietStart, setQuietStart] = useState("22:00");
+  const [quietEnd, setQuietEnd] = useState("08:00");
   const [minDiscount, setMinDiscount] = useState(20);
+  const [minSellerScore, setMinSellerScore] = useState(70);
+  const [requireExactVariant, setRequireExactVariant] = useState(true);
+  const [requireCartConfirmation, setRequireCartConfirmation] = useState(true);
+  const [maxAlertAgeMinutes, setMaxAlertAgeMinutes] = useState(60);
+  const [minimumHistoryPoints, setMinimumHistoryPoints] = useState(5);
+  const [closeExpiredMinutes, setCloseExpiredMinutes] = useState(10);
+  const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>("essential");
+  const [preset, setPreset] = useState<AlertPreset>("balanced");
   const [maxPriceEuros, setMaxPriceEuros] = useState("");
   const [preferredMarkets, setPreferredMarkets] = useState("FR");
   const [preferredCategories, setPreferredCategories] = useState("");
@@ -646,6 +795,7 @@ export function PriceRadarApp() {
   const [radarSaving, setRadarSaving] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
+  const [preferencesSaveState, setPreferencesSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -758,7 +908,17 @@ export function PriceRadarApp() {
         if (typeof preferences.quietHours === "boolean") {
           setQuietHours(preferences.quietHours);
         }
+        if (typeof preferences.quietStart === "string" && /^\d{2}:\d{2}$/u.test(preferences.quietStart)) setQuietStart(preferences.quietStart);
+        if (typeof preferences.quietEnd === "string" && /^\d{2}:\d{2}$/u.test(preferences.quietEnd)) setQuietEnd(preferences.quietEnd);
         if (typeof preferences.minDiscount === "number") setMinDiscount(preferences.minDiscount);
+        if (typeof preferences.minSellerScore === "number") setMinSellerScore(Math.max(0, Math.min(100, preferences.minSellerScore)));
+        if (typeof preferences.requireExactVariant === "boolean") setRequireExactVariant(preferences.requireExactVariant);
+        if (typeof preferences.requireCartConfirmation === "boolean") setRequireCartConfirmation(preferences.requireCartConfirmation);
+        if (typeof preferences.maxAlertAgeMinutes === "number") setMaxAlertAgeMinutes(Math.max(5, Math.min(180, preferences.maxAlertAgeMinutes)));
+        if (typeof preferences.minimumHistoryPoints === "number") setMinimumHistoryPoints(Math.max(3, Math.min(60, preferences.minimumHistoryPoints)));
+        if (typeof preferences.closeExpiredMinutes === "number") setCloseExpiredMinutes(Math.max(2, Math.min(60, preferences.closeExpiredMinutes)));
+        if (preferences.experienceLevel === "essential" || preferences.experienceLevel === "expert") setExperienceLevel(preferences.experienceLevel);
+        if (preferences.preset === "safe" || preferences.preset === "balanced" || preferences.preset === "fast") setPreset(preferences.preset);
         if (typeof preferences.maxPriceCents === "number") setMaxPriceEuros(String(preferences.maxPriceCents / 100));
         if (Array.isArray(preferences.markets)) setPreferredMarkets(preferences.markets.join(", "));
         if (Array.isArray(preferences.categories)) setPreferredCategories(preferences.categories.join(", "));
@@ -780,13 +940,24 @@ export function PriceRadarApp() {
   useEffect(() => {
     if (!preferencesReady) return;
     const timer = window.setTimeout(() => {
+      setPreferencesSaveState("saving");
       fetch("/api/preferences", {
         method: "PUT",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
+          experienceLevel,
+          preset,
           minScore,
           quietHours,
+          quietStart,
+          quietEnd,
           minDiscount,
+          minSellerScore,
+          requireExactVariant,
+          requireCartConfirmation,
+          maxAlertAgeMinutes,
+          minimumHistoryPoints,
+          closeExpiredMinutes,
           maxPriceCents: maxPriceEuros.trim() ? Math.max(1, Math.round(Number(maxPriceEuros) * 100)) : null,
           markets: preferredMarkets.split(",").map((item) => item.trim()).filter(Boolean),
           categories: preferredCategories.split(",").map((item) => item.trim()).filter(Boolean),
@@ -796,10 +967,12 @@ export function PriceRadarApp() {
           requireLocationMatch,
           notificationSpeed,
         }),
-      }).catch(() => undefined);
+      }).then((response) => {
+        setPreferencesSaveState(response.ok ? "saved" : "error");
+      }).catch(() => setPreferencesSaveState("error"));
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [deliveryCountry, deliveryMode, maxPriceEuros, minDiscount, minScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferencesReady, quietHours, requireLocationMatch]);
+  }, [closeExpiredMinutes, deliveryCountry, deliveryMode, experienceLevel, maxAlertAgeMinutes, maxPriceEuros, minDiscount, minimumHistoryPoints, minScore, minSellerScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferencesReady, preset, quietEnd, quietHours, quietStart, requireCartConfirmation, requireExactVariant, requireLocationMatch]);
 
   useEffect(() => {
     fetch("/api/radars", { headers: { accept: "application/json" } })
@@ -964,6 +1137,9 @@ export function PriceRadarApp() {
   const visibleAlerts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("fr");
     return activeAlerts.filter((alert) => {
+      if (localAlertFreshness(alert, maxAlertAgeMinutes, closeExpiredMinutes) === "closed") {
+        return false;
+      }
       const filterMatch =
         filter === "Tout" ||
         (filter === "Très probable" && alert.confidence === "Très probable") ||
@@ -980,7 +1156,7 @@ export function PriceRadarApp() {
           .includes(query);
       return filterMatch && searchMatch;
     });
-  }, [activeAlerts, filter, search]);
+  }, [activeAlerts, closeExpiredMinutes, filter, maxAlertAgeMinutes, search]);
 
   const knownAlerts = [...liveAlerts, ...ALERTS].filter(
     (alert, index, all) => all.findIndex((candidate) => candidate.id === alert.id) === index,
@@ -1054,7 +1230,14 @@ export function PriceRadarApp() {
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ alertId: alert.id, verdict }),
       });
-      if (!response.ok) throw new Error("feedback");
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { code?: string };
+        if (payload.code === "feedback_requires_delivery") {
+          setToast("Vous pourrez évaluer cette alerte après l’avoir reçue sur cet appareil");
+          return;
+        }
+        throw new Error("feedback");
+      }
       const labels: Record<typeof verdict, string> = {
         useful: "Merci, bonne alerte enregistrée", false_positive: "Faux positif enregistré", expired: "Prix expiré signalé",
         purchased: "Achat confirmé", cancelled: "Annulation signalée", wrong_variant: "Mauvaise variante signalée",
@@ -1217,6 +1400,20 @@ export function PriceRadarApp() {
     setToast("Sur iPhone : Partager, puis Sur l’écran d’accueil");
   }
 
+  function applyAlertPreset(nextPreset: AlertPreset) {
+    const next = ALERT_PRESETS[nextPreset];
+    setPreset(nextPreset);
+    setMinScore(next.minScore);
+    setMinDiscount(next.minDiscount);
+    setMinSellerScore(next.minSellerScore);
+    setRequireExactVariant(next.requireExactVariant);
+    setRequireCartConfirmation(next.requireCartConfirmation);
+    setMaxAlertAgeMinutes(next.maxAlertAgeMinutes);
+    setMinimumHistoryPoints(next.minimumHistoryPoints);
+    setCloseExpiredMinutes(next.closeExpiredMinutes);
+    setNotificationSpeed(next.notificationSpeed);
+  }
+
   function renderTab() {
     if (tab === "admin") return <AdminView />;
     if (tab === "watchlist") {
@@ -1256,10 +1453,31 @@ export function PriceRadarApp() {
           onNotifications={requestNotifications}
           minScore={minScore}
           setMinScore={setMinScore}
+          experienceLevel={experienceLevel}
+          setExperienceLevel={setExperienceLevel}
+          preset={preset}
+          setPreset={applyAlertPreset}
+          preferencesSaveState={preferencesSaveState}
           quietHours={quietHours}
           setQuietHours={setQuietHours}
+          quietStart={quietStart}
+          setQuietStart={setQuietStart}
+          quietEnd={quietEnd}
+          setQuietEnd={setQuietEnd}
           minDiscount={minDiscount}
           setMinDiscount={setMinDiscount}
+          minSellerScore={minSellerScore}
+          setMinSellerScore={setMinSellerScore}
+          requireExactVariant={requireExactVariant}
+          setRequireExactVariant={setRequireExactVariant}
+          requireCartConfirmation={requireCartConfirmation}
+          setRequireCartConfirmation={setRequireCartConfirmation}
+          maxAlertAgeMinutes={maxAlertAgeMinutes}
+          setMaxAlertAgeMinutes={setMaxAlertAgeMinutes}
+          minimumHistoryPoints={minimumHistoryPoints}
+          setMinimumHistoryPoints={setMinimumHistoryPoints}
+          closeExpiredMinutes={closeExpiredMinutes}
+          setCloseExpiredMinutes={setCloseExpiredMinutes}
           maxPriceEuros={maxPriceEuros}
           setMaxPriceEuros={setMaxPriceEuros}
           preferredMarkets={preferredMarkets}
@@ -1309,6 +1527,8 @@ export function PriceRadarApp() {
         onCreateRadar={createRadar}
         onDeleteRadar={deleteRadar}
         onScan={() => setScannerOpen(true)}
+        maxAlertAgeMinutes={maxAlertAgeMinutes}
+        closeExpiredMinutes={closeExpiredMinutes}
       />
     );
   }
@@ -1503,6 +1723,8 @@ function RadarView({
   onCreateRadar,
   onDeleteRadar,
   onScan,
+  maxAlertAgeMinutes,
+  closeExpiredMinutes,
 }: {
   alerts: AlertItem[];
   filter: string;
@@ -1523,6 +1745,8 @@ function RadarView({
   onCreateRadar: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteRadar: (id: string) => void;
   onScan: () => void;
+  maxAlertAgeMinutes: number;
+  closeExpiredMinutes: number;
 }) {
   const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
   const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon · Keepa", "France", ...categories.map((category) => `Catégorie · ${category}`)];
@@ -1624,6 +1848,7 @@ function RadarView({
               watched={watched.has(alert.id)}
               onWatch={() => onWatch(alert)}
               onOpen={() => onOpen(alert)}
+              freshnessState={localAlertFreshness(alert, maxAlertAgeMinutes, closeExpiredMinutes)}
             />
           ))}
         </div>
@@ -1654,12 +1879,14 @@ function AlertCard({
   watched,
   onWatch,
   onOpen,
+  freshnessState,
 }: {
   alert: AlertItem;
   featured: boolean;
   watched: boolean;
   onWatch: () => void;
   onOpen: () => void;
+  freshnessState: "fresh" | "stale" | "closed";
 }) {
   return (
     <article className={`alert-card ${featured ? "is-featured" : ""}`}>
@@ -1681,7 +1908,7 @@ function AlertCard({
                 {alert.sourceMode === "live" ? "LIVE" : "DÉMO"}
               </span>
             </span>
-            <span>{alert.freshness}</span>
+            <span className={freshnessState === "stale" ? "freshness-badge is-stale" : "freshness-badge"} title={freshnessState === "stale" ? "État d’affichage local calculé selon vos préférences" : undefined}>{freshnessState === "stale" ? `Fenêtre dépassée · ${alert.freshness}` : alert.freshness}</span>
           </div>
           <h3>{alert.title}</h3>
           <p className="card-source">{alert.source}</p>
@@ -2128,12 +2355,33 @@ function SourceRow({
 function SettingsView({
   notificationState,
   onNotifications,
+  experienceLevel,
+  setExperienceLevel,
+  preset,
+  setPreset,
+  preferencesSaveState,
   minScore,
   setMinScore,
   quietHours,
   setQuietHours,
+  quietStart,
+  setQuietStart,
+  quietEnd,
+  setQuietEnd,
   minDiscount,
   setMinDiscount,
+  minSellerScore,
+  setMinSellerScore,
+  requireExactVariant,
+  setRequireExactVariant,
+  requireCartConfirmation,
+  setRequireCartConfirmation,
+  maxAlertAgeMinutes,
+  setMaxAlertAgeMinutes,
+  minimumHistoryPoints,
+  setMinimumHistoryPoints,
+  closeExpiredMinutes,
+  setCloseExpiredMinutes,
   maxPriceEuros,
   setMaxPriceEuros,
   preferredMarkets,
@@ -2159,12 +2407,33 @@ function SettingsView({
 }: {
   notificationState: string;
   onNotifications: () => void;
+  experienceLevel: ExperienceLevel;
+  setExperienceLevel: (value: ExperienceLevel) => void;
+  preset: AlertPreset;
+  setPreset: (value: AlertPreset) => void;
+  preferencesSaveState: "idle" | "saving" | "saved" | "error";
   minScore: number;
   setMinScore: (value: number) => void;
   quietHours: boolean;
   setQuietHours: (value: boolean) => void;
+  quietStart: string;
+  setQuietStart: (value: string) => void;
+  quietEnd: string;
+  setQuietEnd: (value: string) => void;
   minDiscount: number;
   setMinDiscount: (value: number) => void;
+  minSellerScore: number;
+  setMinSellerScore: (value: number) => void;
+  requireExactVariant: boolean;
+  setRequireExactVariant: (value: boolean) => void;
+  requireCartConfirmation: boolean;
+  setRequireCartConfirmation: (value: boolean) => void;
+  maxAlertAgeMinutes: number;
+  setMaxAlertAgeMinutes: (value: number) => void;
+  minimumHistoryPoints: number;
+  setMinimumHistoryPoints: (value: number) => void;
+  closeExpiredMinutes: number;
+  setCloseExpiredMinutes: (value: number) => void;
   maxPriceEuros: string;
   setMaxPriceEuros: (value: string) => void;
   preferredMarkets: string;
@@ -2188,28 +2457,81 @@ function SettingsView({
   onInstall: () => void;
   installReady: boolean;
 }) {
+  const markets = [
+    ["FR", "France"], ["DE", "Allemagne"], ["IT", "Italie"],
+    ["ES", "Espagne"], ["GB", "Royaume-Uni"],
+  ] as const;
+  const categoryChoices = ["Image & son", "Informatique", "Smartphone", "Gaming", "Maison", "Cuisine", "Audio"];
+  const selectedMarkets = new Set(preferredMarkets.split(",").map((value) => value.trim().toUpperCase()).filter(Boolean));
+  const selectedCategories = new Set(preferredCategories.split(",").map((value) => value.trim()).filter(Boolean));
+  const selectedPreset = ALERT_PRESETS[preset];
+
+  function toggleMarket(value: string) {
+    const next = new Set(selectedMarkets);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    setPreferredMarkets(markets.map(([code]) => code).filter((code) => next.has(code)).join(", "));
+  }
+
+  function toggleCategory(value: string) {
+    const next = new Set(selectedCategories);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    setPreferredCategories([...next].join(", "));
+  }
+
+  const marketSummary = selectedMarkets.size
+    ? markets.filter(([code]) => selectedMarkets.has(code)).map(([, label]) => label).join(", ")
+    : "tous les pays pris en charge";
+  const categorySummary = selectedCategories.size ? [...selectedCategories].join(", ") : "toutes les catégories";
+  const budgetSummary = maxPriceEuros.trim() ? `${maxPriceEuros.trim()} € maximum` : "sans plafond de budget";
+  const saveLabel = preferencesSaveState === "saving"
+    ? "Enregistrement…"
+    : preferencesSaveState === "saved"
+      ? "Préférences enregistrées"
+      : preferencesSaveState === "error"
+        ? "Enregistrement impossible pour le moment"
+        : "Enregistrement automatique";
+
   return (
     <section className="view-section settings-view">
       <PageHeading
-        eyebrow="Préférences"
-        title="Des alertes utiles, jamais bruyantes"
-        description="Ajustez le niveau de confiance et les moments où PrixRadar peut vous prévenir."
+        eyebrow="Préférences · deux niveaux"
+        title="Configurez votre radar sans jargon"
+        description="Choisissez un niveau simple. Les réglages techniques restent disponibles seulement si vous en avez besoin."
       />
 
-      <div className="settings-grid">
-        <section className="setting-card setting-featured">
-          <div className="setting-icon">↗</div>
-          <div className="setting-copy">
-            <span className="eyebrow">Application installable</span>
-            <h2>Gardez le radar à portée de pouce</h2>
-            <p>
-              Ajoutez PrixRadar à l’écran d’accueil pour une expérience plein
-              écran et un accès plus rapide.
-            </p>
-          </div>
-          <button type="button" className="primary-button" onClick={onInstall}>
-            {installReady ? "Installer l’application" : "Voir comment installer"}
-          </button>
+      <div className="settings-level-bar">
+        <div><span className="eyebrow">Mode {experienceLevel === "expert" ? "expert" : "essentiel"}</span><strong>{experienceLevel === "expert" ? "Tous les critères sont visibles" : "Trois choix suffisent pour commencer"}</strong></div>
+        <span className={`preferences-save-state is-${preferencesSaveState}`} role="status" aria-live="polite">{saveLabel}</span>
+      </div>
+
+      <section className="essential-settings" aria-labelledby="essential-settings-title">
+        <div className="essential-heading"><div><span className="eyebrow">Étape 1</span><h2 id="essential-settings-title">Choisissez votre priorité</h2></div><span>Modifiable à tout moment</span></div>
+        <div className="preset-grid" role="group" aria-label="Niveau de sélection des alertes">
+          {(Object.entries(ALERT_PRESETS) as Array<[AlertPreset, (typeof ALERT_PRESETS)[AlertPreset]]>).map(([value, option], index) => (
+            <button type="button" key={value} className={`preset-card preset-${value} ${preset === value ? "is-active" : ""}`} aria-pressed={preset === value} onClick={() => setPreset(value)}>
+              <span className="preset-number" aria-hidden="true">{index + 1}</span>
+              <span><strong>{option.label}</strong><small>{option.shortDescription}</small></span>
+              <p>{option.explanation}</p>
+              <i aria-hidden="true">{preset === value ? "✓" : ""}</i>
+            </button>
+          ))}
+        </div>
+        <div className="essential-fields">
+          <fieldset className="simple-choice-field"><legend>Catégories qui vous intéressent</legend><div className="choice-chips">{categoryChoices.map((category) => <button key={category} type="button" className={selectedCategories.has(category) ? "is-active" : ""} aria-pressed={selectedCategories.has(category)} onClick={() => toggleCategory(category)}>{category}</button>)}</div><label className="custom-category">Autre catégorie<input value={preferredCategories} onChange={(event) => setPreferredCategories(event.target.value)} placeholder="Ex. photo, vélo électrique" /></label></fieldset>
+          <label className="simple-input-field"><span>Budget maximal</span><div><input type="number" min="1" inputMode="decimal" value={maxPriceEuros} onChange={(event) => setMaxPriceEuros(event.target.value)} placeholder="Aucune limite" /><span>€</span></div><small>Laissez vide pour voir tous les prix.</small></label>
+          <fieldset className="simple-choice-field"><legend>Pays à surveiller</legend><div className="choice-chips country-chips">{markets.map(([code, label]) => <button key={code} type="button" className={selectedMarkets.has(code) ? "is-active" : ""} aria-pressed={selectedMarkets.has(code)} onClick={() => toggleMarket(code)}><strong>{code}</strong><span>{label}</span></button>)}</div></fieldset>
+        </div>
+        <div className="plain-summary" aria-live="polite"><span className="summary-mark" aria-hidden="true">✓</span><div><span className="eyebrow">Votre radar en clair</span><h3>Mode {selectedPreset.label} · {categorySummary}</h3><p>Vous recevrez des alertes pour {marketSummary}, {budgetSummary}. PrixRadar exigera un vendeur noté au moins {minSellerScore}/100{requireCartConfirmation ? ", un panier confirmé" : ""} et {minimumHistoryPoints} points d’historique minimum.</p></div></div>
+      </section>
+
+      <section className={`expert-disclosure ${experienceLevel === "expert" ? "is-open" : ""}`}>
+        <button type="button" className="expert-disclosure-button" aria-expanded={experienceLevel === "expert"} aria-controls="expert-settings-panel" onClick={() => setExperienceLevel(experienceLevel === "expert" ? "essential" : "expert")}><span><span className="eyebrow">Réglages avancés</span><strong>{experienceLevel === "expert" ? "Masquer le mode expert" : "Ouvrir le mode expert"}</strong><small>Scores, fraîcheur, historique, panier, notifications et localisation.</small></span><i aria-hidden="true">⌄</i></button>
+        {experienceLevel === "expert" ? <div id="expert-settings-panel" className="settings-grid expert-settings-grid">
+        <section className="setting-card expert-score-card">
+          <div className="setting-row-heading"><div><span className="eyebrow">Sélection</span><h2>Seuils de qualité</h2></div><span className="setting-status">Score {minScore}</span></div>
+          <label className="expert-range"><span>Score minimal <output>{minScore}/100</output></span><input type="range" min="60" max="95" step="5" value={minScore} onChange={(event) => setMinScore(Number(event.target.value))} /></label>
+          <label className="expert-range"><span>Remise minimale <output>{minDiscount} %</output></span><input type="range" min="0" max="90" step="5" value={minDiscount} onChange={(event) => setMinDiscount(Number(event.target.value))} /></label>
+          <label className="expert-range"><span>Score vendeur minimal <output>{minSellerScore}/100</output></span><input type="range" min="0" max="100" step="5" value={minSellerScore} onChange={(event) => setMinSellerScore(Number(event.target.value))} /></label>
         </section>
 
         <section className="setting-card location-preferences">
@@ -2243,53 +2565,29 @@ function SettingsView({
               ["instant", "Instantané", "Toutes les alertes correspondantes"],
               ["balanced", "Équilibré", "Urgentes puis personnelles"],
               ["digest", "Résumé", "Urgentes + synthèse à 18 h"],
-            ] as const).map(([value, label, detail]) => <button key={value} type="button" className={notificationSpeed === value ? "is-active" : ""} onClick={() => setNotificationSpeed(value)}><strong>{label}</strong><small>{detail}</small></button>)}
+            ] as const).map(([value, label, detail]) => <button key={value} type="button" className={notificationSpeed === value ? "is-active" : ""} aria-pressed={notificationSpeed === value} onClick={() => setNotificationSpeed(value)}><strong>{label}</strong><small>{detail}</small></button>)}
           </div>
-        </section>
-
-        <section className="setting-card personalized-alerts">
-          <div className="setting-row-heading"><div><span className="eyebrow">Sans watchlist obligatoire</span><h2>Filtres d’alertes personnalisés</h2></div></div>
-          <div className="preference-fields">
-            <label>Remise minimale <strong>{minDiscount} %</strong><input type="range" min="0" max="90" step="5" value={minDiscount} onChange={(event) => setMinDiscount(Number(event.target.value))} /></label>
-            <label>Budget maximal (€)<input type="number" min="1" inputMode="decimal" value={maxPriceEuros} onChange={(event) => setMaxPriceEuros(event.target.value)} placeholder="Sans limite" /></label>
-            <label>Pays Amazon<input value={preferredMarkets} onChange={(event) => setPreferredMarkets(event.target.value)} placeholder="FR, DE, IT, ES, GB" /></label>
-            <label>Catégories<input value={preferredCategories} onChange={(event) => setPreferredCategories(event.target.value)} placeholder="Audio, Gaming, Maison" /></label>
-          </div>
-          <p>Ces règles s’appliquent directement aux notifications push, même sans produit suivi.</p>
         </section>
 
         <section className="setting-card">
-          <div className="setting-row-heading">
-            <div>
-              <span className="eyebrow">Seuil de confiance</span>
-              <h2>{minScore}/100 minimum</h2>
-            </div>
-            <span className={`confidence ${confidenceClass(minScore >= 85 ? "Très probable" : "Probable")}`}>
-              <i /> {minScore >= 85 ? "Très sélectif" : "Équilibré"}
-            </span>
-          </div>
-          <input
-            className="score-range"
-            type="range"
-            min="60"
-            max="95"
-            step="5"
-            value={minScore}
-            onChange={(event) => setMinScore(Number(event.target.value))}
-            aria-label="Score minimal de confiance"
-          />
-          <div className="range-labels">
-            <span>Plus de signaux</span>
-            <span>Plus fiable</span>
-          </div>
+          <div className="setting-row-heading"><div><span className="eyebrow">Fraîcheur</span><h2>Durée de validité</h2></div></div>
+          <div className="expert-number-grid"><label><span>Âge maximal</span><div><input type="number" min="5" max="180" value={maxAlertAgeMinutes} onChange={(event) => setMaxAlertAgeMinutes(Math.max(5, Math.min(180, Number(event.target.value) || 5)))} /><small>min</small></div></label><label><span>Fermer après expiration</span><div><input type="number" min="2" max="60" value={closeExpiredMinutes} onChange={(event) => setCloseExpiredMinutes(Math.max(2, Math.min(60, Number(event.target.value) || 2)))} /><small>min</small></div></label></div>
+          <p>Une alerte trop ancienne est retirée automatiquement, même si son prix semblait exceptionnel.</p>
+        </section>
+
+        <section className="setting-card">
+          <div className="setting-row-heading"><div><span className="eyebrow">Preuves exigées</span><h2>Variante et panier</h2></div></div>
+          <div className="toggle-row compact-toggle"><div><strong>Variante exacte</strong><p>Écarte une couleur, capacité ou quantité différente.</p></div><button type="button" className={`switch ${requireExactVariant ? "is-on" : ""}`} role="switch" aria-checked={requireExactVariant} onClick={() => setRequireExactVariant(!requireExactVariant)} aria-label="Exiger la variante exacte"><span /></button></div>
+          <div className="toggle-row compact-toggle"><div><strong>Panier confirmé</strong><p>Attend le total final avant l’alerte.</p></div><button type="button" className={`switch ${requireCartConfirmation ? "is-on" : ""}`} role="switch" aria-checked={requireCartConfirmation} onClick={() => setRequireCartConfirmation(!requireCartConfirmation)} aria-label="Exiger la confirmation du panier"><span /></button></div>
+          <label className="expert-number-field"><span>Points d’historique minimum</span><input type="number" min="3" max="60" value={minimumHistoryPoints} onChange={(event) => setMinimumHistoryPoints(Math.max(3, Math.min(60, Number(event.target.value) || 3)))} /></label>
         </section>
 
         <section className="setting-card">
           <div className="toggle-row">
             <div>
-              <span className="eyebrow">Tranquillité</span>
-              <h2>Silence de 22 h à 8 h</h2>
-              <p>Aucune alerte n’est envoyée pendant cette plage, même si le signal expire.</p>
+              <span className="eyebrow">Heures calmes</span>
+              <h2>Ne pas déranger</h2>
+              <p>Aucune alerte n’est envoyée pendant cette plage.</p>
             </div>
             <button
               type="button"
@@ -2302,8 +2600,17 @@ function SettingsView({
               <span />
             </button>
           </div>
+          <div className="quiet-time-fields"><label>De<input type="time" value={quietStart} onChange={(event) => setQuietStart(event.target.value)} disabled={!quietHours} /></label><label>À<input type="time" value={quietEnd} onChange={(event) => setQuietEnd(event.target.value)} disabled={!quietHours} /></label></div>
         </section>
+      </div> : null}
+      </section>
+
+      <div className="settings-utility-grid">
+        <section className="setting-card setting-featured"><div className="setting-icon">↗</div><div className="setting-copy"><span className="eyebrow">Application installable</span><h2>Gardez le radar à portée de pouce</h2><p>Ajoutez PrixRadar à l’écran d’accueil pour une expérience plein écran et des alertes plus accessibles.</p></div><button type="button" className="primary-button" onClick={onInstall}>{installReady ? "Installer l’application" : "Voir comment installer"}</button></section>
+        <section className="setting-card notification-permission-card"><div className="setting-row-heading"><div><span className="eyebrow">Notifications</span><h2>Autorisation de cet appareil</h2></div><span className="setting-status">{notificationState}</span></div><p>L’autorisation reste sous votre contrôle et peut être retirée depuis le navigateur.</p><button type="button" className="secondary-button" onClick={onNotifications}>Autoriser et tester</button></section>
       </div>
+
+      <TransparencyView />
 
       <div className="privacy-card">
         <span className="privacy-mark">P</span>
@@ -2321,6 +2628,62 @@ function SettingsView({
       </div>
     </section>
   );
+}
+
+function TransparencyView() {
+  const [metrics, setMetrics] = useState<PublicMetricsResponse | null>(null);
+  const [integrity, setIntegrity] = useState<IntegrityResponse | null>(null);
+  const [metricsState, setMetricsState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [integrityState, setIntegrityState] = useState<"loading" | "ready" | "unavailable">("loading");
+
+  useEffect(() => {
+    let active = true;
+    void Promise.allSettled([
+      fetch("/api/public/metrics", { headers: { accept: "application/json" } }).then(async (response) => {
+        if (!response.ok) throw new Error("metrics");
+        const payload = await response.json() as PublicMetricsResponse;
+        if (!payload || payload.ok !== true || !payload.reliability?.metrics || !Array.isArray(payload.reliability.bySource)) throw new Error("metrics");
+        return payload;
+      }),
+      fetch("/api/integrity", { headers: { accept: "application/json" } }).then(async (response) => {
+        if (!response.ok) throw new Error("integrity");
+        const payload = await response.json() as IntegrityResponse;
+        if (!payload || payload.ok !== true || !Array.isArray(payload.items)) throw new Error("integrity");
+        return payload;
+      }),
+    ]).then(([metricsResult, integrityResult]) => {
+      if (!active) return;
+      if (metricsResult.status === "fulfilled") { setMetrics(metricsResult.value); setMetricsState("ready"); }
+      else setMetricsState("unavailable");
+      if (integrityResult.status === "fulfilled") { setIntegrity(integrityResult.value); setIntegrityState("ready"); }
+      else setIntegrityState("unavailable");
+    });
+    return () => { active = false; };
+  }, []);
+
+  const metricCards = metrics ? [
+    ["Alertes jugées utiles", metrics.reliability.metrics.usefulAlertRate],
+    ["Faux positifs", metrics.reliability.metrics.falsePositiveRate],
+    ["Délai médian", metrics.reliability.metrics.notificationLatencyMedian],
+    ["Total livré connu", metrics.reliability.metrics.totalPriceKnownRate],
+    ["Double vérification", metrics.reliability.metrics.doubleVerificationRate],
+  ] as const : [];
+  const measuredCards = metricCards.filter(([, measurement]) => measurement.status === "measured" && measurement.value !== null);
+
+  return <section className="transparency-panel" aria-labelledby="transparency-title">
+    <div className="transparency-heading"><div><span className="eyebrow">Transparence publique</span><h2 id="transparency-title">La qualité se mesure, elle ne se proclame pas</h2><p>Ces chiffres viennent exclusivement des contrôles publiés par PrixRadar. Une valeur absente reste absente.</p></div><div className="transparency-meta">{metrics?.generatedAt ? <span>Mis à jour {relativeTime(metrics.generatedAt)}</span> : null}<a href="/transparence">Voir la méthode complète</a></div></div>
+    <div className="transparency-columns">
+      <section className="public-metrics-view">
+        <div className="section-label-row"><h3>Métriques publiques</h3>{metrics ? <span>{metrics.reliability.sample.alerts} alertes LIVE</span> : null}</div>
+        {metricsState === "loading" ? <p className="data-state">Chargement des mesures…</p> : metricsState === "unavailable" ? <p className="data-state is-unavailable">Les métriques publiques sont indisponibles. Aucun chiffre de remplacement n’est affiché.</p> : measuredCards.length === 0 ? <p className="data-state">Échantillon encore insuffisant pour publier des taux fiables.</p> : <div className="public-metric-grid">{measuredCards.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value.value?.toLocaleString("fr-FR", { maximumFractionDigits: 1 })}{value.unit === "minutes" ? " min" : " %"}</strong><small>{value.sampleSize} mesures</small></div>)}</div>}
+        {metrics && metrics.reliability.bySource.length > 0 ? <div className="source-quality-list">{metrics.reliability.bySource.slice(0, 6).map((item) => <div key={item.key}><span><strong>{item.key}</strong><small>{item.alerts} alertes</small></span><span>{item.falsePositiveRate.value === null ? "Mesure insuffisante" : `${item.falsePositiveRate.value.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % de faux positifs`}</span></div>)}</div> : null}
+      </section>
+      <section className="integrity-view">
+        <div className="section-label-row"><h3>Indice d’intégrité</h3>{integrity?.period.historyDays ? <span>{integrity.period.historyDays} jours</span> : null}</div>
+        {integrityState === "loading" ? <p className="data-state">Chargement de l’indice…</p> : integrityState === "unavailable" ? <p className="data-state is-unavailable">L’indice d’intégrité est indisponible. Aucun score estimé n’est affiché.</p> : integrity && integrity.items.length > 0 ? <div className="integrity-list">{integrity.items.slice(0, 8).map((item) => <article key={item.alertId}><div><strong>{item.merchant || item.source}</strong><small>{item.market} · {item.inputs.observationsPrior30d} prix antérieurs</small></div>{item.score === null ? <span className="integrity-pending">Données insuffisantes</span> : <strong className="integrity-score">{item.score.toLocaleString("fr-FR")}/100</strong>}<p>{item.measures.verified30dDiscountPercent === null ? item.label : `${item.inputs.observedDiscountPercent.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % détecté · ${item.measures.verified30dDiscountPercent.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % vérifié sur 30 j`}</p></article>)}</div> : <p className="data-state">Aucun indice n’est encore publiable pour cette période.</p>}
+      </section>
+    </div>
+  </section>;
 }
 
 function AlertDetail({
@@ -2500,6 +2863,7 @@ function AlertDetail({
           <dl><div><dt>Identité exacte</dt><dd>{alert.gtin ? `EAN ${alert.gtin}` : `${alert.brand ?? "Marque non transmise"} · ${alert.model ?? alert.sku}`}</dd></div><div><dt>Observation</dt><dd>{alert.observedAt ? new Date(alert.observedAt).toLocaleString("fr-FR") : alert.freshness}</dd></div><div><dt>Double contrôle</dt><dd>{alert.verifiedAt} · prix, variante, vendeur</dd></div><div><dt>Validité</dt><dd>{alert.expiresAt ? `jusqu’au ${new Date(alert.expiresAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "à revérifier"}</dd></div><div><dt>Comparaison</dt><dd>{alert.marketSources ? `${alert.marketSources} enseignes comparables` : "historique interne ou Keepa"}</dd></div></dl>
           <button type="button" className="dark-button verify-now" onClick={() => void verifyNow()} disabled={recheck === "pending" || recheck === "processing"}>{recheck === "pending" || recheck === "processing" ? "Vérification en cours…" : recheck === "completed" ? "Revérifier à nouveau" : "Vérifier maintenant"}</button>
           {recheckMessage ? <p className={`recheck-status is-${recheck}`} role="status">{recheckMessage}</p> : null}
+          {alert.sourceMode === "live" ? <a className="certified-proof-link" href={`/certified/${encodeURIComponent(alert.id)}`} target="_blank" rel="noreferrer"><span aria-hidden="true">i</span><span><strong>Ouvrir le passeport de preuve</strong><small>Statut, contrôles, limites et horodatage</small></span><i aria-hidden="true">↗</i></a> : null}
         </section>
 
         <section className="detail-section">
@@ -2539,7 +2903,7 @@ function AlertDetail({
             Vérifier chez {alert.merchant} ↗
           </a>
           <button type="button" className="secondary-button" onClick={() => {
-            const proofUrl = `${window.location.origin}/?alert=${encodeURIComponent(alert.id)}`;
+            const proofUrl = alert.sourceMode === "live" ? `${window.location.origin}/certified/${encodeURIComponent(alert.id)}` : `${window.location.origin}/?alert=${encodeURIComponent(alert.id)}`;
             const text = `${alert.title} · ${money(alert.currentPrice, alert.currency)} · score achat ${buyNow.score}/100 · vérifié à ${alert.verifiedAt}`;
             if (navigator.share) void navigator.share({ title: "Preuve PrixRadar", text, url: proofUrl });
             else void navigator.clipboard?.writeText(`${text} · ${proofUrl}`);

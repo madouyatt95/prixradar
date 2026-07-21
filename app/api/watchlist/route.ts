@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { watchlistItems } from "../../../db/schema";
+import { isActiveSource } from "../../../lib/source-registry";
 import {
   deviceError,
   deviceJson,
@@ -8,12 +9,6 @@ import {
   type DeviceContext,
 } from "../push/device";
 
-const SUPPORTED_SOURCES = new Set([
-  "amazon",
-  "boulanger",
-  "cdiscount",
-  "darty",
-]);
 const KEEPA_MARKETS = new Set(["DE", "ES", "FR", "GB", "IT"]);
 
 type WatchlistPayload = {
@@ -84,7 +79,7 @@ function parsePayload(payload: WatchlistPayload) {
   }
 
   const source = cleanRequiredString(payload.source, "source", 24).toLowerCase();
-  if (!SUPPORTED_SOURCES.has(source)) {
+  if (!isActiveSource(source)) {
     throw new Error("source doit être amazon, boulanger, cdiscount ou darty.");
   }
 
@@ -280,9 +275,11 @@ export async function DELETE(request: Request) {
         "productId" | "source" | "market"
       >;
       try {
+        const parsedSource = cleanRequiredString(source, "source", 24).toLowerCase();
+        if (!isActiveSource(parsedSource)) throw new Error("source doit être amazon, boulanger, cdiscount ou darty.");
         identity = {
           productId: cleanRequiredString(productId, "productId", 120),
-          source: cleanRequiredString(source, "source", 24).toLowerCase(),
+          source: parsedSource,
           market: cleanRequiredString(market, "market", 8).toUpperCase(),
         };
       } catch (error) {
@@ -296,7 +293,7 @@ export async function DELETE(request: Request) {
         );
       }
 
-      if (!SUPPORTED_SOURCES.has(identity.source)) {
+      if (!isActiveSource(identity.source)) {
         return deviceError(
           device,
           400,

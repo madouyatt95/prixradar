@@ -21,6 +21,15 @@ function observation(fixture = false): VerifiedObservation {
         url: "https://www.boulanger.com/ref/123",
         imageUrl: null,
       },
+      variantIdentity: {
+        expectedId: "sku:123",
+        observedId: "sku:123",
+        expectedSource: "request_url",
+        observedSource: "merchant_dom",
+        merchantProductId: "123",
+        gtin: null,
+        selectedOptions: {},
+      },
       price: { amountMinor: 9_999, currency: "EUR" },
       shipping: null,
       total: null,
@@ -71,6 +80,16 @@ test("utilise deux authentifications privées et une clé d’idempotence stable
   assert.equal(payload.shippingCents, null);
   assert.equal(payload.sourceMode, "live");
   assert.equal(payload.verificationCount, 2);
+  assert.equal(payload.expectedVariantId, "sku:123");
+  assert.equal(payload.observedVariantId, "sku:123");
+});
+
+test("un ancien snapshot n'obtient jamais deux identifiants de variante égaux par défaut", () => {
+  const item = observation();
+  delete item.offer.variantIdentity;
+  const payload = toAlertIngestEnvelope(item).payload;
+  assert.equal(payload.expectedVariantId, null);
+  assert.equal(payload.observedVariantId, null);
 });
 
 test("une fixture ne peut jamais atteindre le réseau", async () => {

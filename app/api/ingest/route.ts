@@ -47,13 +47,14 @@ import {
   type DeliveryMode,
 } from "@/lib/delivery";
 import { resolveCanonicalProduct } from "@/lib/product-identity";
+import { parseMerchantUrl } from "@/lib/merchant-url";
+import { isActiveSource, type ActiveSourceId } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_MONEY_CENTS = 100_000_000;
 const MAX_ALERT_LIFETIME_MS = 120 * 60_000;
-const SOURCES = ["amazon", "boulanger", "cdiscount", "darty"] as const;
 const AMAZON_MARKETS = new Set(["DE", "ES", "FR", "GB", "IT"]);
 const SOURCE_MODES = new Set<SourceMode>(["live", "demo", "fixture"]);
 const CONDITIONS = new Set<ProductCondition>(["new", "used", "refurbished", "unknown"]);
@@ -62,7 +63,7 @@ const PROMOTION_TYPES = new Set(["public_price", "coupon", "membership", "cashba
 const CART_PROBE_STATUSES = new Set(["confirmed", "product_page", "blocked", "unavailable"]);
 const FULFILLMENT_TYPES = new Set(["direct", "platform", "merchant", "unknown"]);
 
-type Source = (typeof SOURCES)[number];
+type Source = ActiveSourceId;
 type UnknownRecord = Record<string, unknown>;
 
 type IngestEnvelope = {
@@ -124,6 +125,7 @@ type ParsedHistoricalPrice = {
 type ParsedSourceStatus = {
   id: string;
   market: string;
+  sourceConfigurationId: string | null;
   displayName: string;
   mode: SourceMode;
   status: "healthy" | "degraded" | "offline" | "not_configured";
@@ -135,6 +137,7 @@ type ParsedSourceStatus = {
   duplicatesSkipped: number;
   antiBotBlocked: boolean;
   keepaRequests: number;
+  nextPageCursor: string | null | undefined;
   discoverySegmentId: string | null;
   discoveryYieldCount: number;
   apifyCostMicros: number | null;
@@ -257,7 +260,7 @@ function productUrlKey(source: Source, raw: string) {
 
 function parseSource(value: unknown): Source {
   const source = requiredString(value, "source", 24).toLowerCase();
-  if (!SOURCES.includes(source as Source)) throw new Error("source n’est pas prise en charge.");
+  if (!isActiveSource(source)) throw new Error("source n’est pas prise en charge.");
   return source as Source;
 }
 
@@ -285,12 +288,15 @@ function parseCartProbe(value: unknown): CartProbeInput {
       totalCents: null,
       stockConfirmed: false,
       addToCartAvailable: false,
+      identityConfirmed: false,
+      explicitShipping: false,
+      explicitTotal: false,
       couponApplied: false,
       checkedAt: null,
     };
   }
   if (!isRecord(value)) throw new Error("cartProbe doit être un objet.");
-  ensureOnlyKeys(value, ["status", "itemCents", "shippingCents", "totalCents", "stockConfirmed", "addToCartAvailable", "couponApplied", "checkedAt"], "cartProbe");
+  ensureOnlyKeys(value, ["status", "itemCents", "shippingCents", "totalCents", "stockConfirmed", "addToCartAvailable", "identityConfirmed", "explicitShipping", "explicitTotal", "couponApplied", "checkedAt"], "cartProbe");
   const status = requiredString(value.status, "cartProbe.status", 24) as CartProbeInput["status"];
   if (!CART_PROBE_STATUSES.has(status)) throw new Error("cartProbe.status est invalide.");
   return {
@@ -300,6 +306,9 @@ function parseCartProbe(value: unknown): CartProbeInput {
     totalCents: nullableMoney(value.totalCents, "cartProbe.totalCents"),
     stockConfirmed: optionalBoolean(value.stockConfirmed, "cartProbe.stockConfirmed", false),
     addToCartAvailable: optionalBoolean(value.addToCartAvailable, "cartProbe.addToCartAvailable", false),
+    identityConfirmed: optionalBoolean(value.identityConfirmed, "cartProbe.identityConfirmed", false),
+    explicitShipping: optionalBoolean(value.explicitShipping, "cartProbe.explicitShipping", false),
+    explicitTotal: optionalBoolean(value.explicitTotal, "cartProbe.explicitTotal", false),
     couponApplied: optionalBoolean(value.couponApplied, "cartProbe.couponApplied", false),
     checkedAt: isoTimestamp(value.checkedAt, "cartProbe.checkedAt", true),
   };
@@ -499,6 +508,7 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
   ensureOnlyKeys(value, [
     "id",
     "market",
+    "sourceConfigurationId",
     "displayName",
     "mode",
     "status",
@@ -510,6 +520,7 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     "duplicatesSkipped",
     "antiBotBlocked",
     "keepaRequests",
+    "nextPageCursor",
     "discoverySegmentId",
     "discoveryYieldCount",
     "apifyCostMicros",
@@ -528,9 +539,28 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     throw new Error("lastErrorCode est invalide.");
   }
 
+  const sourceConfigurationId = optionalString(value.sourceConfigurationId, "sourceConfigurationId", 160);
+  if (sourceConfigurationId !== null && !/^[A-Za-z0-9._:-]{3,160}$/.test(sourceConfigurationId)) {
+    throw new Error("sourceConfigurationId est invalide.");
+  }
+
+  let nextPageCursor: string | null | undefined;
+  if (value.nextPageCursor === undefined) {
+    nextPageCursor = undefined;
+  } else if (value.nextPageCursor === null) {
+    nextPageCursor = null;
+  } else {
+    const cursor = parseMerchantUrl(requiredString(value.nextPageCursor, "nextPageCursor", 2_048));
+    if (!cursor || cursor.source !== source || cursor.market !== market) {
+      throw new Error("nextPageCursor ne correspond pas à la source déclarée.");
+    }
+    nextPageCursor = cursor.url;
+  }
+
   const parsed: ParsedSourceStatus = {
     id,
     market,
+    sourceConfigurationId,
     displayName: requiredString(value.displayName, "displayName", 120),
     mode,
     status,
@@ -542,6 +572,7 @@ function parseSourceStatus(source: Source, value: UnknownRecord): ParsedSourceSt
     duplicatesSkipped: value.duplicatesSkipped === undefined ? 0 : integerInRange(value.duplicatesSkipped, "duplicatesSkipped", 0, 1_000_000_000),
     antiBotBlocked: optionalBoolean(value.antiBotBlocked, "antiBotBlocked", false),
     keepaRequests: value.keepaRequests === undefined ? 0 : integerInRange(value.keepaRequests, "keepaRequests", 0, 1_000_000_000),
+    nextPageCursor,
     discoverySegmentId: optionalString(value.discoverySegmentId, "discoverySegmentId", 160),
     discoveryYieldCount: value.discoveryYieldCount === undefined ? 0 : integerInRange(value.discoveryYieldCount, "discoveryYieldCount", 0, 1_000_000_000),
     apifyCostMicros: value.apifyCostMicros === undefined ? null : nullableMoney(value.apifyCostMicros, "apifyCostMicros"),
@@ -680,9 +711,15 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
           .orderBy(desc(alerts.observedAt))
           .limit(30),
     database.select({
-      useful: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'useful' then 1 else 0 end), 0)`,
-      falsePositive: sql<number>`coalesce(sum(case when ${alertFeedback.verdict} = 'false_positive' then 1 else 0 end), 0)`,
-    }).from(alertFeedback).innerJoin(alerts, eq(alerts.id, alertFeedback.alertId)).where(and(
+      useful: sql<number>`count(distinct case when ${alertFeedback.verdict} = 'useful' then ${alertFeedback.id} end)`,
+      falsePositive: sql<number>`count(distinct case when ${alertFeedback.verdict} = 'false_positive' then ${alertFeedback.id} end)`,
+    }).from(alertFeedback)
+      .innerJoin(alerts, eq(alerts.id, alertFeedback.alertId))
+      .innerJoin(notificationDeliveries, and(
+        eq(notificationDeliveries.alertId, alertFeedback.alertId),
+        eq(notificationDeliveries.ownerId, alertFeedback.ownerId),
+        eq(notificationDeliveries.status, "sent"),
+      )).where(and(
       eq(alerts.source, envelope.source),
       ...(parsed.category ? [eq(alerts.category, parsed.category)] : []),
     )),
@@ -792,7 +829,10 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     cartConfirmed: shadowCart.verified,
   });
   const feedback = feedbackRows[0] ?? { useful: 0, falsePositive: 0 };
-  const adaptiveScoreAdjustment = Math.max(0, Math.min(15, (Number(feedback.falsePositive) - Number(feedback.useful)) * 2));
+  const feedbackSample = Number(feedback.falsePositive) + Number(feedback.useful);
+  const adaptiveScoreAdjustment = feedbackSample >= 10
+    ? Math.max(0, Math.min(15, (Number(feedback.falsePositive) - Number(feedback.useful)) * 2))
+    : 0;
   const adaptiveMinimumScore = 65 + adaptiveScoreAdjustment;
   const autonomyEligible = origin.actionable
     && origin.evidenceStrength >= 55
@@ -843,7 +883,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     deliveryEligible,
     deliveryMode,
     adaptiveMinimumScore,
-    feedbackSample: Number(feedback.falsePositive) + Number(feedback.useful),
+    feedbackSample,
     expectedVariantId: parsed.expectedVariantId,
     observedVariantId: parsed.observedVariantId,
     sellerTrusted: parsed.sellerTrusted,
@@ -1131,9 +1171,16 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
     .select()
     .from(sourceConfigurations)
     .where(and(
+      parsed.sourceConfigurationId === null
+        ? sql`0 = 1`
+        : eq(sourceConfigurations.id, parsed.sourceConfigurationId),
       eq(sourceConfigurations.source, envelope.source),
       eq(sourceConfigurations.market, parsed.market),
+      eq(sourceConfigurations.enabled, true),
     ));
+  if (parsed.sourceConfigurationId !== null && configurations.length === 0) {
+    return apiError(409, "SOURCE_CONFIGURATION_NOT_FOUND", "Le segment de couverture n’existe plus, a été suspendu ou ne correspond pas à la source.");
+  }
   const eventInsert = database.insert(ingestEvents).values({
     idempotencyKey: envelope.idempotencyKey,
     source: envelope.source,
@@ -1164,7 +1211,9 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
         displayName: parsed.displayName,
         mode: parsed.mode,
         status: parsed.status,
-        lastSuccessAt: parsed.lastSuccessAt,
+        lastSuccessAt: parsed.lastSuccessAt === null
+          ? sql`${sourceStatuses.lastSuccessAt}`
+          : sql`case when ${sourceStatuses.lastSuccessAt} is null or ${sourceStatuses.lastSuccessAt} < ${parsed.lastSuccessAt} then ${parsed.lastSuccessAt} else ${sourceStatuses.lastSuccessAt} end`,
         lastAttemptAt: parsed.lastAttemptAt,
         lastErrorCode: parsed.lastErrorCode,
         productsSeen: parsed.productsSeen,
@@ -1207,6 +1256,9 @@ async function ingestSourceStatus(envelope: IngestEnvelope, parsed: ParsedSource
       ...(parsed.lastSuccessAt ? { lastSuccessAt: parsed.lastSuccessAt } : {}),
       productsSeen: parsed.productsSeen,
       duplicateUrls: parsed.duplicatesSkipped,
+      ...(parsed.nextPageCursor !== undefined ? { pageCursor: parsed.nextPageCursor } : {}),
+      contractStatus: healthy && parsed.productsSeen > 0 ? "passing" : parsed.antiBotBlocked ? "failing" : "degraded",
+      lastContractCheckAt: parsed.lastAttemptAt,
       lastErrorCode: parsed.lastErrorCode,
       failureStreak,
       antiBotStreak,

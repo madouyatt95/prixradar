@@ -1,4 +1,4 @@
-const CACHE_NAME = "prixradar-shell-v5";
+const CACHE_NAME = "prixradar-shell-v6";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -36,16 +36,17 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
+    const cacheableNavigation = url.pathname === "/" || url.pathname === "/transparence";
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response.ok) {
+          if (response.ok && cacheableNavigation) {
             const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put("/", copy));
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           }
           return response;
         })
-        .catch(() => caches.match("/").then((cached) => cached || Response.error())),
+        .catch(() => caches.match(request).then((cached) => cached || caches.match("/")).then((cached) => cached || Response.error())),
     );
     return;
   }

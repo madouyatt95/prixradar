@@ -39,8 +39,8 @@ export interface AlertIngestEnvelope {
     seller: string | null;
     sellerTrusted: boolean;
     condition: "new" | "used" | "refurbished" | "unknown";
-    expectedVariantId: string;
-    observedVariantId: string;
+    expectedVariantId: string | null;
+    observedVariantId: string | null;
     merchantReferenceCents: number | null;
     verificationCount: number;
     observedAt: string;
@@ -74,6 +74,7 @@ export interface SourceStatusEnvelope {
   payload: {
     id: string;
     market: string;
+    sourceConfigurationId: string | null;
     displayName: string;
     mode: "live";
     status: SourceStatusEvent["status"];
@@ -85,6 +86,7 @@ export interface SourceStatusEnvelope {
     duplicatesSkipped: number;
     antiBotBlocked: boolean;
     keepaRequests: number;
+    nextPageCursor?: string | null;
     discoverySegmentId: string | null;
     discoveryYieldCount: number;
     apifyCostMicros: number | null;
@@ -135,7 +137,14 @@ export function ingestIdempotencyKey(observation: VerifiedObservation): string {
     observation.offer.product.productKey,
     observation.offer.price.amountMinor,
     observation.offer.shipping?.amountMinor ?? null,
+    observation.offer.total?.amountMinor ?? null,
     observation.offer.price.currency,
+    observation.offer.variantIdentity?.expectedId ?? null,
+    observation.offer.variantIdentity?.observedId ?? null,
+    observation.offer.seller,
+    observation.offer.condition,
+    observation.offer.cartProbe?.status ?? null,
+    observation.offer.cartProbe?.totalCents ?? null,
     observation.verification.secondObservedAt,
   ]);
 }
@@ -147,7 +156,8 @@ export function toAlertIngestEnvelope(
   const idempotencyKey = ingestIdempotencyKey(observation);
   const product = observation.offer.product;
   const productId = boundedProductId(product.externalId, product.productKey);
-  const variantId = boundedProductId(product.externalId, product.productKey);
+  const expectedVariantId = observation.offer.variantIdentity?.expectedId?.slice(0, 160) ?? null;
+  const observedVariantId = observation.offer.variantIdentity?.observedId?.slice(0, 160) ?? null;
   const observedAt = observation.offer.observedAt;
   const observedAtMs = Date.parse(observedAt);
   const safeObservedAt = Number.isFinite(observedAtMs) ? observedAt : new Date().toISOString();
@@ -202,8 +212,10 @@ export function toAlertIngestEnvelope(
       seller: observation.offer.seller,
       sellerTrusted: observation.offer.sellerTrusted,
       condition: observation.offer.condition,
-      expectedVariantId: variantId,
-      observedVariantId: variantId,
+      // These values come from independent evidence. A legacy offer without
+      // rendered proof remains unverifiable instead of receiving two equal fallbacks.
+      expectedVariantId,
+      observedVariantId,
       merchantReferenceCents: observation.offer.referencePrice?.amountMinor ?? null,
       verificationCount: observation.verification.status === "confirmed" ? 2 : 1,
       observedAt: safeObservedAt,
@@ -234,6 +246,7 @@ export function toSourceStatusEnvelope(status: SourceStatusEvent): SourceStatusE
     "source_status",
     status.source,
     status.market,
+    status.sourceConfigurationId ?? "unscoped",
     status.status,
     status.lastAttemptAt,
   ]);
@@ -244,6 +257,7 @@ export function toSourceStatusEnvelope(status: SourceStatusEvent): SourceStatusE
     payload: {
       id: `${status.source}:${status.market}`,
       market: status.market,
+      sourceConfigurationId: status.sourceConfigurationId ?? null,
       displayName: status.displayName,
       mode: "live",
       status: status.status,
@@ -255,6 +269,7 @@ export function toSourceStatusEnvelope(status: SourceStatusEvent): SourceStatusE
       duplicatesSkipped: status.duplicatesSkipped ?? 0,
       antiBotBlocked: status.antiBotBlocked ?? false,
       keepaRequests: status.keepaRequests ?? 0,
+      ...(status.nextPageCursor !== undefined ? { nextPageCursor: status.nextPageCursor } : {}),
       discoverySegmentId: status.discoverySegmentId ?? null,
       discoveryYieldCount: status.discoveryYieldCount ?? 0,
       apifyCostMicros: status.apifyCostMicros ?? null,
@@ -345,7 +360,7 @@ export async function postSourceStatus(
 }
 
 export async function postFrontierItems(
-  items: Array<{ url: string; discoveredFrom: string | null; depth: number }>,
+  items: Array<{ url: string; discoveredFrom: string | null; depth: number; sourceConfigurationId?: string | null }>,
   config: SinkConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: boolean; accepted: number }> {

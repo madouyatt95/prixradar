@@ -1,7 +1,7 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { alertFeedback, alerts } from "@/db/schema";
+import { alertFeedback, alerts, notificationDeliveries } from "@/db/schema";
 import { deviceDatabaseError, deviceError, deviceJson, readJsonObject, resolveDevice } from "../push/device";
 
 export const dynamic = "force-dynamic";
@@ -33,9 +33,18 @@ export async function POST(request: Request) {
     return deviceError(identity.device, 400, "invalid_feedback", "Alerte ou verdict invalide.");
   }
   try {
-    const exists = await getDb().select({ id: alerts.id }).from(alerts).where(eq(alerts.id, alertId)).limit(1);
+    const database = getDb();
+    const exists = await database.select({ id: alerts.id }).from(alerts).where(eq(alerts.id, alertId)).limit(1);
     if (!exists[0]) return deviceError(identity.device, 404, "alert_not_found", "Alerte introuvable.");
-    await getDb().insert(alertFeedback).values({ alertId, ownerId: identity.device.ownerId, verdict })
+    const delivered = await database.select({ id: notificationDeliveries.id }).from(notificationDeliveries).where(and(
+      eq(notificationDeliveries.alertId, alertId),
+      eq(notificationDeliveries.ownerId, identity.device.ownerId),
+      eq(notificationDeliveries.status, "sent"),
+    )).limit(1);
+    if (!delivered[0]) {
+      return deviceError(identity.device, 403, "feedback_requires_delivery", "Ce retour sera disponible après réception de l’alerte sur cet appareil.");
+    }
+    await database.insert(alertFeedback).values({ alertId, ownerId: identity.device.ownerId, verdict })
       .onConflictDoUpdate({
         target: [alertFeedback.ownerId, alertFeedback.alertId],
         set: { verdict, updatedAt: sql`CURRENT_TIMESTAMP` },

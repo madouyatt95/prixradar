@@ -1,9 +1,9 @@
 import { runtimeEnv as env } from "@/lib/runtime-env";
-import { sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { sentinelFrontier } from "@/db/schema";
-import { parseMerchantUrl } from "@/lib/merchant-url";
+import { sentinelFrontier, sourceConfigurations, sourceCoverageProducts } from "@/db/schema";
+import { parseCoverageProductUrl } from "@/lib/merchant-url";
 import { sentinelPriority } from "@/lib/autonomy";
 
 export const dynamic = "force-dynamic";
@@ -39,18 +39,64 @@ export async function POST(request: Request) {
   const record = typeof body === "object" && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const values = Array.isArray(record.items) ? record.items.slice(0, 100) : [];
   const now = new Date().toISOString();
-  let accepted = 0;
+  const database = getDb();
+  const hasInvalidConfigurationId = values.some((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const candidate = (value as Record<string, unknown>).sourceConfigurationId;
+    return candidate !== undefined && candidate !== null
+      && (typeof candidate !== "string" || !/^[A-Za-z0-9._:-]{3,160}$/.test(candidate));
+  });
+  if (hasInvalidConfigurationId) {
+    return json({ ok: false, code: "INVALID_SOURCE_CONFIGURATION", error: "Un identifiant de segment est invalide." }, 400);
+  }
+  const requestedConfigurationIds = [...new Set(values.flatMap((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+    const candidate = (value as Record<string, unknown>).sourceConfigurationId;
+    return typeof candidate === "string" && /^[A-Za-z0-9._:-]{3,160}$/.test(candidate) ? [candidate] : [];
+  }))];
+  const configurations = requestedConfigurationIds.length === 0
+    ? []
+    : await database.select().from(sourceConfigurations)
+      .where(inArray(sourceConfigurations.id, requestedConfigurationIds));
+  if (configurations.length !== requestedConfigurationIds.length) {
+    return json({ ok: false, code: "SOURCE_CONFIGURATION_NOT_FOUND", error: "Un segment de couverture n’existe plus." }, 409);
+  }
+  const configurationById = new Map(configurations.map((configuration) => [configuration.id, configuration]));
+  const parsedItems: Array<{
+    index: number;
+    item: Record<string, unknown>;
+    product: NonNullable<ReturnType<typeof parseCoverageProductUrl>>;
+    configuration: typeof sourceConfigurations.$inferSelect | null;
+  }> = [];
   for (const [index, value] of values.entries()) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
     const item = value as Record<string, unknown>;
-    const merchant = parseMerchantUrl(typeof item.url === "string" ? item.url : "");
-    if (!merchant) continue;
+    const product = parseCoverageProductUrl(typeof item.url === "string" ? item.url : "");
+    const configurationId = typeof item.sourceConfigurationId === "string" ? item.sourceConfigurationId : null;
+    if (!product) {
+      if (configurationId !== null) {
+        return json({ ok: false, code: "INVALID_COVERAGE_PRODUCT", error: "Une URL rattachée au segment n’est pas une fiche produit reconnue." }, 422);
+      }
+      continue;
+    }
+    const configuration = configurationId === null ? null : configurationById.get(configurationId) ?? null;
+    if (configuration !== null && !configuration.enabled) {
+      return json({ ok: false, code: "SOURCE_CONFIGURATION_DISABLED", error: "Le segment de couverture a été suspendu." }, 409);
+    }
+    if (configuration !== null && (configuration.source !== product.source || configuration.market !== product.market)) {
+      return json({ ok: false, code: "SOURCE_CONFIGURATION_MISMATCH", error: "Le produit ne correspond pas au segment déclaré." }, 409);
+    }
+    parsedItems.push({ index, item, product, configuration });
+  }
+  const touchedConfigurations = new Set<string>();
+  let accepted = 0;
+  for (const { index, item, product, configuration } of parsedItems) {
     const depth = Number.isSafeInteger(item.depth) ? Math.max(0, Math.min(12, Number(item.depth))) : 1;
     const discoveredFrom = typeof item.discoveredFrom === "string" ? item.discoveredFrom.slice(0, 2048) : null;
-    const id = await idFor(merchant.url);
+    const id = await idFor(product.url);
     const priority = sentinelPriority({ depth, anomalyHits: 0, duplicates: 0, blocked: false, ageMinutes: 0 });
-    await getDb().insert(sentinelFrontier).values({
-      id, url: merchant.url, source: merchant.source, market: merchant.market,
+    await database.insert(sentinelFrontier).values({
+      id, url: product.url, source: product.source, market: product.market,
       discoveredFrom, discoveryType: index === 0 ? "seed" : "link", depth,
       status: "queued", priority, lastSeenAt: now, nextScanAt: now, createdAt: now, updatedAt: now,
     }).onConflictDoUpdate({
@@ -63,7 +109,33 @@ export async function POST(request: Request) {
         updatedAt: now,
       },
     });
+    if (configuration !== null) {
+      await database.insert(sourceCoverageProducts).values({
+        sourceConfigurationId: configuration.id,
+        productKey: product.productKey,
+        productUrl: product.url,
+        firstSeenAt: now,
+        lastSeenAt: now,
+      }).onConflictDoUpdate({
+        target: [sourceCoverageProducts.sourceConfigurationId, sourceCoverageProducts.productKey],
+        set: { productUrl: product.url, lastSeenAt: now },
+      });
+      touchedConfigurations.add(configuration.id);
+    }
     accepted += 1;
+  }
+  for (const configurationId of touchedConfigurations) {
+    const configuration = configurationById.get(configurationId);
+    if (!configuration) continue;
+    const [coverage] = await database.select({ total: sql<number>`count(*)` })
+      .from(sourceCoverageProducts)
+      .where(eq(sourceCoverageProducts.sourceConfigurationId, configurationId));
+    const uniqueProductsSeen = Number(coverage?.total ?? 0);
+    const coveragePercent = configuration.estimatedProductCount && configuration.estimatedProductCount > 0
+      ? Math.max(0, Math.min(100, Math.round((uniqueProductsSeen / configuration.estimatedProductCount) * 100)))
+      : 0;
+    await database.update(sourceConfigurations).set({ uniqueProductsSeen, coveragePercent, updatedAt: now })
+      .where(eq(sourceConfigurations.id, configurationId));
   }
   return json({ ok: true, accepted }, 202);
 }

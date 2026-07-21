@@ -21,6 +21,11 @@ type SourceConfig = {
   cooldownUntil: string | null;
   pausedReason: string | null;
   dailyProductBudget: number;
+  discoveryStrategy: "links" | "sitemap" | "feed" | "api";
+  estimatedProductCount: number | null;
+  uniqueProductsSeen: number;
+  coveragePercent: number | null;
+  contractStatus: "untested" | "passing" | "degraded" | "failing";
 };
 
 type DiscoverySegment = {
@@ -78,6 +83,64 @@ type BudgetRecommendation = {
   reason: string;
 };
 
+type PublicMeasurement = {
+  status: "measured" | "insufficient_sample" | "unavailable" | "incomplete_data";
+  value: number | null;
+  unit: "percent" | "minutes";
+  sampleSize: number;
+  minimumSampleSize: number;
+};
+
+type PublicQuality = {
+  generatedAt: string;
+  reliability: {
+    status: "measured" | "insufficient_sample" | "incomplete_data";
+    sample: { alerts: number; assessedAlerts: number };
+    metrics: {
+      usefulAlertRate: PublicMeasurement;
+      falsePositiveRate: PublicMeasurement;
+      totalPriceKnownRate: PublicMeasurement;
+      doubleVerificationRate: PublicMeasurement;
+      notificationLatencyMedian: PublicMeasurement;
+    };
+  };
+};
+
+type PublicIntegrity = {
+  status: string;
+  index: { status: string; score: number | null; sampleSize: number; minimumSampleSize: number; label: string };
+  items: Array<{
+    alertId: string;
+    source: string;
+    merchant: string;
+    market: string;
+    title: string;
+    score: number | null;
+    label: string;
+    status: string;
+  }>;
+};
+
+type CoverageItem = {
+  source: string;
+  displayName: string;
+  market: string;
+  status: "active" | "planned";
+  adapterVersion: string;
+  verification: string;
+  configuredSegments: number;
+  calibratedSegments: number;
+  uncalibratedSegments: number;
+  enabledSegments: number;
+  categories: number;
+  estimatedProducts: number | null;
+  uniqueProductsSeen: number;
+  estimatedCoveragePercent: number | null;
+  contractStatus: "unconfigured" | "passing" | "degraded" | "failing";
+  frontier: { total: number; queued: number; blocked: number };
+  lastSevenDays: { productsSeen: number; antiBotBlocks: number };
+};
+
 const DEFAULT_METRICS: Metrics = {
   productsSeen: 0, antiBotBlocks: 0, keepaRequests: 0, apifyCostEuros: 0, keepaEstimatedCostEuros: 0,
   costPerExploitableAlertEuros: null, exploitableAlerts: 0, alertsInReview: 0,
@@ -94,6 +157,10 @@ export function AdminView() {
   const [graphMetrics, setGraphMetrics] = useState(DEFAULT_GRAPH_METRICS);
   const [budgetRecommendations, setBudgetRecommendations] = useState<BudgetRecommendation[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "unauthorized" | "unconfigured" | "error">("loading");
+  const [publicQuality, setPublicQuality] = useState<PublicQuality | null>(null);
+  const [publicIntegrity, setPublicIntegrity] = useState<PublicIntegrity | null>(null);
+  const [coverage, setCoverage] = useState<CoverageItem[]>([]);
+  const [publicDataState, setPublicDataState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
@@ -103,15 +170,17 @@ export function AdminView() {
         fetch("/api/admin/sources", { headers: { accept: "application/json" } }),
         fetch("/api/admin/discovery", { headers: { accept: "application/json" } }),
         fetch("/api/admin/products", { headers: { accept: "application/json" } }),
+        fetch("/api/admin/coverage", { headers: { accept: "application/json" } }),
       ]);
       if (responses.some((response) => response.status === 401)) return setState("unauthorized");
       if (responses.some((response) => response.status === 503)) return setState("unconfigured");
       if (responses.some((response) => !response.ok)) throw new Error("pilotage");
-      const [overview, sourceData, discoveryData, productData] = await Promise.all(responses.map((response) => response.json())) as [
+      const [overview, sourceData, discoveryData, productData, coverageData] = await Promise.all(responses.map((response) => response.json())) as [
         { metrics?: Metrics; budgetRecommendations?: BudgetRecommendation[] },
         { items?: SourceConfig[] },
         { items?: DiscoverySegment[] },
         { metrics?: typeof graphMetrics; pending?: ProductReview[] },
+        { items?: CoverageItem[] },
       ];
       setMetrics(overview.metrics ?? DEFAULT_METRICS);
       setBudgetRecommendations(overview.budgetRecommendations ?? []);
@@ -119,6 +188,7 @@ export function AdminView() {
       setSegments(discoveryData.items ?? []);
       setGraphMetrics(productData.metrics ?? DEFAULT_GRAPH_METRICS);
       setReviews(productData.pending ?? []);
+      setCoverage(coverageData.items ?? []);
       setState("ready");
     } catch {
       setState("error");
@@ -129,6 +199,30 @@ export function AdminView() {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.allSettled([
+      fetch("/api/public/metrics", { headers: { accept: "application/json" } }).then(async (response) => {
+        if (!response.ok) throw new Error("metrics");
+        const payload = await response.json() as { ok?: boolean } & PublicQuality;
+        if (payload.ok !== true || !payload.reliability?.metrics) throw new Error("metrics");
+        return payload;
+      }),
+      fetch("/api/integrity", { headers: { accept: "application/json" } }).then(async (response) => {
+        if (!response.ok) throw new Error("integrity");
+        const payload = await response.json() as { ok?: boolean } & PublicIntegrity;
+        if (payload.ok !== true || !Array.isArray(payload.items)) throw new Error("integrity");
+        return payload;
+      }),
+    ]).then(([qualityResult, integrityResult]) => {
+      if (!active) return;
+      if (qualityResult.status === "fulfilled") setPublicQuality(qualityResult.value);
+      if (integrityResult.status === "fulfilled") setPublicIntegrity(integrityResult.value);
+      setPublicDataState(qualityResult.status === "fulfilled" || integrityResult.status === "fulfilled" ? "ready" : "unavailable");
+    });
+    return () => { active = false; };
+  }, []);
 
   async function addSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -143,6 +237,8 @@ export function AdminView() {
         market: source === "amazon" ? String(data.get("market") ?? "FR") : "FR",
         displayName: String(data.get("displayName") ?? source),
         category: String(data.get("category") ?? "Général"),
+        discoveryStrategy: String(data.get("discoveryStrategy") ?? "links"),
+        estimatedProductCount: data.get("estimatedProductCount") ? Number(data.get("estimatedProductCount")) : null,
         discoveryUrl: String(data.get("discoveryUrl") ?? ""),
         cadenceMinutes: Number(data.get("cadenceMinutes") ?? 60),
         dailyProductBudget: Number(data.get("dailyProductBudget") ?? 500),
@@ -201,6 +297,14 @@ export function AdminView() {
 
   const falsePositiveRate = metrics.feedback.total > 0 ? Math.round((metrics.feedback.falsePositive / metrics.feedback.total) * 100) : 0;
   const budgetById = new Map(budgetRecommendations.map((item) => [item.id, item]));
+  const publicMetricEntries: Array<[string, PublicMeasurement]> = publicQuality ? [
+    ["Alertes jugées utiles", publicQuality.reliability.metrics.usefulAlertRate],
+    ["Faux positifs", publicQuality.reliability.metrics.falsePositiveRate],
+    ["Total livré connu", publicQuality.reliability.metrics.totalPriceKnownRate],
+    ["Double vérification", publicQuality.reliability.metrics.doubleVerificationRate],
+    ["Délai médian", publicQuality.reliability.metrics.notificationLatencyMedian],
+  ] : [];
+  const measuredPublicMetrics = publicMetricEntries.filter((entry) => entry[1].status === "measured" && entry[1].value !== null);
   return (
     <section className="view-section">
       <div className="page-heading"><div><span className="eyebrow">Administration · production Cloudflare</span><h1>Centre de pilotage</h1><p>Couverture, budgets, coupe-circuits et qualité du référentiel produit.</p></div><button className="secondary-button" onClick={() => void refresh()}>Actualiser</button></div>
@@ -209,6 +313,24 @@ export function AdminView() {
         <div className="metric-card"><span>Keepa / Apify</span><strong>{metrics.keepaRequests} req. / {metrics.apifyCostEuros.toFixed(2)} €</strong><small>{metrics.keepaEstimatedCostEuros.toFixed(2)} € Keepa · {metrics.costPerExploitableAlertEuros === null ? "coût/alerte en attente" : `${metrics.costPerExploitableAlertEuros.toFixed(2)} € par alerte`}</small></div>
         <div className="metric-card"><span>Qualité</span><strong>{falsePositiveRate} %</strong><small>{metrics.antiBotBlocks} blocages · {graphMetrics.pendingReviews} rapprochements à revoir</small></div>
       </div>
+
+      <section className="admin-panel public-governance-panel">
+        <div className="section-label-row"><div><span className="eyebrow">Publication vérifiable</span><h2>Ce que le public voit vraiment</h2></div>{publicQuality?.generatedAt ? <span>{new Date(publicQuality.generatedAt).toLocaleDateString("fr-FR")}</span> : null}</div>
+        {publicDataState === "loading" ? <p className="admin-muted">Chargement des indicateurs publics…</p> : publicDataState === "unavailable" ? <p className="admin-muted is-warning">Les endpoints publics sont indisponibles. Aucun indicateur de remplacement n’est affiché.</p> : <>
+          <div className="public-governance-metrics">
+            {measuredPublicMetrics.map(([label, measurement]) => <div key={label}><span>{label}</span><strong>{measurement.value?.toLocaleString("fr-FR", { maximumFractionDigits: 1 })}{measurement.unit === "minutes" ? " min" : " %"}</strong><small>{measurement.sampleSize} mesures</small></div>)}
+          </div>
+          {measuredPublicMetrics.length === 0 ? <p className="admin-muted">L’échantillon public est encore insuffisant : aucun taux de remplacement n’est inventé.</p> : null}
+          {publicIntegrity ? <div className="public-integrity-admin-list"><div><span><strong>Indice global de sincérité</strong><small>{publicIntegrity.index.sampleSize} offres mesurables · minimum {publicIntegrity.index.minimumSampleSize}</small></span>{publicIntegrity.index.score === null ? <em>Données insuffisantes</em> : <strong>{publicIntegrity.index.score.toLocaleString("fr-FR")}/100</strong>}</div>{publicIntegrity.items.slice(0, 5).map((item) => <div key={item.alertId}><span><strong>{item.merchant || item.source}</strong><small>{item.market} · {item.title}</small></span>{item.score === null ? <em>{item.label}</em> : <strong>{item.score.toLocaleString("fr-FR")}/100</strong>}</div>)}</div> : <p className="admin-muted">Aucun indice d’intégrité publiable pour le moment.</p>}
+          <a className="secondary-button" href="/transparence">Ouvrir la page publique</a>
+        </>}
+      </section>
+
+      <section className="admin-panel">
+        <div className="section-label-row"><div><span className="eyebrow">Registre versionné</span><h2>Couverture mesurée par connecteur</h2></div><span>{coverage.filter((item) => item.status === "active").length} marchés actifs · {coverage.filter((item) => item.status === "planned").length} prévus</span></div>
+        <p className="admin-muted">Le pourcentage porte uniquement sur les segments dont la taille de catalogue est renseignée. Les mêmes produits vus sur plusieurs pages ne sont comptés qu’une fois.</p>
+        <div className="admin-source-list">{coverage.map((item) => <div className="admin-source-row" key={`${item.source}:${item.market}`}><div><strong>{item.displayName} · {item.market}</strong><small>Adaptateur {item.adapterVersion} · {item.configuredSegments} segments ({item.calibratedSegments} calibrés) · {item.categories} catégories</small><em className={item.contractStatus === "passing" && item.uncalibratedSegments === 0 ? "" : "is-warning"}>{item.status === "planned" ? "Planifié" : item.estimatedCoveragePercent === null ? "Couverture à calibrer" : `${item.estimatedCoveragePercent} % des segments calibrés`} · contrat {item.contractStatus} · {item.frontier.queued} URL en file</em></div><span className={`source-status status-${item.contractStatus === "passing" ? "live" : item.status === "planned" ? "planned" : "warning"}`}><i />{item.status === "planned" ? "Prévu" : item.contractStatus}</span></div>)}</div>
+      </section>
 
       <section className="admin-panel autonomy-admin-panel">
         <div className="section-label-row"><div><span className="eyebrow">Moteur autonome</span><h2>Qualité avant notification</h2></div><span>7 derniers jours</span></div>
@@ -230,7 +352,7 @@ export function AdminView() {
               const underExplored = source.productsSeen < 5 || source.lastRunAt === null;
               const open = source.circuitState !== "closed";
               const budget = budgetById.get(source.id);
-              return <div className="admin-source-row" key={source.id}><div><strong>{source.displayName} · {source.category}</strong><small>{source.market} · {source.cadenceMinutes} min · budget {source.dailyProductBudget}/jour{budget ? ` → ${budget.recommendedBudget} conseillé` : ""}</small><em className={open || underExplored ? "is-warning" : ""}>{open ? `Circuit ${source.circuitState} · ${source.pausedReason ?? "incident"}` : underExplored ? "Peu explorée" : `${source.productsSeen} produits`} · {source.duplicateUrls} doublons évités{budget ? ` · rendement ${budget.yieldPerThousand}/1 000` : ""}</em>{budget && budget.action !== "hold" ? <small>{budget.reason}</small> : null}</div><div className="admin-row-actions">{open ? <button className="secondary-button" onClick={() => void patchSource(source.id, { resetCircuit: true }, "Circuit réarmé.")}>Réarmer</button> : null}<button className={source.enabled ? "danger-button" : "secondary-button"} onClick={() => void patchSource(source.id, { enabled: !source.enabled }, source.enabled ? "Enseigne suspendue." : "Enseigne activée.")}>{source.enabled ? "Suspendre" : "Activer"}</button></div></div>;
+              return <div className="admin-source-row" key={source.id}><div><strong>{source.displayName} · {source.category}</strong><small>{source.market} · {source.discoveryStrategy} · {source.cadenceMinutes} min · budget {source.dailyProductBudget}/jour{budget ? ` → ${budget.recommendedBudget} conseillé` : ""}</small><em className={open || underExplored || source.contractStatus !== "passing" ? "is-warning" : ""}>{open ? `Circuit ${source.circuitState} · ${source.pausedReason ?? "incident"}` : underExplored ? "Peu explorée" : `${source.uniqueProductsSeen || source.productsSeen} produits uniques`} · {source.estimatedProductCount ? `${source.coveragePercent ?? 0} % de ${source.estimatedProductCount} estimés` : "catalogue à calibrer"} · contrat {source.contractStatus} · {source.duplicateUrls} doublons évités{budget ? ` · rendement ${budget.yieldPerThousand}/1 000` : ""}</em>{budget && budget.action !== "hold" ? <small>{budget.reason}</small> : null}</div><div className="admin-row-actions">{open ? <button className="secondary-button" onClick={() => void patchSource(source.id, { resetCircuit: true }, "Circuit réarmé.")}>Réarmer</button> : null}<button className={source.enabled ? "danger-button" : "secondary-button"} onClick={() => void patchSource(source.id, { enabled: !source.enabled }, source.enabled ? "Enseigne suspendue." : "Enseigne activée.")}>{source.enabled ? "Suspendre" : "Activer"}</button></div></div>;
             })}
             {state === "ready" && sources.length === 0 ? <p className="admin-muted">Ajoutez une première page catégorie ci-dessous.</p> : null}
           </div>
@@ -242,6 +364,7 @@ export function AdminView() {
           <div className="admin-form-pair"><label>Marché<select name="market" defaultValue="FR"><option>FR</option><option>DE</option><option>IT</option><option>ES</option><option>GB</option></select></label><label>Cadence<select name="cadenceMinutes" defaultValue="60"><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 h</option><option value="240">4 h</option><option value="1440">24 h</option></select></label></div>
           <label>Nom<input name="displayName" required maxLength={120} placeholder="Boulanger TV" /></label>
           <label>Catégorie<input name="category" required maxLength={80} placeholder="Image & son" /></label>
+          <div className="admin-form-pair"><label>Découverte<select name="discoveryStrategy" defaultValue="links"><option value="links">Liens de page · actif</option><option value="sitemap" disabled>Sitemap · bientôt</option><option value="feed" disabled>Flux partenaire · bientôt</option><option value="api" disabled>API partenaire · bientôt</option></select></label><label>Taille catalogue estimée<input name="estimatedProductCount" type="number" min="1" max="100000000" placeholder="ex. 2400" /></label></div>
           <label>Budget produits / jour<input name="dailyProductBudget" type="number" min="1" max="100000" defaultValue="500" /></label>
           <label>URL HTTPS<input name="discoveryUrl" type="url" required placeholder="https://www.boulanger.com/c/television" /></label>
           <button className="primary-button" type="submit">Ajouter à la couverture</button>
