@@ -53,9 +53,11 @@ export interface RetailConnector {
   };
 }
 
+export const CONNECTOR_REGISTRY_VERSION = "2026.07.2";
+
 const BOULANGER: RetailConnector = {
   connectorId: "boulanger-fr",
-  version: "2026.07.1",
+  version: CONNECTOR_REGISTRY_VERSION,
   source: "boulanger",
   market: "FR",
   currency: "EUR",
@@ -94,7 +96,7 @@ const BOULANGER: RetailConnector = {
 
 const DARTY: RetailConnector = {
   connectorId: "darty-fr",
-  version: "2026.07.1",
+  version: CONNECTOR_REGISTRY_VERSION,
   source: "darty",
   market: "FR",
   currency: "EUR",
@@ -133,7 +135,7 @@ const DARTY: RetailConnector = {
 
 const CDISCOUNT: RetailConnector = {
   connectorId: "cdiscount-fr",
-  version: "2026.07.1",
+  version: CONNECTOR_REGISTRY_VERSION,
   source: "cdiscount",
   market: "FR",
   currency: "EUR",
@@ -170,6 +172,240 @@ const CDISCOUNT: RetailConnector = {
   },
 };
 
+type FrenchConnectorDefinition = Omit<RetailConnector, "version" | "market" | "currency">;
+
+function frenchConnector(definition: FrenchConnectorDefinition): RetailConnector {
+  return {
+    ...definition,
+    version: CONNECTOR_REGISTRY_VERSION,
+    market: "FR",
+    currency: "EUR",
+  };
+}
+
+const FNAC = frenchConnector({
+  connectorId: "fnac-fr",
+  source: "fnac",
+  allowedHosts: new Set([
+    "fnac.com",
+    "www.fnac.com",
+    "livre.fnac.com",
+    "video.fnac.com",
+    "musique.fnac.com",
+    "jeux-video.fnac.com",
+    "photo.fnac.com",
+  ]),
+  productPathPatterns: [/^\/(?:a|mp)\d+(?:\/[^/?#]+)?(?:\/w-\d+)?\/?$/iu],
+  selectors: {
+    title: ["h1.f-productHeader-Title", "h1.f-productHeader-title", "h1", "[itemprop='name']"],
+    price: [".f-priceBox-price", "[data-testid='product-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: [".f-priceBox-price--old", ".f-priceBox-price--crossed", "[data-testid*='old-price']"],
+    externalId: ["[data-product-id]", "[data-prid]", "meta[name='productId']", "[itemprop='sku']"],
+    shipping: [".f-deliveryChoice", "[data-testid*='delivery']", "[data-testid*='shipping']"],
+    seller: [".f-productOffers-seller", "[data-testid*='seller']", "[itemprop='seller']"],
+    availability: [".f-productAvailability", "[data-testid*='availability']", "button[data-testid*='cart']"],
+    condition: [".f-productOffers-condition", "[data-testid*='condition']", "[itemprop='itemCondition']"],
+  },
+  variantOptions: {
+    color: ["[data-testid*='selected-color']", ".f-productVariants [aria-checked='true']"],
+    capacity: ["[data-testid*='selected-capacity']", ".f-productVariants [data-variation='capacity'][aria-selected='true']"],
+    format: ["[data-testid*='selected-format']", ".f-productVariants [data-variation='format'][aria-selected='true']"],
+  },
+  shadowCart: {
+    addButton: ["button.f-buyBox-cta", "button[data-testid='fnac-add-to-cart']", "button[data-automation='add-to-basket']", "input[name='addToCart']"],
+    confirmation: [".f-basket-modal", "[data-testid='fnac-basket-modal']", "[data-testid='cart-drawer']"],
+    cartScope: [".f-basket-modal", "[data-testid='fnac-basket']", "[data-testid='cart-drawer']"],
+    itemPrice: ["[data-testid='fnac-cart-item-price']", ".f-basket-item-price", "[itemprop='price']"],
+    shipping: ["[data-testid='fnac-shipping-price']", ".f-basket-shipping"],
+    total: ["[data-testid='fnac-cart-total']", ".f-basket-total"],
+    cartPathPatterns: [/^\/(?:account\/basket|basket|panier)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[title*='Page suivante' i]", "a[aria-label*='suivante' i]"],
+    pageParameters: ["page", "pageindex"],
+    maxPage: 20,
+  },
+});
+
+const CARREFOUR = frenchConnector({
+  connectorId: "carrefour-fr",
+  source: "carrefour",
+  allowedHosts: new Set(["carrefour.fr", "www.carrefour.fr"]),
+  productPathPatterns: [/^\/p\/.+-\d{8,14}\/?$/iu],
+  selectors: {
+    title: ["h1[data-testid='product-title']", "h1", "[itemprop='name']"],
+    price: ["[data-testid='product-price']", "[data-testid*='current-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: ["[data-testid*='old-price']", "[data-testid*='regular-price']", ".old-price"],
+    externalId: ["[data-ean]", "[data-product-id]", "[data-testid='product-ean']", "[itemprop='sku']"],
+    shipping: ["[data-testid*='delivery']", "[data-testid*='shipping']", "[itemprop='shippingDetails']"],
+    seller: ["[data-testid*='seller']", "[data-testid*='merchant']", "[itemprop='seller']"],
+    availability: ["[data-testid*='availability']", "[data-testid*='stock']", "button[data-testid*='cart']"],
+    condition: ["[data-testid*='condition']", "[itemprop='itemCondition']"],
+  },
+  variantOptions: {
+    format: ["[data-testid*='selected-format']", "[data-testid*='variant'][aria-pressed='true']"],
+    quantity: ["[data-testid*='selected-size']", "[data-testid*='quantity'] [aria-selected='true']"],
+  },
+  shadowCart: {
+    addButton: ["button[data-testid='carrefour-add-to-cart']", "button[data-testid*='add-to-basket']", "button[data-automation='add-to-cart']"],
+    confirmation: ["[data-testid='carrefour-cart-drawer']", "[data-testid='basket-modal']", "[role='dialog'][aria-label*='panier' i]"],
+    cartScope: ["[data-testid='carrefour-cart-drawer']", "[data-testid='basket']", "[data-testid='cart']"],
+    itemPrice: ["[data-testid='carrefour-cart-item-price']", "[data-testid='basket-item-price']"],
+    shipping: ["[data-testid='carrefour-shipping-price']", "[data-testid='delivery-price']"],
+    total: ["[data-testid='carrefour-cart-total']", "[data-testid='basket-total']"],
+    cartPathPatterns: [/^\/(?:panier|basket|cart)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[data-testid='pagination-next']", "a[aria-label*='suivante' i]"],
+    pageParameters: ["page", "p"],
+    maxPage: 20,
+  },
+});
+
+const LEROY_MERLIN = frenchConnector({
+  connectorId: "leroy-merlin-fr",
+  source: "leroy_merlin",
+  allowedHosts: new Set(["leroymerlin.fr", "www.leroymerlin.fr"]),
+  productPathPatterns: [/^\/produits\/.+-\d{6,14}\.html$/iu],
+  selectors: {
+    title: ["h1[data-testid='product-title']", "h1", "[itemprop='name']"],
+    price: ["[data-testid='product-price']", "[data-testid*='main-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: ["[data-testid*='old-price']", "[data-testid*='crossed-price']", ".old-price"],
+    externalId: ["[data-product-id]", "[data-product-code]", "[data-testid='product-reference']", "[itemprop='sku']"],
+    shipping: ["[data-testid*='delivery']", "[data-testid*='shipping']", "[itemprop='shippingDetails']"],
+    seller: ["[data-testid*='seller']", "[data-testid*='merchant']", "[itemprop='seller']"],
+    availability: ["[data-testid*='availability']", "[data-testid*='stock']", "button[data-testid*='cart']"],
+    condition: ["[data-testid*='condition']", "[itemprop='itemCondition']"],
+  },
+  variantOptions: {
+    color: ["[data-testid*='selected-color']", "[data-testid*='color'] [aria-checked='true']"],
+    size: ["[data-testid*='selected-size']", "[data-testid*='dimension'] [aria-checked='true']"],
+    pack: ["[data-testid*='selected-pack']", "[data-testid*='quantity'] [aria-selected='true']"],
+  },
+  shadowCart: {
+    addButton: ["button[data-testid='leroy-merlin-add-to-cart']", "button[data-testid*='add-to-cart']", "button[data-qa='add-to-basket']"],
+    confirmation: ["[data-testid='leroy-merlin-cart-drawer']", "[data-testid='add-to-cart-modal']", "[role='dialog'][aria-label*='panier' i]"],
+    cartScope: ["[data-testid='leroy-merlin-cart-drawer']", "[data-testid='basket']", "[data-testid='cart']"],
+    itemPrice: ["[data-testid='leroy-merlin-cart-item-price']", "[data-testid='basket-item-price']"],
+    shipping: ["[data-testid='leroy-merlin-shipping-price']", "[data-testid='delivery-price']"],
+    total: ["[data-testid='leroy-merlin-cart-total']", "[data-testid='basket-total']"],
+    cartPathPatterns: [/^\/(?:panier|basket|cart)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[data-testid='pagination-next']", "a[aria-label*='suivante' i]"],
+    pageParameters: ["page", "p"],
+    maxPage: 20,
+  },
+});
+
+const CASTORAMA = frenchConnector({
+  connectorId: "castorama-fr",
+  source: "castorama",
+  allowedHosts: new Set(["castorama.fr", "www.castorama.fr"]),
+  productPathPatterns: [/^\/.+\/\d{8,14}_CAFR\.prd$/iu],
+  selectors: {
+    title: ["h1[data-test-id='product-title']", "h1[data-testid='product-title']", "h1", "[itemprop='name']"],
+    price: ["[data-test-id='product-price']", "[data-testid='product-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: ["[data-test-id*='old-price']", "[data-testid*='was-price']", ".old-price"],
+    externalId: ["[data-product-id]", "[data-test-id='product-code']", "[data-testid='product-reference']", "[itemprop='sku']"],
+    shipping: ["[data-test-id*='delivery']", "[data-testid*='shipping']", "[itemprop='shippingDetails']"],
+    seller: ["[data-test-id*='seller']", "[data-testid*='seller']", "[itemprop='seller']"],
+    availability: ["[data-test-id*='availability']", "[data-testid*='stock']", "button[data-test-id*='cart']"],
+    condition: ["[data-test-id*='condition']", "[data-testid*='condition']", "[itemprop='itemCondition']"],
+  },
+  variantOptions: {
+    color: ["[data-test-id*='selected-color']", "[data-testid*='color'] [aria-checked='true']"],
+    size: ["[data-test-id*='selected-size']", "[data-testid*='dimension'] [aria-checked='true']"],
+    pack: ["[data-test-id*='selected-pack']", "[data-testid*='quantity'] [aria-selected='true']"],
+  },
+  shadowCart: {
+    addButton: ["button[data-test-id='castorama-add-to-cart']", "button[data-testid='castorama-add-to-cart']", "button[data-test-id*='add-to-basket']"],
+    confirmation: ["[data-test-id='castorama-cart-drawer']", "[data-testid='basket-modal']", "[role='dialog'][aria-label*='panier' i]"],
+    cartScope: ["[data-test-id='castorama-cart-drawer']", "[data-testid='basket']", "[data-testid='cart']"],
+    itemPrice: ["[data-test-id='castorama-cart-item-price']", "[data-testid='basket-item-price']"],
+    shipping: ["[data-test-id='castorama-shipping-price']", "[data-testid='delivery-price']"],
+    total: ["[data-test-id='castorama-cart-total']", "[data-testid='basket-total']"],
+    cartPathPatterns: [/^\/(?:panier|basket|cart)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[data-test-id='pagination-next']", "a[aria-label*='suivante' i]"],
+    pageParameters: ["page", "pagenum"],
+    maxPage: 20,
+  },
+});
+
+const CONFORAMA = frenchConnector({
+  connectorId: "conforama-fr",
+  source: "conforama",
+  allowedHosts: new Set(["conforama.fr", "www.conforama.fr"]),
+  productPathPatterns: [/^\/.+\/p\/[A-Z]\d+\/?$/iu],
+  selectors: {
+    title: ["h1[data-testid='product-title']", "h1", "[itemprop='name']"],
+    price: ["[data-testid='product-price']", "[data-testid*='selling-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: ["[data-testid*='old-price']", "[data-testid*='crossed-price']", ".old-price"],
+    externalId: ["[data-product-id]", "[data-product-code]", "[data-testid='product-reference']", "[itemprop='sku']"],
+    shipping: ["[data-testid*='delivery']", "[data-testid*='shipping']", "[itemprop='shippingDetails']"],
+    seller: ["[data-testid*='seller']", "[data-testid*='partner']", "[itemprop='seller']"],
+    availability: ["[data-testid*='availability']", "[data-testid*='stock']", "button[data-testid*='cart']"],
+    condition: ["[data-testid*='condition']", "[itemprop='itemCondition']"],
+  },
+  variantOptions: {
+    color: ["[data-testid*='selected-color']", "[data-testid*='color'] [aria-checked='true']"],
+    size: ["[data-testid*='selected-size']", "[data-testid*='dimension'] [aria-checked='true']"],
+    orientation: ["[data-testid*='selected-orientation']", "[data-testid*='orientation'] [aria-selected='true']"],
+  },
+  shadowCart: {
+    addButton: ["button[data-testid='conforama-add-to-cart']", "button[data-automation='conforama-add-to-basket']", "button[data-testid*='add-to-cart']"],
+    confirmation: ["[data-testid='conforama-cart-drawer']", "[data-testid='basket-modal']", "[role='dialog'][aria-label*='panier' i]"],
+    cartScope: ["[data-testid='conforama-cart-drawer']", "[data-testid='basket']", "[data-testid='cart']"],
+    itemPrice: ["[data-testid='conforama-cart-item-price']", "[data-testid='basket-item-price']"],
+    shipping: ["[data-testid='conforama-shipping-price']", "[data-testid='delivery-price']"],
+    total: ["[data-testid='conforama-cart-total']", "[data-testid='basket-total']"],
+    cartPathPatterns: [/^\/(?:panier|basket|cart)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[data-testid='pagination-next']", "a[aria-label*='suivante' i]"],
+    pageParameters: ["page", "p"],
+    maxPage: 20,
+  },
+});
+
+const RUE_DU_COMMERCE = frenchConnector({
+  connectorId: "rue-du-commerce-fr",
+  source: "rueducommerce",
+  allowedHosts: new Set(["rueducommerce.fr", "www.rueducommerce.fr"]),
+  productPathPatterns: [/^\/p\/[rm]\d+\.html$/iu],
+  selectors: {
+    title: ["h1[data-testid='product-title']", "h1", "[itemprop='name']"],
+    price: ["[data-testid='product-price']", "[data-testid*='selling-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: ["[data-testid*='old-price']", "[data-testid*='crossed-price']", ".old-price"],
+    externalId: ["[data-product-id]", "[data-product-code]", "[data-testid='product-reference']", "[itemprop='sku']"],
+    shipping: ["[data-testid*='delivery']", "[data-testid*='shipping']", "[itemprop='shippingDetails']"],
+    seller: ["[data-testid*='seller']", "[data-testid*='merchant']", "[itemprop='seller']"],
+    availability: ["[data-testid*='availability']", "[data-testid*='stock']", "button[data-testid*='cart']"],
+    condition: ["[data-testid*='condition']", "[itemprop='itemCondition']"],
+  },
+  variantOptions: {
+    color: ["[data-testid*='selected-color']", "[data-testid*='color'] [aria-checked='true']"],
+    capacity: ["[data-testid*='selected-capacity']", "[data-testid*='capacity'] [aria-checked='true']"],
+    pack: ["[data-testid*='selected-pack']", "[data-testid*='quantity'] [aria-selected='true']"],
+  },
+  shadowCart: {
+    addButton: ["button[data-testid='rdc-add-to-cart']", "button[data-automation='rdc-add-to-basket']", "button[data-testid*='add-to-cart']"],
+    confirmation: ["[data-testid='rdc-cart-drawer']", "[data-testid='basket-modal']", "[role='dialog'][aria-label*='panier' i]"],
+    cartScope: ["[data-testid='rdc-cart-drawer']", "[data-testid='basket']", "[data-testid='cart']"],
+    itemPrice: ["[data-testid='rdc-cart-item-price']", "[data-testid='basket-item-price']"],
+    shipping: ["[data-testid='rdc-shipping-price']", "[data-testid='delivery-price']"],
+    total: ["[data-testid='rdc-cart-total']", "[data-testid='basket-total']"],
+    cartPathPatterns: [/^\/(?:panier|basket|cart)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[data-testid='pagination-next']", "a[aria-label*='suivante' i]"],
+    pageParameters: ["page", "p"],
+    maxPage: 20,
+  },
+});
+
 function amazonConnector(
   market: Market,
   currency: Currency,
@@ -177,7 +413,7 @@ function amazonConnector(
 ): RetailConnector {
   return {
     connectorId: `amazon-${market.toLowerCase()}`,
-    version: "2026.07.1",
+    version: CONNECTOR_REGISTRY_VERSION,
     source: "amazon",
     market,
     currency,
@@ -224,8 +460,18 @@ const AMAZON_CONNECTORS = [
   amazonConnector("GB", "GBP", ["amazon.co.uk", "www.amazon.co.uk"]),
 ] as const;
 
-export const RETAIL_CONNECTORS = [BOULANGER, DARTY, CDISCOUNT, ...AMAZON_CONNECTORS] as const;
-export const CONNECTOR_REGISTRY_VERSION = "2026.07.1";
+export const RETAIL_CONNECTORS = [
+  BOULANGER,
+  DARTY,
+  CDISCOUNT,
+  FNAC,
+  CARREFOUR,
+  LEROY_MERLIN,
+  CASTORAMA,
+  CONFORAMA,
+  RUE_DU_COMMERCE,
+  ...AMAZON_CONNECTORS,
+] as const;
 
 export function connectorRegistrySnapshot(): Array<{
   connectorId: string;
@@ -302,6 +548,21 @@ export function expectedVariantIdForUrl(rawUrl: string, connector = connectorFor
     const normalized = normalizedVariantPart(reference);
     return normalized ? `sku:${normalized}` : null;
   }
+  const sourceSpecificReference = connector.source === "fnac"
+    ? /^\/(?:a|mp)(\d+)(?:\/|$)/iu.exec(url.pathname)?.[1] ?? null
+    : connector.source === "carrefour"
+      ? /-(\d{8,14})\/?$/u.exec(url.pathname)?.[1] ?? null
+      : connector.source === "leroy_merlin"
+        ? /-(\d{6,14})\.html$/iu.exec(url.pathname)?.[1] ?? null
+        : connector.source === "castorama"
+          ? /\/(\d{8,14})_CAFR\.prd$/iu.exec(url.pathname)?.[1] ?? null
+          : connector.source === "conforama"
+            ? /\/p\/([A-Z]\d+)\/?$/iu.exec(url.pathname)?.[1] ?? null
+            : connector.source === "rueducommerce"
+              ? /\/p\/([rm]\d+)\.html$/iu.exec(url.pathname)?.[1] ?? null
+              : null;
+  const normalizedSourceReference = normalizedVariantPart(sourceSpecificReference);
+  if (normalizedSourceReference) return `sku:${normalizedSourceReference}`;
   for (const key of ["productId", "productid", "sku", "ref"]) {
     const raw = url.searchParams.get(key);
     const normalized = normalizedVariantPart(raw);
@@ -425,6 +686,12 @@ function trustedSeller(source: RetailSource, value: string | null): boolean {
     boulanger: ["boulanger", "boulangercom"],
     darty: ["darty", "dartycom"],
     cdiscount: ["cdiscount", "cdiscountcom"],
+    fnac: ["fnac", "fnaccom"],
+    carrefour: ["carrefour", "carrefourfr"],
+    leroy_merlin: ["leroymerlin", "leroymerlinfr"],
+    castorama: ["castorama", "castoramafr"],
+    conforama: ["conforama", "conforamafr"],
+    rueducommerce: ["rueducommerce", "rueducommercefr"],
     amazon: ["amazon", "amazonfr", "amazonde", "amazonit", "amazones", "amazoncouk"],
   };
   if (direct[source].includes(normalized)) return true;
@@ -447,7 +714,7 @@ function sellerSignalsFromPage($: cheerio.CheerioAPI, seller: string | null, tru
   const countMatch = /([\d\s.,]{1,16})\s*(?:avis|evaluations?|ratings?|reviews?)/u.exec(normalized);
   const reviewCount = countMatch ? Number.parseInt(countMatch[1]!.replace(/\D/gu, ""), 10) : null;
   const pageText = cleanText($("body").text(), 20_000)?.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase() ?? "";
-  const platformFulfilled = /expedie par amazon|fulfilled by amazon|versand durch amazon|expedido por amazon|expedie par cdiscount/u.test(pageText);
+  const platformFulfilled = /expedie par (?:amazon|cdiscount|fnac|carrefour|leroy merlin|castorama|conforama|rue du commerce)|fulfilled by amazon|versand durch amazon|expedido por amazon/u.test(pageText);
   return {
     ratingPercent: rawRating === null ? null : Math.max(0, Math.min(100, Math.round(rawRating))),
     reviewCount: Number.isFinite(reviewCount) ? reviewCount : null,

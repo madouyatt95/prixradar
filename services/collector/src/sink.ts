@@ -124,7 +124,19 @@ function boundedProductId(value: string, fallback: string): string {
 }
 
 function directMerchant(source: RetailSource): string {
-  return { amazon: "Amazon", boulanger: "Boulanger", darty: "Darty", cdiscount: "Cdiscount" }[source];
+  const merchants: Record<RetailSource, string> = {
+    amazon: "Amazon",
+    boulanger: "Boulanger",
+    carrefour: "Carrefour",
+    castorama: "Castorama",
+    cdiscount: "Cdiscount",
+    conforama: "Conforama",
+    darty: "Darty",
+    fnac: "Fnac",
+    leroy_merlin: "Leroy Merlin",
+    rueducommerce: "Rue du Commerce",
+  };
+  return merchants[source];
 }
 
 function identityToken(value: string) {

@@ -42,8 +42,14 @@ interface ReporterDependencies {
 const DISPLAY_NAMES: Record<RetailSource, string> = {
   amazon: "Amazon",
   boulanger: "Boulanger",
+  carrefour: "Carrefour",
+  castorama: "Castorama",
   cdiscount: "Cdiscount",
+  conforama: "Conforama",
   darty: "Darty",
+  fnac: "Fnac",
+  leroy_merlin: "Leroy Merlin",
+  rueducommerce: "Rue du Commerce",
 };
 
 function safeCount(value: number): number {

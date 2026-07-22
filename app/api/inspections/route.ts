@@ -2,13 +2,20 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { inspectionRequests } from "@/db/schema";
-import { parseMerchantUrl } from "@/lib/merchant-url";
+import { parseCoverageProductUrl } from "@/lib/merchant-url";
+import { runtimeEnv as env } from "@/lib/runtime-env";
+import { isPartnerSourceAuthorized } from "@/lib/source-registry";
 import { deviceDatabaseError, deviceError, deviceJson, readJsonObject, resolveDevice } from "../push/device";
 
 export const dynamic = "force-dynamic";
 
 function parsedResult(value: string) {
   try { return JSON.parse(value) as unknown; } catch { return {}; }
+}
+
+function authorizedPartnerSources() {
+  const value = (env as unknown as { AUTHORIZED_PARTNER_SOURCES?: unknown }).AUTHORIZED_PARTNER_SOURCES;
+  return typeof value === "string" ? value : undefined;
 }
 
 export async function GET(request: Request) {
@@ -30,8 +37,23 @@ export async function POST(request: Request) {
   const identity = await resolveDevice(request);
   if (!identity.ok) return identity.response;
   const body = await readJsonObject(request);
-  const merchant = parseMerchantUrl(typeof body?.url === "string" ? body.url.trim() : "");
-  if (!merchant) return deviceError(identity.device, 400, "unsupported_url", "Partagez une URL Amazon Europe, Boulanger, Darty ou Cdiscount.");
+  const merchant = parseCoverageProductUrl(typeof body?.url === "string" ? body.url.trim() : "");
+  if (!merchant) {
+    return deviceError(
+      identity.device,
+      400,
+      "unsupported_url",
+      "Partagez l’URL d’une fiche produit d’une enseigne prise en charge.",
+    );
+  }
+  if (!isPartnerSourceAuthorized(merchant.source, authorizedPartnerSources())) {
+    return deviceError(
+      identity.device,
+      409,
+      "partner_authorization_required",
+      "Cette enseigne sera analysable après activation de son flux partenaire officiel.",
+    );
+  }
   try {
     const recentAfter = new Date(Date.now() - 2 * 60_000).toISOString();
     const [existing] = await getDb().select().from(inspectionRequests).where(and(

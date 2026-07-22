@@ -2,11 +2,20 @@ import { and, asc, eq, inArray, type SQL } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { sourceStatuses } from "@/db/schema";
-import { isActiveSource } from "@/lib/source-registry";
+import { runtimeEnv as env } from "@/lib/runtime-env";
+import {
+  ACTIVE_SOURCE_IDS,
+  isActiveSource,
+  isPartnerSourceAuthorized,
+  sourceDefinition,
+} from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
-const STALE_AFTER_MINUTES = 30;
+function authorizedPartnerSources() {
+  const value = (env as unknown as { AUTHORIZED_PARTNER_SOURCES?: unknown }).AUTHORIZED_PARTNER_SOURCES;
+  return typeof value === "string" ? value : undefined;
+}
 
 function json(body: unknown, status = 200, cache = false) {
   return Response.json(body, {
@@ -33,6 +42,8 @@ function databaseError(error: unknown) {
 }
 
 function serializeStatus(row: typeof sourceStatuses.$inferSelect, nowMs: number) {
+  const cadenceMinutes = sourceDefinition(row.source)?.defaultCadenceMinutes ?? 30;
+  const staleAfterMinutes = Math.max(30, cadenceMinutes * 2);
   const successMs = row.lastSuccessAt === null ? Number.NaN : Date.parse(row.lastSuccessAt);
   const ageMinutes = Number.isFinite(successMs)
     ? Math.max(0, Math.round((nowMs - successMs) / 60_000))
@@ -41,7 +52,7 @@ function serializeStatus(row: typeof sourceStatuses.$inferSelect, nowMs: number)
   const lastAttemptAgeMinutes = Number.isFinite(attemptMs)
     ? Math.max(0, Math.round((nowMs - attemptMs) / 60_000))
     : null;
-  const hasFreshSuccess = ageMinutes !== null && ageMinutes <= STALE_AFTER_MINUTES;
+  const hasFreshSuccess = ageMinutes !== null && ageMinutes <= staleAfterMinutes;
   const isStale = row.mode === "live" && row.status === "healthy" && !hasFreshSuccess;
   const effectiveStatus = isStale ? "stale" : row.status;
 
@@ -63,6 +74,7 @@ function serializeStatus(row: typeof sourceStatuses.$inferSelect, nowMs: number)
     updatedAt: row.updatedAt,
     ageMinutes,
     lastAttemptAgeMinutes,
+    staleAfterMinutes,
   };
 }
 
@@ -79,7 +91,14 @@ export async function GET(request: Request) {
   }
 
   const visibleModes = includeDemo ? ["live", "demo"] : ["live"];
-  const conditions: SQL[] = [inArray(sourceStatuses.mode, visibleModes)];
+  const partnerAuthorization = authorizedPartnerSources();
+  const authorizedSourceIds = ACTIVE_SOURCE_IDS.filter((candidate) => (
+    isPartnerSourceAuthorized(candidate, partnerAuthorization)
+  ));
+  const conditions: SQL[] = [
+    inArray(sourceStatuses.mode, visibleModes),
+    inArray(sourceStatuses.source, authorizedSourceIds),
+  ];
   if (source !== null) conditions.push(eq(sourceStatuses.source, source));
   if (market !== null) conditions.push(eq(sourceStatuses.market, market));
 

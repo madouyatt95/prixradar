@@ -109,8 +109,14 @@ function isTrustedRetailSeller(source: RetailSource, seller: string | null): boo
   const normalized = seller.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/gu, "");
   const expected: Partial<Record<RetailSource, readonly string[]>> = {
     boulanger: ["boulanger", "boulangercom"],
+    carrefour: ["carrefour", "carrefourfr"],
+    castorama: ["castorama", "castoramafr"],
+    conforama: ["conforama", "conforamafr"],
     darty: ["darty", "dartycom"],
     cdiscount: ["cdiscount", "cdiscountcom"],
+    fnac: ["fnac", "fnaccom"],
+    leroy_merlin: ["leroymerlin", "leroymerlinfr"],
+    rueducommerce: ["rueducommerce", "rueducommercefr"],
     amazon: ["amazon", "amazonfr", "amazonde", "amazonit", "amazones", "amazoncouk"],
   };
   if (expected[source]?.includes(normalized)) return true;

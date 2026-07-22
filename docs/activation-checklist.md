@@ -37,6 +37,7 @@ Ajouter aux variables serveur du Site :
 - `CF_ACCESS_TEAM_DOMAIN`, par exemple `votre-equipe.cloudflareaccess.com`
 - `CF_ACCESS_AUD`, l'audience de l'application Cloudflare Access
 - `ALERT_DELIVERY_MODE=shadow` pendant la recette
+- `AUTHORIZED_PARTNER_SOURCES` vide tant qu’aucun accord ou flux n’est validé
 
 Après redéploiement, `/api/health` doit répondre sans révéler les valeurs et
 afficher les capacités correspondantes à `true`.
@@ -66,6 +67,7 @@ l’Actor, ajouter :
 - `PUSH_DELIVERY_SECRET`
 - `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
 - `ENABLE_BROWSER_FALLBACK=true`
+- `AUTHORIZED_PARTNER_SOURCES`, avec exactement les mêmes sources autorisées que côté PWA
 
 Ne pas ajouter `APIFY_TOKEN` à l’Actor : il sert seulement à créer les plannings
 depuis un poste d’administration.
@@ -75,12 +77,25 @@ depuis un poste d’administration.
 Les pages se gèrent désormais dans l’onglet **Pilotage**. `PRIXRADAR_RETAIL_URLS`
 reste un amorçage facultatif pour le premier déploiement. Utiliser des pages
 catégorie/recherche stables de Boulanger, Darty et Cdiscount, jamais des domaines
-non autorisés. Le collecteur récupère automatiquement le plan dû, découvre les
-fiches produit, puis effectue deux lectures avant ingestion.
+non autorisés. Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du
+Commerce peuvent aussi être préparés dans le pilotage, mais restent bloqués tant
+que l’accord de collecte ou le flux partenaire n’est pas confirmé. Le collecteur
+récupère automatiquement le plan dû, découvre les fiches produit, puis effectue
+deux lectures avant ingestion.
+
+Après validation explicite d’une enseigne partenaire seulement, ajouter son
+identifiant à `AUTHORIZED_PARTNER_SOURCES` côté PWA et collecteur. Valeurs
+possibles : `fnac`, `carrefour`, `leroy_merlin`, `castorama`, `conforama` et
+`rueducommerce`. Une liste vide est le réglage sûr par défaut.
 
 Commencer avec une page par enseigne. Élargir ensuite selon la consommation
 réelle et la stabilité des connecteurs ; plus d’URL ne signifie pas
 automatiquement une meilleure couverture si les pages se recouvrent.
+
+Pour chaque nouvelle enseigne, effectuer d’abord un passage sans notification,
+valider l’identité produit, le vendeur, les promotions conditionnelles, le stock
+local et le total livré. Le libellé public ne passe de « Connecteur prêt · accès
+requis » à « Actif » qu’après un rapport `live` sain et récent.
 
 ## 5. Simuler puis créer les plannings
 
@@ -98,6 +113,7 @@ Le plan doit montrer :
 - les segments Keepa EU5 récupérés depuis le pilotage, chacun avec un budget ;
 - 5 contrôles de page Amazon maximum par marché ;
 - les enseignes françaises regroupées toutes les 30 minutes ;
+- aucune des six sources partenaires dans le plan tant qu’elle n’est pas dans `AUTHORIZED_PARTNER_SOURCES` ;
 - 1 024 Mo et 15 minutes maximum par exécution ;
 - notification e-mail activée en cas d’échec de planning.
 - le test quotidien des connecteurs à 6 h 17 ;
@@ -132,11 +148,11 @@ Le parcours de recette est :
 8. passer `ALERT_DELIVERY_MODE=live`, redéployer, puis vérifier une livraison réelle ;
 9. lancer le contrôle public :
 
-Avant la recette fonctionnelle, appliquer la migration D1 `0004` : elle préserve
-les données existantes et initialise les nouveaux scores/canaux avec des valeurs
-prudentes (`0`, `personal`, `balanced`). Tester ensuite : création d'un radar en
-langage naturel, scan/saisie EAN, bouton « Vérifier maintenant », verdict d'achat
-et réception du résumé quotidien.
+Avant la recette fonctionnelle, appliquer toutes les migrations D1 dans l’ordre,
+jusqu’à `0008`. La migration `0008` élargit les contraintes aux six nouvelles
+enseignes en recopiant chaque ligne existante ; elle ne les active pas. Tester
+ensuite : création d'un radar en langage naturel, scan/saisie EAN, bouton
+« Vérifier maintenant », verdict d'achat et réception du résumé quotidien.
 
 ```bash
 PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production

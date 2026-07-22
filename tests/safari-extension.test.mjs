@@ -12,5 +12,9 @@ test("Safari extension uses minimal permissions and an explicit inspection flow"
   const popup = await readFile(new URL("popup.js", root), "utf8");
   assert.match(popup, /\/share/);
   assert.match(popup, /SUPPORTED_HOSTS/);
+  for (const merchant of ["fnac", "carrefour", "leroymerlin", "castorama", "conforama", "rueducommerce"]) {
+    assert.match(popup, new RegExp(merchant));
+  }
+  assert.match(popup, /autorisation|flux partenaire|Rue du Commerce/i);
   assert.doesNotMatch(popup, /checkout|payment|commander|payer/i);
 });

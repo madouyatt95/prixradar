@@ -1,4 +1,4 @@
-# PrixRadar v0.6.0
+# PrixRadar v0.7.0
 
 PWA mobile-first pour détecter, vérifier et suivre des anomalies de prix sans
 présenter une remise comme une « erreur certaine ».
@@ -12,7 +12,8 @@ présenter une remise comme une « erreur certaine ».
 | Moteur d’anomalies | actif | médiane/MAD, fraîcheur, variante, vendeur, livraison, seconde lecture |
 | API alertes et état des sources | actif | données `live` strictes, aucune fixture publique par défaut |
 | Keepa dans la PWA | prêt | cache D1 15 min et quota 20 appels/heure/appareil ; requiert une clé |
-| Collecteur Boulanger/Darty/Cdiscount | prêt à déployer | JSON-LD, connecteurs, Crawlee HTTP, Playwright en repli |
+| Connecteurs directs Boulanger/Darty/Cdiscount | prêts à déployer | JSON-LD, Crawlee HTTP, Playwright en repli |
+| Connecteurs Fnac/Carrefour/Leroy Merlin/Castorama/Conforama/Rue du Commerce | prêts côté code, verrouillés | autorisation de collecte ou flux partenaire, pages de référence et premier rapport sain requis avant tout statut LIVE |
 | Amazon Europe | prêt à déployer | Keepa EU5 + historique borné + double contrôle de page avant notification |
 | Web Push | prêt à activer | souscriptions, heures calmes, réservation atomique et audit ; requiert VAPID + collecteur |
 | Automatisation Apify | prête, non appliquée | plan EU5 toutes les 15 min + enseignes FR toutes les 30 min, provisionnement idempotent |
@@ -36,6 +37,11 @@ présenter une remise comme une « erreur certaine ».
 | Passeport de preuve | actif | dossier public par alerte LIVE ; le statut « certifié » n’apparaît que si tous les contrôles passent |
 | Registre de couverture | actif | identités produit persistées par segment, pagination durable et déduplication inter-pages, estimation calibrée et tests de contrat ; sitemap/flux/API restent désactivés |
 | Parcours iPhone Safari | prêt à signer | PWA plein écran + WebExtension minimale ; publication TestFlight/App Store requiert un compte Apple |
+
+Dans l’interface, **connecteur prêt** signifie que l’adaptateur, les garde-fous et
+le pilotage existent. Cela ne signifie ni collecte autorisée ni surveillance
+active. Une enseigne devient **LIVE** uniquement après raccordement d’un flux ou
+validation de la collecte, puis réception d’un rapport `live` sain et récent.
 
 Les six cartes affichées quand aucune source n’est active portent **DÉMO**. Elles
 ne sont jamais ingérées, notifiées ou présentées comme des prix disponibles.
@@ -94,6 +100,8 @@ migration `0006` ajoute les profils Essentiel/Expert et les mesures de couvertur
 sans recréer ni vider les tables existantes. La migration `0007` ajoute le registre
 durable des identités produit par segment afin que les paramètres de suivi et les
 chevauchements entre catégories ne gonflent pas le taux de couverture.
+La migration `0008` élargit sans perte les contraintes de source aux six nouveaux
+connecteurs, qui restent désactivés tant que l’autorisation partenaire manque.
 
 ## Configuration utilisateur
 
@@ -122,6 +130,7 @@ le préfixe `NEXT_PUBLIC_` pour ces valeurs.
 | `DEVICE_COOKIE_SECRET` | signe le cookie appareil ; obligatoire en HTTPS |
 | `KEEPA_API_KEY` | recherche et historique Amazon Keepa |
 | `INGEST_SECRET` | écriture des observations et statuts de source |
+| `AUTHORIZED_PARTNER_SOURCES` | allowlist vide par défaut ; ouvre uniquement une enseigne disposant d’un accord ou flux officiel |
 | `PUSH_DELIVERY_SECRET` | lecture des cibles et audit Push, distinct du précédent |
 | `VAPID_PUBLIC_KEY` | souscription Web Push dans la PWA |
 | `VAPID_PRIVATE_KEY` | signature des Push côté collecteur |
@@ -165,7 +174,7 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `GET /api/alerts` : alertes LIVE, vérifiées, fraîches et non expirées ;
 - `GET /api/sources` : santé réelle calculée depuis le dernier succès ;
 - `GET|POST|DELETE /api/watchlist` : suivis par appareil signé ;
-- `GET|PUT /api/preferences` : profil Essentiel/Expert, presets, seuils de preuve, budget et heures calmes ;
+- `GET|PUT /api/preferences` : profil Essentiel/Expert, presets, enseignes, seuils de preuve, budget et heures calmes ;
 - `GET|POST|DELETE /api/push` : souscriptions (cinq maximum par appareil) ;
 - `GET /api/push/targets` : cibles autorisées, sans `ownerId` ;
 - `POST /api/push/deliveries` : réservation/déduplication puis résultat d’envoi ;
@@ -199,6 +208,11 @@ offres sont personnalisées, les stocks sont localisés et des protections anti-
 existent. En production, il faut privilégier flux/API/affiliation et accords
 marchands, respecter robots.txt et les conditions d’utilisation, puis maintenir
 les connecteurs avec des tests de contrat.
+
+Fnac et Rue du Commerce comportent des vendeurs marketplace. Carrefour, Leroy
+Merlin, Castorama et Conforama peuvent faire varier prix, stock, retrait et
+livraison selon le magasin ou la zone. PrixRadar conserve donc ces dimensions
+séparées et n’active pas ces six sources sur la seule présence de leur adaptateur.
 
 Amazon Belgique, Pays-Bas, Pologne, Suède et Irlande ne sont pas aliasés vers un
 autre pays : ce projet limite volontairement Keepa aux cinq domaines EU5 dont le

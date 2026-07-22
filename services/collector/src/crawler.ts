@@ -15,7 +15,12 @@ import {
   extractRetailOffers,
 } from "./connectors/index.js";
 import { verifyWithSecondRead } from "./verify.js";
-import type { OfferSnapshot, VerifiedObservation } from "./types.js";
+import {
+  isPartnerRetailSource,
+  type OfferSnapshot,
+  type PartnerRetailSource,
+  type VerifiedObservation,
+} from "./types.js";
 import { parseMoneyMinor } from "./normalize.js";
 
 export interface ScanOptions {
@@ -24,6 +29,7 @@ export interface ScanOptions {
   timeoutMs?: number;
   maxDiscoveredUrls?: number;
   proxyUrls?: readonly string[];
+  authorizedPartnerSources?: readonly PartnerRetailSource[];
   shadowCart?: boolean;
 }
 
@@ -198,6 +204,27 @@ export class CollectorNavigationError extends Error {
   override name = "CollectorNavigationError";
 }
 
+export class PartnerSourceAuthorizationError extends Error {
+  override name = "PartnerSourceAuthorizationError";
+
+  constructor(readonly source: PartnerRetailSource) {
+    super(`Source partenaire ${source} bloquée: ajoutez-la à AUTHORIZED_PARTNER_SOURCES uniquement après autorisation explicite.`);
+  }
+}
+
+/**
+ * Refuses partner traffic before Crawlee or Playwright can create a request.
+ * The `fixture` flag only labels results and therefore never grants network
+ * access. Deterministic merchant fixtures must be injected into extractor
+ * tests without calling this network scanner.
+ */
+export function assertSourceScanAuthorized(url: string, options: ScanOptions = {}): void {
+  const connector = connectorForUrl(url);
+  if (!isPartnerRetailSource(connector.source)) return;
+  if (options.authorizedPartnerSources?.includes(connector.source)) return;
+  throw new PartnerSourceAuthorizationError(connector.source);
+}
+
 log.setLevel(LogLevel.ERROR);
 
 function proxyConfiguration(proxyUrls: readonly string[] | undefined): ProxyConfiguration | undefined {
@@ -301,7 +328,7 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
 }
 
 export async function scanSourceUrl(url: string, options: ScanOptions = {}): Promise<ScanResult> {
-  connectorForUrl(url);
+  assertSourceScanAuthorized(url, options);
   if (options.shadowCart) return scanBrowser(url, { ...options, browserFallback: true });
   try {
     const result = await scanHttp(url, options);

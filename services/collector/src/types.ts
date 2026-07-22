@@ -1,4 +1,50 @@
-export type RetailSource = "boulanger" | "darty" | "cdiscount" | "amazon";
+export type RetailSource =
+  | "amazon"
+  | "boulanger"
+  | "carrefour"
+  | "castorama"
+  | "cdiscount"
+  | "conforama"
+  | "darty"
+  | "fnac"
+  | "leroy_merlin"
+  | "rueducommerce";
+
+export const RETAIL_SOURCES = [
+  "amazon",
+  "boulanger",
+  "carrefour",
+  "castorama",
+  "cdiscount",
+  "conforama",
+  "darty",
+  "fnac",
+  "leroy_merlin",
+  "rueducommerce",
+] as const satisfies readonly RetailSource[];
+
+export const PARTNER_RETAIL_SOURCES = [
+  "fnac",
+  "carrefour",
+  "leroy_merlin",
+  "castorama",
+  "conforama",
+  "rueducommerce",
+] as const satisfies readonly RetailSource[];
+
+export type PartnerRetailSource = (typeof PARTNER_RETAIL_SOURCES)[number];
+
+const RETAIL_SOURCE_IDS = new Set<string>(RETAIL_SOURCES);
+const PARTNER_RETAIL_SOURCE_IDS = new Set<string>(PARTNER_RETAIL_SOURCES);
+
+export function isRetailSource(value: unknown): value is RetailSource {
+  return typeof value === "string" && RETAIL_SOURCE_IDS.has(value);
+}
+
+export function isPartnerRetailSource(value: unknown): value is PartnerRetailSource {
+  return typeof value === "string" && PARTNER_RETAIL_SOURCE_IDS.has(value);
+}
+
 export type Market = "FR" | "DE" | "IT" | "ES" | "GB";
 export type Currency = "EUR" | "GBP";
 export type Availability = "in_stock" | "out_of_stock" | "preorder" | "unknown";

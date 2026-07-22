@@ -1,7 +1,8 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { watchlistItems } from "../../../db/schema";
-import { isActiveSource } from "../../../lib/source-registry";
+import { parseCoverageProductUrl, parseMerchantUrl } from "../../../lib/merchant-url";
+import { isActiveSource, isPartnerRequiredSource } from "../../../lib/source-registry";
 import {
   deviceError,
   deviceJson,
@@ -80,7 +81,7 @@ function parsePayload(payload: WatchlistPayload) {
 
   const source = cleanRequiredString(payload.source, "source", 24).toLowerCase();
   if (!isActiveSource(source)) {
-    throw new Error("source doit être amazon, boulanger, cdiscount ou darty.");
+    throw new Error("source n’est pas prise en charge.");
   }
 
   const title = cleanRequiredString(payload.title, "title", 240);
@@ -92,7 +93,7 @@ function parsePayload(payload: WatchlistPayload) {
     throw new Error("Keepa couvre ici les marchés Amazon DE, ES, FR, GB et IT.");
   }
   if (source !== "amazon" && market !== "FR") {
-    throw new Error("Boulanger, Cdiscount et Darty utilisent le marché FR.");
+    throw new Error("Cette enseigne utilise le marché FR.");
   }
 
   let priceCents: number;
@@ -123,13 +124,22 @@ function parsePayload(payload: WatchlistPayload) {
     throw new Error("url doit utiliser HTTPS.");
   }
 
+  const merchant = parseMerchantUrl(url.toString());
+  if (!merchant || merchant.source !== source || merchant.market !== market) {
+    throw new Error("url ne correspond pas à l’enseigne et au marché déclarés.");
+  }
+  const stableProduct = parseCoverageProductUrl(merchant.url);
+  if (isPartnerRequiredSource(source) && !stableProduct) {
+    throw new Error("url doit identifier une fiche produit stable de cette enseigne.");
+  }
+
   return {
     productId,
     source,
     title,
     market,
     priceCents,
-    url: url.toString(),
+    url: stableProduct?.url ?? merchant.url,
   };
 }
 
@@ -276,7 +286,7 @@ export async function DELETE(request: Request) {
       >;
       try {
         const parsedSource = cleanRequiredString(source, "source", 24).toLowerCase();
-        if (!isActiveSource(parsedSource)) throw new Error("source doit être amazon, boulanger, cdiscount ou darty.");
+        if (!isActiveSource(parsedSource)) throw new Error("source n’est pas prise en charge.");
         identity = {
           productId: cleanRequiredString(productId, "productId", 120),
           source: parsedSource,
@@ -298,7 +308,7 @@ export async function DELETE(request: Request) {
           device,
           400,
           "invalid_watchlist_identity",
-          "source doit être amazon, boulanger, cdiscount ou darty."
+          "source n’est pas prise en charge."
         );
       }
       if (!/^[\p{L}\p{N}._:/-]+$/u.test(identity.productId)) {

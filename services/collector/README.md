@@ -29,6 +29,25 @@ Copier `.env.example` vers `.env`, puis charger les variables avec le mécanisme
 du déploiement ou `node --env-file=.env ...`. Ne jamais exposer ces variables à
 la PWA.
 
+### Autorisation des sources partenaires
+
+Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce disposent
+d'adaptateurs testés sur des fragments HTML locaux, mais tout accès réseau réel
+vers ces six sources est refusé par défaut, avant même la création d'une requête
+Crawlee ou Playwright. Le drapeau `--fixture` marque une sortie ; il n’autorise
+jamais le réseau partenaire. Une autorisation commerciale, contractuelle ou technique
+explicite doit d'abord être obtenue, puis déclarée uniquement côté serveur :
+
+```text
+AUTHORIZED_PARTNER_SOURCES=fnac,carrefour,leroy_merlin,castorama,conforama,rueducommerce
+```
+
+La variable accepte seulement ces identifiants précis, sans joker. Elle ne vaut
+pas autorisation à elle seule et ne doit servir ni à contourner une protection
+anti-bot, ni à ignorer les conditions de l'enseigne. Les fixtures HTML locales
+restent testables sans cette variable parce qu'elles n’appellent pas le scanner
+réseau et ne sont jamais ingérées ou notifiées.
+
 ## Contrats privés PrixRadar
 
 Toutes les requêtes utilisent `Authorization: Bearer ...`. Lorsque le Site est
@@ -69,11 +88,14 @@ est cohérente.
 ## Connecteurs et couverture
 
 Le registre `RETAIL_CONNECTORS` expose un `connectorId` et une `version` pour
-Boulanger, Darty, Cdiscount et chacun des cinq marchés Amazon. L'identifiant de
-variante attendu provient exclusivement de l'URL demandée; l'identifiant
-observé provient du DOM marchand ou du lien canonical rendu. Un snapshot ancien
-sans ces deux preuves reste non certifié au lieu de recevoir deux valeurs de
-repli artificiellement égales.
+Boulanger, Darty, Cdiscount, les six enseignes partenaires et chacun des cinq
+marchés Amazon. L'identifiant de variante attendu provient exclusivement de
+l'URL demandée; l'identifiant observé provient du DOM marchand ou du lien
+canonical rendu. Un snapshot ancien sans ces deux preuves reste non certifié au
+lieu de recevoir deux valeurs de repli artificiellement égales. La présence
+d'un connecteur partenaire dans ce registre ne l'active jamais en production :
+le garde-fou `AUTHORIZED_PARTNER_SOURCES` reste appliqué par la CLI, le worker
+et l'Actor.
 
 La découverte renvoie séparément `discoveredUrls` et `nextPageUrl`. Une page
 suivante doit rester sur le même connecteur, utiliser un paramètre de pagination
@@ -112,7 +134,10 @@ Le packaging `.actor/` accepte `source`, `market`, `markets`, `urls`, `mode`, le
 seuils Keepa et la limite de contrôles directs. Depuis ce
 dossier, `apify push` utilise le Dockerfile du collecteur. Le mode `fixture`
 marque chaque résultat et refuse explicitement `notify=true`; les deux couches
-sink et push refusent aussi toute fixture.
+sink et push refusent aussi toute fixture. Le sélecteur Actor affiche les six
+sources partenaires, mais leur sélection ne remplace pas l'autorisation serveur
+`AUTHORIZED_PARTNER_SOURCES` et une exécution directe non autorisée échoue avant
+toute requête marchande.
 
 Le plan d’automatisation est lisible sans compte ni clé :
 

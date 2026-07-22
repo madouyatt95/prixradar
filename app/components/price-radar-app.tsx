@@ -446,6 +446,35 @@ const MARKET_OPTIONS = [
   { value: "GB", label: "Amazon.co.uk", domain: 2 },
 ];
 
+const RETAIL_SOURCE_OPTIONS = [
+  { value: "amazon", label: "Amazon Europe", mark: "K" },
+  { value: "boulanger", label: "Boulanger", mark: "B" },
+  { value: "darty", label: "Darty", mark: "D" },
+  { value: "cdiscount", label: "Cdiscount", mark: "C" },
+  { value: "fnac", label: "Fnac", mark: "FN" },
+  { value: "carrefour", label: "Carrefour", mark: "CF" },
+  { value: "leroy_merlin", label: "Leroy Merlin", mark: "LM" },
+  { value: "castorama", label: "Castorama", mark: "CA" },
+  { value: "conforama", label: "Conforama", mark: "CO" },
+  { value: "rueducommerce", label: "Rue du Commerce", mark: "RDC" },
+] as const;
+
+const RETAIL_SOURCE_NAMES = new Map<string, string>(
+  RETAIL_SOURCE_OPTIONS.map((source) => [source.value, source.label]),
+);
+
+const FRENCH_SOURCE_COVERAGE = [
+  { id: "boulanger", mark: "B", name: "Boulanger", detail: "France · catalogue + contrôle page", fallbackStatus: "Prêt à déployer", fallbackTone: "prepared", method: "Flux partenaire prioritaire, navigateur uniquement en repli" },
+  { id: "darty", mark: "D", name: "Darty", detail: "France · catalogue + contrôle page", fallbackStatus: "Prêt à déployer", fallbackTone: "prepared", method: "Référence exacte, vendeur et frais de livraison normalisés" },
+  { id: "cdiscount", mark: "C", name: "Cdiscount", detail: "France · marketplace", fallbackStatus: "Prêt à déployer", fallbackTone: "prepared", method: "Vendeurs tiers séparés, score de fiabilité renforcé" },
+  { id: "fnac", mark: "FN", name: "Fnac", detail: "France · marketplace et offres adhérents", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation de collecte ou flux partenaire requis ; prix public séparé des avantages adhérents" },
+  { id: "carrefour", mark: "CF", name: "Carrefour", detail: "France · prix et stock selon le magasin", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; carte fidélité et disponibilité locale restent séparées" },
+  { id: "leroy_merlin", mark: "LM", name: "Leroy Merlin", detail: "France · livraison et retrait localisés", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; prix, stock et retrait sont revérifiés pour la zone choisie" },
+  { id: "castorama", mark: "CA", name: "Castorama", detail: "France · livraison et retrait localisés", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; aucun prix local n’est généralisé à toute la France" },
+  { id: "conforama", mark: "CO", name: "Conforama", detail: "France · stock magasin et livraison", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; disponibilité et coût de livraison sont contrôlés séparément" },
+  { id: "rueducommerce", mark: "RDC", name: "Rue du Commerce", detail: "France · marketplace", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; vendeur tiers, état et total livré restent explicites" },
+] as const;
+
 function money(value: number, currency: "EUR" | "GBP" = "EUR") {
   return new Intl.NumberFormat("fr-FR", {
     style: "currency",
@@ -527,17 +556,16 @@ function localAlertFreshness(
 
 function alertAccent(source: string): AlertItem["accent"] {
   if (source === "amazon" || source === "keepa") return "coral";
-  if (source === "boulanger") return "violet";
-  if (source === "darty") return "mint";
-  if (source === "cdiscount") return "blue";
+  if (source === "boulanger" || source === "fnac" || source === "conforama") return "violet";
+  if (source === "darty" || source === "leroy_merlin" || source === "carrefour") return "mint";
+  if (source === "cdiscount" || source === "rueducommerce" || source === "castorama") return "blue";
   return "gold";
 }
 
 function alertLabel(source: string, title: string) {
   if (source === "amazon" || source === "keepa") return "AMZ";
-  if (source === "boulanger") return "BLG";
-  if (source === "darty") return "DRT";
-  if (source === "cdiscount") return "CDS";
+  const option = RETAIL_SOURCE_OPTIONS.find((candidate) => candidate.value === source);
+  if (option) return option.mark;
   return title.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 4).toUpperCase() || "PRIX";
 }
 
@@ -603,7 +631,7 @@ function mapLiveAlert(value: unknown): AlertItem | null {
       ? item.merchant
       : source === "amazon" || source === "keepa"
         ? `Amazon.${market === "GB" ? "co.uk" : market.toLowerCase()}`
-        : source.charAt(0).toUpperCase() + source.slice(1);
+        : RETAIL_SOURCE_NAMES.get(source) ?? source.charAt(0).toUpperCase() + source.slice(1);
   const currency = item.currency === "GBP" ? "GBP" : "EUR";
   const current = Math.max(0, totalCents / 100);
   const usual = Math.max(current, usualPriceCents / 100);
@@ -783,6 +811,7 @@ export function PriceRadarApp() {
   const [maxPriceEuros, setMaxPriceEuros] = useState("");
   const [preferredMarkets, setPreferredMarkets] = useState("FR");
   const [preferredCategories, setPreferredCategories] = useState("");
+  const [preferredSources, setPreferredSources] = useState("");
   const [deliveryCountry, setDeliveryCountry] = useState("FR");
   const [postalCode, setPostalCode] = useState("");
   const [deliveryMode, setDeliveryMode] = useState<"home" | "pickup" | "either">("either");
@@ -922,6 +951,7 @@ export function PriceRadarApp() {
         if (typeof preferences.maxPriceCents === "number") setMaxPriceEuros(String(preferences.maxPriceCents / 100));
         if (Array.isArray(preferences.markets)) setPreferredMarkets(preferences.markets.join(", "));
         if (Array.isArray(preferences.categories)) setPreferredCategories(preferences.categories.join(", "));
+        if (Array.isArray(preferences.sources)) setPreferredSources(preferences.sources.join(", "));
         if (typeof preferences.deliveryCountry === "string") setDeliveryCountry(preferences.deliveryCountry);
         if (typeof preferences.postalCode === "string") setPostalCode(preferences.postalCode);
         if (preferences.deliveryMode === "home" || preferences.deliveryMode === "pickup" || preferences.deliveryMode === "either") setDeliveryMode(preferences.deliveryMode);
@@ -961,6 +991,7 @@ export function PriceRadarApp() {
           maxPriceCents: maxPriceEuros.trim() ? Math.max(1, Math.round(Number(maxPriceEuros) * 100)) : null,
           markets: preferredMarkets.split(",").map((item) => item.trim()).filter(Boolean),
           categories: preferredCategories.split(",").map((item) => item.trim()).filter(Boolean),
+          sources: preferredSources.split(",").map((item) => item.trim()).filter(Boolean),
           deliveryCountry,
           postalCode,
           deliveryMode,
@@ -972,7 +1003,7 @@ export function PriceRadarApp() {
       }).catch(() => setPreferencesSaveState("error"));
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [closeExpiredMinutes, deliveryCountry, deliveryMode, experienceLevel, maxAlertAgeMinutes, maxPriceEuros, minDiscount, minimumHistoryPoints, minScore, minSellerScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferencesReady, preset, quietEnd, quietHours, quietStart, requireCartConfirmation, requireExactVariant, requireLocationMatch]);
+  }, [closeExpiredMinutes, deliveryCountry, deliveryMode, experienceLevel, maxAlertAgeMinutes, maxPriceEuros, minDiscount, minimumHistoryPoints, minScore, minSellerScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferredSources, preferencesReady, preset, quietEnd, quietHours, quietStart, requireCartConfirmation, requireExactVariant, requireLocationMatch]);
 
   useEffect(() => {
     fetch("/api/radars", { headers: { accept: "application/json" } })
@@ -1484,6 +1515,8 @@ export function PriceRadarApp() {
           setPreferredMarkets={setPreferredMarkets}
           preferredCategories={preferredCategories}
           setPreferredCategories={setPreferredCategories}
+          preferredSources={preferredSources}
+          setPreferredSources={setPreferredSources}
           deliveryCountry={deliveryCountry}
           setDeliveryCountry={setDeliveryCountry}
           postalCode={postalCode}
@@ -1786,7 +1819,7 @@ function RadarView({
         <div className="metric-card metric-primary">
           <span>{mode === "live" ? "Anomalies actives" : "Exemples de signaux"}</span>
           <strong>{loading ? "…" : alerts.length}</strong>
-          <small>{mode === "live" ? "après seconde vérification" : "sur 4 enseignes + Amazon"}</small>
+          <small>{mode === "live" ? "après seconde vérification" : "sur 9 enseignes françaises + Amazon EU5"}</small>
         </div>
         <div className="metric-card">
           <span>Doublement vérifiés</span>
@@ -2099,9 +2132,10 @@ function SourcesView({
   }
 
   const keepaState = presentation(runtimeFor("keepa", "amazon"), "À connecter", "pending");
-  const boulangerState = presentation(runtimeFor("boulanger"), "Prêt à déployer", "prepared");
-  const dartyState = presentation(runtimeFor("darty"), "Prêt à déployer", "prepared");
-  const cdiscountState = presentation(runtimeFor("cdiscount"), "Prêt à déployer", "prepared");
+  const frenchSourceStates = new Map(FRENCH_SOURCE_COVERAGE.map((source) => [
+    source.id,
+    presentation(runtimeFor(source.id), source.fallbackStatus, source.fallbackTone),
+  ]));
   const apifyActive = statuses.some((item) => item.mode === "live" && Boolean(item.lastSuccessAt));
   const readiness = [
     ["Base Cloudflare", health?.database === true, "D1 et API"],
@@ -2225,6 +2259,22 @@ function SourcesView({
         </div>
       </div>
 
+      <div className="coverage-callout">
+        <div>
+          <span className="eyebrow">Grandes enseignes françaises</span>
+          <h2>9 enseignes préparées, activation contrôlée</h2>
+          <p>
+            Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
+            rejoignent Boulanger, Darty et Cdiscount. Un connecteur prêt n’est jamais
+            affiché comme actif avant une autorisation ou un flux partenaire et un
+            premier rapport sain.
+          </p>
+        </div>
+        <div className="market-badges" aria-label="Enseignes françaises préparées">
+          <span>9 FR</span>
+        </div>
+      </div>
+
       <div className="source-list">
         <SourceRow
           mark="K"
@@ -2235,33 +2285,10 @@ function SourcesView({
           runtime={runtimeFor("keepa", "amazon")}
           method="Historique 90 jours, Buy Box, deuxième vérification avant alerte"
         />
-        <SourceRow
-          mark="B"
-          name="Boulanger"
-          detail="France · flux catalogue + contrôle page"
-          status={boulangerState.status}
-          tone={boulangerState.tone}
-          runtime={runtimeFor("boulanger")}
-          method="Flux partenaire prioritaire, navigateur uniquement en repli"
-        />
-        <SourceRow
-          mark="D"
-          name="Darty"
-          detail="France · flux affilié + contrôle page"
-          status={dartyState.status}
-          tone={dartyState.tone}
-          runtime={runtimeFor("darty")}
-          method="Référence exacte, vendeur et frais de livraison normalisés"
-        />
-        <SourceRow
-          mark="C"
-          name="Cdiscount"
-          detail="France · marketplace"
-          status={cdiscountState.status}
-          tone={cdiscountState.tone}
-          runtime={runtimeFor("cdiscount")}
-          method="Vendeurs tiers séparés, score de fiabilité renforcé"
-        />
+        {FRENCH_SOURCE_COVERAGE.map((source) => {
+          const state = frenchSourceStates.get(source.id) ?? { status: source.fallbackStatus, tone: source.fallbackTone };
+          return <SourceRow key={source.id} mark={source.mark} name={source.name} detail={source.detail} status={state.status} tone={state.tone} runtime={runtimeFor(source.id)} method={source.method} />;
+        })}
         <SourceRow
           mark="◎"
           name="Indice PrixRadar"
@@ -2388,6 +2415,8 @@ function SettingsView({
   setPreferredMarkets,
   preferredCategories,
   setPreferredCategories,
+  preferredSources,
+  setPreferredSources,
   deliveryCountry,
   setDeliveryCountry,
   postalCode,
@@ -2440,6 +2469,8 @@ function SettingsView({
   setPreferredMarkets: (value: string) => void;
   preferredCategories: string;
   setPreferredCategories: (value: string) => void;
+  preferredSources: string;
+  setPreferredSources: (value: string) => void;
   deliveryCountry: string;
   setDeliveryCountry: (value: string) => void;
   postalCode: string;
@@ -2464,6 +2495,7 @@ function SettingsView({
   const categoryChoices = ["Image & son", "Informatique", "Smartphone", "Gaming", "Maison", "Cuisine", "Audio"];
   const selectedMarkets = new Set(preferredMarkets.split(",").map((value) => value.trim().toUpperCase()).filter(Boolean));
   const selectedCategories = new Set(preferredCategories.split(",").map((value) => value.trim()).filter(Boolean));
+  const selectedSources = new Set(preferredSources.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
   const selectedPreset = ALERT_PRESETS[preset];
 
   function toggleMarket(value: string) {
@@ -2478,10 +2510,24 @@ function SettingsView({
     setPreferredCategories([...next].join(", "));
   }
 
+  function toggleSource(value: string) {
+    if (selectedSources.size === 0) {
+      setPreferredSources(value);
+      return;
+    }
+    const next = new Set(selectedSources);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    const ordered = RETAIL_SOURCE_OPTIONS.map((source) => source.value).filter((source) => next.has(source));
+    setPreferredSources(ordered.length === RETAIL_SOURCE_OPTIONS.length ? "" : ordered.join(", "));
+  }
+
   const marketSummary = selectedMarkets.size
     ? markets.filter(([code]) => selectedMarkets.has(code)).map(([, label]) => label).join(", ")
     : "tous les pays pris en charge";
   const categorySummary = selectedCategories.size ? [...selectedCategories].join(", ") : "toutes les catégories";
+  const sourceSummary = selectedSources.size
+    ? RETAIL_SOURCE_OPTIONS.filter((source) => selectedSources.has(source.value)).map((source) => source.label).join(", ")
+    : "toutes les enseignes prises en charge";
   const budgetSummary = maxPriceEuros.trim() ? `${maxPriceEuros.trim()} € maximum` : "sans plafond de budget";
   const saveLabel = preferencesSaveState === "saving"
     ? "Enregistrement…"
@@ -2518,10 +2564,11 @@ function SettingsView({
         </div>
         <div className="essential-fields">
           <fieldset className="simple-choice-field"><legend>Catégories qui vous intéressent</legend><div className="choice-chips">{categoryChoices.map((category) => <button key={category} type="button" className={selectedCategories.has(category) ? "is-active" : ""} aria-pressed={selectedCategories.has(category)} onClick={() => toggleCategory(category)}>{category}</button>)}</div><label className="custom-category">Autre catégorie<input value={preferredCategories} onChange={(event) => setPreferredCategories(event.target.value)} placeholder="Ex. photo, vélo électrique" /></label></fieldset>
+          <fieldset className="simple-choice-field"><legend>Enseignes à surveiller</legend><div className="choice-chips"><button type="button" className={selectedSources.size === 0 ? "is-active" : ""} aria-pressed={selectedSources.size === 0} onClick={() => setPreferredSources("")}>Toutes</button>{RETAIL_SOURCE_OPTIONS.map((source) => <button key={source.value} type="button" className={selectedSources.has(source.value) ? "is-active" : ""} aria-pressed={selectedSources.has(source.value)} onClick={() => toggleSource(source.value)}>{source.label}</button>)}</div><small>Les six nouveaux connecteurs sont prêts côté code, mais restent silencieux jusqu’à l’autorisation de collecte ou au raccordement d’un flux partenaire, puis un premier contrôle sain.</small></fieldset>
           <label className="simple-input-field"><span>Budget maximal</span><div><input type="number" min="1" inputMode="decimal" value={maxPriceEuros} onChange={(event) => setMaxPriceEuros(event.target.value)} placeholder="Aucune limite" /><span>€</span></div><small>Laissez vide pour voir tous les prix.</small></label>
           <fieldset className="simple-choice-field"><legend>Pays à surveiller</legend><div className="choice-chips country-chips">{markets.map(([code, label]) => <button key={code} type="button" className={selectedMarkets.has(code) ? "is-active" : ""} aria-pressed={selectedMarkets.has(code)} onClick={() => toggleMarket(code)}><strong>{code}</strong><span>{label}</span></button>)}</div></fieldset>
         </div>
-        <div className="plain-summary" aria-live="polite"><span className="summary-mark" aria-hidden="true">✓</span><div><span className="eyebrow">Votre radar en clair</span><h3>Mode {selectedPreset.label} · {categorySummary}</h3><p>Vous recevrez des alertes pour {marketSummary}, {budgetSummary}. PrixRadar exigera un vendeur noté au moins {minSellerScore}/100{requireCartConfirmation ? ", un panier confirmé" : ""} et {minimumHistoryPoints} points d’historique minimum.</p></div></div>
+        <div className="plain-summary" aria-live="polite"><span className="summary-mark" aria-hidden="true">✓</span><div><span className="eyebrow">Votre radar en clair</span><h3>Mode {selectedPreset.label} · {categorySummary}</h3><p>Vous recevrez des alertes pour {sourceSummary}, dans {marketSummary}, {budgetSummary}. PrixRadar exigera un vendeur noté au moins {minSellerScore}/100{requireCartConfirmation ? ", un panier confirmé" : ""} et {minimumHistoryPoints} points d’historique minimum.</p></div></div>
       </section>
 
       <section className={`expert-disclosure ${experienceLevel === "expert" ? "is-open" : ""}`}>

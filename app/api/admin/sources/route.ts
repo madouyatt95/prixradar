@@ -3,11 +3,28 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { sourceConfigurations } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
-import { isActiveSource, sourceDefinition } from "@/lib/source-registry";
+import { runtimeEnv as env } from "@/lib/runtime-env";
+import {
+  isActiveSource,
+  isPartnerRequiredSource,
+  isPartnerSourceAuthorized,
+  sourceDefinition,
+} from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
 const MARKETS = new Set(["FR", "DE", "IT", "ES", "GB"]);
+
+function authorizedPartnerSources() {
+  const value = (env as unknown as { AUTHORIZED_PARTNER_SOURCES?: unknown }).AUTHORIZED_PARTNER_SOURCES;
+  return typeof value === "string" ? value : undefined;
+}
+
+function enabledValue(source: string, value: unknown) {
+  if (value !== undefined && typeof value !== "boolean") throw new Error("enabled doit être un booléen.");
+  const enabled = value === undefined ? !isPartnerRequiredSource(source) : value;
+  return enabled as boolean;
+}
 
 function text(value: unknown, field: string, max = 160) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max) throw new Error(`${field} est invalide.`);
@@ -85,6 +102,14 @@ export async function POST(request: Request) {
     const market = marketValue(source, body.market ?? "FR");
     const url = discoveryUrl(source, body.discoveryUrl);
     const id = await configurationId(source, market, url);
+    const enabled = enabledValue(source, body.enabled);
+    if (enabled && !isPartnerSourceAuthorized(source, authorizedPartnerSources())) {
+      return adminJson({
+        ok: false,
+        code: "PARTNER_AUTHORIZATION_REQUIRED",
+        error: "Cette source exige un accord partenaire et son identifiant dans AUTHORIZED_PARTNER_SOURCES.",
+      }, 409);
+    }
     const values = {
       id,
       source,
@@ -94,10 +119,13 @@ export async function POST(request: Request) {
       category: text(body.category ?? "Général", "category", 80),
       discoveryStrategy: discoveryStrategy(body.discoveryStrategy),
       estimatedProductCount: optionalPositiveInteger(body.estimatedProductCount, "estimatedProductCount"),
-      enabled: body.enabled !== false,
+      enabled,
       cadenceMinutes: integer(body.cadenceMinutes, "cadenceMinutes", 15, 1_440, 60),
       volatilityScore: integer(body.volatilityScore, "volatilityScore", 0, 100, 50),
       dailyProductBudget: integer(body.dailyProductBudget, "dailyProductBudget", 1, 100_000, 500),
+      pausedReason: enabled
+        ? null
+        : isPartnerRequiredSource(source) ? "PARTNER_AUTHORIZATION_REQUIRED" : "Suspendue depuis le centre de pilotage",
       updatedAt: new Date().toISOString(),
     };
     await getDb().insert(sourceConfigurations).values(values).onConflictDoUpdate({
@@ -111,6 +139,7 @@ export async function POST(request: Request) {
         cadenceMinutes: values.cadenceMinutes,
         volatilityScore: values.volatilityScore,
         dailyProductBudget: values.dailyProductBudget,
+        pausedReason: values.pausedReason,
         updatedAt: values.updatedAt,
       },
     });
@@ -126,9 +155,22 @@ export async function PATCH(request: Request) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const id = text(body.id, "id", 160);
+    const database = getDb();
+    const [existing] = await database.select({ source: sourceConfigurations.source })
+      .from(sourceConfigurations)
+      .where(eq(sourceConfigurations.id, id))
+      .limit(1);
+    if (!existing) return adminJson({ ok: false, code: "SOURCE_CONFIG_NOT_FOUND", error: "Source introuvable." }, 404);
     const patch: Partial<typeof sourceConfigurations.$inferInsert> = { updatedAt: new Date().toISOString() };
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== "boolean") throw new Error("enabled doit être un booléen.");
+      if (body.enabled && !isPartnerSourceAuthorized(existing.source, authorizedPartnerSources())) {
+        return adminJson({
+          ok: false,
+          code: "PARTNER_AUTHORIZATION_REQUIRED",
+          error: "Cette source ne peut pas être activée sans accord partenaire configuré.",
+        }, 409);
+      }
       patch.enabled = body.enabled;
       patch.pausedReason = body.enabled ? null : text(body.pausedReason ?? "Suspendue depuis le centre de pilotage", "pausedReason", 240);
     }
@@ -148,8 +190,7 @@ export async function PATCH(request: Request) {
       patch.lastErrorCode = null;
       patch.pausedReason = null;
     }
-    const [item] = await getDb().update(sourceConfigurations).set(patch).where(eq(sourceConfigurations.id, id)).returning();
-    if (!item) return adminJson({ ok: false, code: "SOURCE_CONFIG_NOT_FOUND", error: "Source introuvable." }, 404);
+    const [item] = await database.update(sourceConfigurations).set(patch).where(eq(sourceConfigurations.id, id)).returning();
     return adminJson({ ok: true, item });
   } catch (error) {
     return adminJson({ ok: false, code: "INVALID_SOURCE_CONFIG", error: error instanceof Error ? error.message : "Configuration invalide." }, 400);

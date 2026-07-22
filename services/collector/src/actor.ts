@@ -2,7 +2,7 @@ import { Actor } from "apify";
 
 import { connectorForUrl } from "./connectors/index.js";
 import { parseCoverageTargets, type CoverageTarget } from "./coverage-plan.js";
-import { scanSourceUrl, verifySourceUrl } from "./crawler.js";
+import { assertSourceScanAuthorized, scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import type { CollectorConfig } from "./config.js";
 import { KeepaClient, scanKeepaMarket } from "./keepa.js";
 import {
@@ -13,7 +13,7 @@ import {
 import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
 import { sendDailyDigests } from "./push.js";
 import { postFrontierItems, privateApiHeaders } from "./sink.js";
-import type { Market, RetailSource } from "./types.js";
+import { isRetailSource, type Market, type RetailSource } from "./types.js";
 
 interface ActorInput {
   source?: RetailSource | "all";
@@ -56,11 +56,16 @@ function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePrio
   return value.flatMap((candidate): RemotePriority[] => {
     if (!candidate || typeof candidate !== "object") return [];
     const item = candidate as Record<string, unknown>;
-    const source = String(item.source ?? "") as RetailSource;
+    const sourceValue = String(item.source ?? "");
     const market = String(item.market ?? "") as Market;
     const url = String(item.url ?? "");
-    if (!["amazon", "boulanger", "darty", "cdiscount"].includes(source) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
-    try { connectorForUrl(url); } catch { return []; }
+    if (!isRetailSource(sourceValue) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
+    const source = sourceValue;
+    try {
+      if (connectorForUrl(url).source !== source) return [];
+    } catch {
+      return [];
+    }
     return [{ id: String(item.id ?? ""), source, market, url, kind, shadowCart: item.shadowCart !== false }];
   });
 }
@@ -118,11 +123,16 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
     rechecks: Array.isArray(payload.rechecks) ? payload.rechecks.flatMap((candidate): RemoteRecheck[] => {
       if (!candidate || typeof candidate !== "object") return [];
       const value = candidate as Record<string, unknown>;
-      const source = String(value.source ?? "") as RetailSource;
+      const sourceValue = String(value.source ?? "");
       const market = String(value.market ?? "") as Market;
       const url = String(value.url ?? "");
-      if (!["amazon", "boulanger", "darty", "cdiscount"].includes(source) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
-      try { if (new URL(url).protocol !== "https:") return []; } catch { return []; }
+      if (!isRetailSource(sourceValue) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
+      const source = sourceValue;
+      try {
+        if (connectorForUrl(url).source !== source) return [];
+      } catch {
+        return [];
+      }
       return [{ id: String(value.id ?? ""), alertId: String(value.alertId ?? ""), source, market, url }];
     }) : [],
     priorityTasks: [
@@ -186,9 +196,14 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       timeoutMs: config.httpTimeoutMs,
       maxDiscoveredUrls: Math.min(limit, config.maxDiscoveredUrls),
       proxyUrls: config.proxyUrls,
+      authorizedPartnerSources: config.authorizedPartnerSources,
     };
 
-    const source = input.source ?? "all";
+    const sourceValue = String(input.source ?? "all");
+    if (sourceValue !== "all" && !isRetailSource(sourceValue)) {
+      throw new Error(`Source Actor non prise en charge: ${sourceValue}.`);
+    }
+    const source: RetailSource | "all" = sourceValue;
     const configuredUrls = inputUrls(input.urls);
     const shouldUseRemoteCoverage = configuredUrls.length === 0 && input.useRemoteCoverage !== false;
     const usesRemotePlan = shouldUseRemoteCoverage
@@ -226,6 +241,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     for (const coverageTarget of coverageTargets) {
       const { url, sourceConfigurationId, productLimit } = coverageTarget;
       const connector = connectorForUrl(url);
+      assertSourceScanAuthorized(url, scanOptions);
       if (source !== "all" && source !== connector.source) {
         throw new Error(`L’URL ne correspond pas à la source ${source}.`);
       }

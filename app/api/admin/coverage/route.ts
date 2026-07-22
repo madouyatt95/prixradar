@@ -1,11 +1,17 @@
 import { eq, gte, isNotNull, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { collectionRuns, sentinelFrontier, sourceConfigurations, sourceCoverageProducts } from "@/db/schema";
+import { collectionRuns, sentinelFrontier, sourceConfigurations, sourceCoverageProducts, sourceStatuses } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
-import { SOURCE_REGISTRY } from "@/lib/source-registry";
+import { runtimeEnv as env } from "@/lib/runtime-env";
+import { isPartnerSourceAuthorized, SOURCE_REGISTRY } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
+
+function authorizedPartnerSources() {
+  const value = (env as unknown as { AUTHORIZED_PARTNER_SOURCES?: unknown }).AUTHORIZED_PARTNER_SOURCES;
+  return typeof value === "string" ? value : undefined;
+}
 
 export async function GET(request: Request) {
   const authorization = await authorizeAdmin(request);
@@ -13,7 +19,7 @@ export async function GET(request: Request) {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   try {
     const database = getDb();
-    const [configurations, frontier, runs, coverage] = await Promise.all([
+    const [configurations, frontier, runs, coverage, statuses] = await Promise.all([
       database.select().from(sourceConfigurations),
       database.select({
         source: sentinelFrontier.source,
@@ -36,10 +42,14 @@ export async function GET(request: Request) {
         .innerJoin(sourceConfigurations, eq(sourceConfigurations.id, sourceCoverageProducts.sourceConfigurationId))
         .where(isNotNull(sourceConfigurations.estimatedProductCount))
         .groupBy(sourceConfigurations.source, sourceConfigurations.market),
+      database.select().from(sourceStatuses).where(eq(sourceStatuses.mode, "live")),
     ]);
     const frontierByKey = new Map(frontier.map((item) => [`${item.source}:${item.market}`, item]));
     const runsByKey = new Map(runs.map((item) => [`${item.source}:${item.market}`, item]));
     const coverageByKey = new Map(coverage.map((item) => [`${item.source}:${item.market}`, Number(item.total)]));
+    const statusByKey = new Map(statuses.map((item) => [`${item.source}:${item.market}`, item]));
+    const partnerAuthorization = authorizedPartnerSources();
+    const nowMs = Date.now();
     const items = SOURCE_REGISTRY.flatMap((definition) => definition.markets.map((market) => {
       const matching = configurations.filter((item) => item.source === definition.id && item.market === market);
       const calibrated = matching.filter((item) => item.estimatedProductCount !== null);
@@ -49,11 +59,31 @@ export async function GET(request: Request) {
       const categories = new Set(matching.map((item) => item.category));
       const frontierMetrics = frontierByKey.get(key);
       const runMetrics = runsByKey.get(key);
+      const liveStatus = statusByKey.get(key);
+      const partnerAuthorized = isPartnerSourceAuthorized(definition.id, partnerAuthorization);
+      const lastSuccessMs = liveStatus?.lastSuccessAt ? Date.parse(liveStatus.lastSuccessAt) : Number.NaN;
+      const liveHealthy = liveStatus?.status === "healthy"
+        && Number.isFinite(lastSuccessMs)
+        && nowMs - lastSuccessMs <= Math.max(30, definition.defaultCadenceMinutes * 2) * 60_000;
+      const effectiveStatus = definition.status === "planned"
+        ? "planned"
+        : definition.status === "partner_required" && !partnerAuthorized
+          ? "locked"
+          : liveHealthy
+            ? "active"
+            : definition.status === "partner_required" && !liveStatus
+              ? "authorized_unverified"
+              : liveStatus ? "degraded" : "code_ready";
       return {
         source: definition.id,
         displayName: definition.displayName,
         market,
         status: definition.status,
+        registryStatus: definition.status,
+        effectiveStatus,
+        partnerAuthorized,
+        liveStatus: liveStatus?.status ?? null,
+        lastSuccessAt: liveStatus?.lastSuccessAt ?? null,
         adapterVersion: definition.adapterVersion,
         verification: definition.verification,
         configuredSegments: matching.length,

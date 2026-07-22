@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PrixRadar — Vérifier ce prix",
   "short_name": "PrixRadar",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Envoie la fiche produit ouverte vers une vérification PrixRadar, sans acheter ni modifier la page.",
   "permissions": ["activeTab", "storage"],
   "action": {

@@ -47,8 +47,8 @@ import {
   type DeliveryMode,
 } from "@/lib/delivery";
 import { resolveCanonicalProduct } from "@/lib/product-identity";
-import { parseMerchantUrl } from "@/lib/merchant-url";
-import { isActiveSource, type ActiveSourceId } from "@/lib/source-registry";
+import { parseCoverageProductUrl, parseMerchantUrl } from "@/lib/merchant-url";
+import { isActiveSource, isPartnerSourceAuthorized, type ActiveSourceId } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -227,35 +227,16 @@ function normalizeMarket(source: Source, value: unknown) {
 
 function validateProductUrl(source: Source, market: string, value: unknown) {
   const raw = requiredString(value, "url", 2_048);
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error("url doit être une adresse HTTPS valide.");
+  const product = parseCoverageProductUrl(raw);
+  if (!product || product.source !== source || product.market !== market) {
+    throw new Error("url doit être une fiche produit stable de l’enseigne et du marché déclarés.");
   }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
-    throw new Error("url doit être une adresse HTTPS publique valide.");
-  }
-
-  const allowedHosts: Record<Source, string[]> = {
-    amazon: [
-      market === "GB" ? "amazon.co.uk" : `amazon.${market.toLowerCase()}`,
-    ],
-    boulanger: ["boulanger.com"],
-    cdiscount: ["cdiscount.com"],
-    darty: ["darty.com"],
-  };
-  const hostname = parsed.hostname.toLowerCase();
-  if (!allowedHosts[source].some((host) => hostname === host || hostname.endsWith(`.${host}`))) {
-    throw new Error("url ne correspond pas à l’enseigne déclarée.");
-  }
-  return parsed.toString();
+  return product.url;
 }
 
 function productUrlKey(source: Source, raw: string) {
-  const url = new URL(raw);
-  const asin = source === "amazon" ? /\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/iu.exec(url.pathname)?.[1]?.toUpperCase() : null;
-  return asin ? `asin:${asin}` : url.pathname.replace(/\/+$/u, "").toLowerCase();
+  const product = parseCoverageProductUrl(raw);
+  return product?.source === source ? product.productKey : new URL(raw).pathname.replace(/\/+$/u, "").toLowerCase();
 }
 
 function parseSource(value: unknown): Source {
@@ -614,6 +595,11 @@ function serverIngestSecret() {
   if (typeof workerSecret === "string" && workerSecret.length >= 24) return workerSecret;
   const nodeSecret = process.env.INGEST_SECRET;
   return typeof nodeSecret === "string" && nodeSecret.length >= 24 ? nodeSecret : null;
+}
+
+function authorizedPartnerSources() {
+  const value = (env as unknown as { AUTHORIZED_PARTNER_SOURCES?: unknown }).AUTHORIZED_PARTNER_SOURCES;
+  return typeof value === "string" ? value : undefined;
 }
 
 function alertDeliveryMode() {
@@ -1339,6 +1325,9 @@ export async function POST(request: Request) {
     envelope = parseEnvelope(raw);
   } catch (error) {
     return apiError(400, "INVALID_EVENT", error instanceof Error ? error.message : "Événement invalide.");
+  }
+  if (!isPartnerSourceAuthorized(envelope.source, authorizedPartnerSources())) {
+    return apiError(403, "PARTNER_AUTHORIZATION_REQUIRED", "Cette source exige un accord partenaire configuré.");
   }
 
   const payloadHash = await sha256(stableJson(raw));

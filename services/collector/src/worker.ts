@@ -69,6 +69,7 @@ export async function liveVerifyKeepaObservation(
       timeoutMs: config.httpTimeoutMs,
       maxDiscoveredUrls: 1,
       proxyUrls: config.proxyUrls,
+      authorizedPartnerSources: config.authorizedPartnerSources,
       shadowCart: true,
       verifyDelayMs: config.verifyDelayMs,
       baselineMinor: observation.offer.referencePrice?.amountMinor ?? null,
@@ -100,6 +101,7 @@ export async function processCollectorJob(
     timeoutMs: config.httpTimeoutMs,
     maxDiscoveredUrls: config.maxDiscoveredUrls,
     proxyUrls: config.proxyUrls,
+    authorizedPartnerSources: config.authorizedPartnerSources,
   };
 
   if (job.kind === "discover-source") {

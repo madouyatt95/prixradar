@@ -100,7 +100,7 @@ export const merchantProducts = sqliteTable(
     index("merchant_products_identity_idx").on(table.identityKey),
     check(
       "merchant_products_source_allowed",
-      sql`${table.source} IN ('amazon', 'boulanger', 'cdiscount', 'darty')`
+      sql`${table.source} IN ('amazon', 'boulanger', 'carrefour', 'castorama', 'cdiscount', 'conforama', 'darty', 'fnac', 'leroy_merlin', 'rueducommerce')`
     ),
     check(
       "merchant_products_method_allowed",
@@ -184,7 +184,7 @@ export const alerts = sqliteTable(
     check("alerts_usual_price_positive", sql`${table.usualPriceCents} > 0`),
     check(
       "alerts_source_allowed",
-      sql`${table.source} IN ('amazon', 'boulanger', 'cdiscount', 'darty')`
+      sql`${table.source} IN ('amazon', 'boulanger', 'carrefour', 'castorama', 'cdiscount', 'conforama', 'darty', 'fnac', 'leroy_merlin', 'rueducommerce')`
     ),
     check(
       "alerts_source_mode_allowed",
@@ -317,7 +317,7 @@ export const inspectionRequests = sqliteTable(
     index("inspection_requests_owner_updated_idx").on(table.ownerId, table.updatedAt),
     index("inspection_requests_url_status_idx").on(table.url, table.status),
     check("inspection_requests_status_allowed", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`),
-    check("inspection_requests_source_allowed", sql`${table.source} IN ('amazon', 'boulanger', 'cdiscount', 'darty')`),
+    check("inspection_requests_source_allowed", sql`${table.source} IN ('amazon', 'boulanger', 'carrefour', 'castorama', 'cdiscount', 'conforama', 'darty', 'fnac', 'leroy_merlin', 'rueducommerce')`),
   ]
 );
 

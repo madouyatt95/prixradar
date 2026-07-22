@@ -57,6 +57,13 @@
       "when": 1784676249592,
       "tag": "0007_mushy_randall",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1784679903560,
+      "tag": "0008_chief_liz_osborn",
+      "breakpoints": true
     }
   ]
 }

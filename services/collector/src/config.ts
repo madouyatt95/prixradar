@@ -1,4 +1,8 @@
-import type { Market } from "./types.js";
+import {
+  isPartnerRetailSource,
+  type Market,
+  type PartnerRetailSource,
+} from "./types.js";
 
 export interface CollectorConfig {
   redisUrl: string;
@@ -7,6 +11,7 @@ export interface CollectorConfig {
   verifyDelayMs: number;
   maxDiscoveredUrls: number;
   proxyUrls: string[];
+  authorizedPartnerSources: PartnerRetailSource[];
   priceRadarBaseUrl: string | null;
   ingestSecret: string | null;
   pushDeliverySecret: string | null;
@@ -44,6 +49,18 @@ function markets(value: string | undefined): Market[] {
   return [...new Set(requested)];
 }
 
+function authorizedPartnerSources(value: string | undefined): PartnerRetailSource[] {
+  const requested = (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  const invalid = requested.filter((entry) => !isPartnerRetailSource(entry));
+  if (invalid.length > 0) {
+    throw new Error(`AUTHORIZED_PARTNER_SOURCES contient une source invalide: ${[...new Set(invalid)].join(", ")}.`);
+  }
+  return [...new Set(requested.filter(isPartnerRetailSource))];
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): CollectorConfig {
   const ingestSecret = optional(environment.INGEST_SECRET);
   const pushDeliverySecret = optional(environment.PUSH_DELIVERY_SECRET);
@@ -57,6 +74,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Collec
     verifyDelayMs: integer(environment.VERIFY_DELAY_MS, 2_500, 0, 60_000),
     maxDiscoveredUrls: integer(environment.MAX_DISCOVERED_URLS, 100, 1, 1_000),
     proxyUrls: (environment.PROXY_URLS ?? "").split(",").map((entry) => entry.trim()).filter(Boolean),
+    authorizedPartnerSources: authorizedPartnerSources(environment.AUTHORIZED_PARTNER_SOURCES),
     priceRadarBaseUrl: optional(environment.PRICE_RADAR_BASE_URL),
     ingestSecret,
     pushDeliverySecret,

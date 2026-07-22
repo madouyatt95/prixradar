@@ -125,7 +125,12 @@ type CoverageItem = {
   source: string;
   displayName: string;
   market: string;
-  status: "active" | "planned";
+  status: "active" | "partner_required" | "planned";
+  registryStatus: "active" | "partner_required" | "planned";
+  effectiveStatus: "planned" | "locked" | "authorized_unverified" | "active" | "degraded" | "code_ready";
+  partnerAuthorized: boolean;
+  liveStatus: string | null;
+  lastSuccessAt: string | null;
   adapterVersion: string;
   verification: string;
   configuredSegments: number;
@@ -327,9 +332,14 @@ export function AdminView() {
       </section>
 
       <section className="admin-panel">
-        <div className="section-label-row"><div><span className="eyebrow">Registre versionné</span><h2>Couverture mesurée par connecteur</h2></div><span>{coverage.filter((item) => item.status === "active").length} marchés actifs · {coverage.filter((item) => item.status === "planned").length} prévus</span></div>
+        <div className="section-label-row"><div><span className="eyebrow">Registre versionné</span><h2>Couverture mesurée par connecteur</h2></div><span>{coverage.filter((item) => item.effectiveStatus === "active").length} actifs · {coverage.filter((item) => item.effectiveStatus === "locked").length} accès requis · {coverage.filter((item) => item.effectiveStatus === "authorized_unverified").length} en recette · {coverage.filter((item) => item.effectiveStatus === "planned").length} prévus</span></div>
         <p className="admin-muted">Le pourcentage porte uniquement sur les segments dont la taille de catalogue est renseignée. Les mêmes produits vus sur plusieurs pages ne sont comptés qu’une fois.</p>
-        <div className="admin-source-list">{coverage.map((item) => <div className="admin-source-row" key={`${item.source}:${item.market}`}><div><strong>{item.displayName} · {item.market}</strong><small>Adaptateur {item.adapterVersion} · {item.configuredSegments} segments ({item.calibratedSegments} calibrés) · {item.categories} catégories</small><em className={item.contractStatus === "passing" && item.uncalibratedSegments === 0 ? "" : "is-warning"}>{item.status === "planned" ? "Planifié" : item.estimatedCoveragePercent === null ? "Couverture à calibrer" : `${item.estimatedCoveragePercent} % des segments calibrés`} · contrat {item.contractStatus} · {item.frontier.queued} URL en file</em></div><span className={`source-status status-${item.contractStatus === "passing" ? "live" : item.status === "planned" ? "planned" : "warning"}`}><i />{item.status === "planned" ? "Prévu" : item.contractStatus}</span></div>)}</div>
+        <div className="admin-source-list">{coverage.map((item) => {
+          const effectiveLabel = item.effectiveStatus === "active" ? "Actif" : item.effectiveStatus === "locked" ? "Accès requis" : item.effectiveStatus === "authorized_unverified" ? "Autorisé · recette" : item.effectiveStatus === "degraded" ? "Dégradé" : item.effectiveStatus === "planned" ? "Prévu" : "Prêt";
+          const effectiveTone = item.effectiveStatus === "active" ? "live" : item.effectiveStatus === "planned" ? "planned" : item.effectiveStatus === "code_ready" ? "prepared" : "warning";
+          const statusDetail = item.effectiveStatus === "locked" ? "Connecteur prêt · autorisation ou flux partenaire requis" : item.effectiveStatus === "authorized_unverified" ? "Accès enregistré · premier rapport LIVE sain requis" : item.effectiveStatus === "active" ? `Rapport LIVE sain${item.lastSuccessAt ? ` · ${new Date(item.lastSuccessAt).toLocaleString("fr-FR")}` : ""}` : item.effectiveStatus === "degraded" ? `Accès enregistré · santé ${item.liveStatus ?? "à contrôler"}` : item.effectiveStatus === "planned" ? "Planifié" : item.estimatedCoveragePercent === null ? "Couverture à calibrer" : `${item.estimatedCoveragePercent} % des segments calibrés`;
+          return <div className="admin-source-row" key={`${item.source}:${item.market}`}><div><strong>{item.displayName} · {item.market}</strong><small>Adaptateur {item.adapterVersion} · {item.configuredSegments} segments ({item.calibratedSegments} calibrés) · {item.categories} catégories</small><em className={item.effectiveStatus === "active" && item.contractStatus === "passing" && item.uncalibratedSegments === 0 ? "" : "is-warning"}>{statusDetail} · contrat {item.contractStatus} · {item.frontier.queued} URL en file</em></div><span className={`source-status status-${effectiveTone}`}><i />{effectiveLabel}</span></div>;
+        })}</div>
       </section>
 
       <section className="admin-panel autonomy-admin-panel">
@@ -360,13 +370,14 @@ export function AdminView() {
 
         <form className="admin-panel admin-form" onSubmit={addSource}>
           <div><span className="eyebrow">Sans changement de code</span><h2>Ajouter une page catégorie</h2></div>
-          <label>Enseigne<select name="source" defaultValue="boulanger"><option value="boulanger">Boulanger</option><option value="darty">Darty</option><option value="cdiscount">Cdiscount</option><option value="amazon">Amazon</option></select></label>
+          <label>Enseigne<select name="source" defaultValue="boulanger"><option value="boulanger">Boulanger</option><option value="darty">Darty</option><option value="cdiscount">Cdiscount</option><option value="fnac">Fnac</option><option value="carrefour">Carrefour</option><option value="leroy_merlin">Leroy Merlin</option><option value="castorama">Castorama</option><option value="conforama">Conforama</option><option value="rueducommerce">Rue du Commerce</option><option value="amazon">Amazon</option></select></label>
           <div className="admin-form-pair"><label>Marché<select name="market" defaultValue="FR"><option>FR</option><option>DE</option><option>IT</option><option>ES</option><option>GB</option></select></label><label>Cadence<select name="cadenceMinutes" defaultValue="60"><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 h</option><option value="240">4 h</option><option value="1440">24 h</option></select></label></div>
           <label>Nom<input name="displayName" required maxLength={120} placeholder="Boulanger TV" /></label>
           <label>Catégorie<input name="category" required maxLength={80} placeholder="Image & son" /></label>
           <div className="admin-form-pair"><label>Découverte<select name="discoveryStrategy" defaultValue="links"><option value="links">Liens de page · actif</option><option value="sitemap" disabled>Sitemap · bientôt</option><option value="feed" disabled>Flux partenaire · bientôt</option><option value="api" disabled>API partenaire · bientôt</option></select></label><label>Taille catalogue estimée<input name="estimatedProductCount" type="number" min="1" max="100000000" placeholder="ex. 2400" /></label></div>
           <label>Budget produits / jour<input name="dailyProductBudget" type="number" min="1" max="100000" defaultValue="500" /></label>
-          <label>URL HTTPS<input name="discoveryUrl" type="url" required placeholder="https://www.boulanger.com/c/television" /></label>
+          <label>URL HTTPS<input name="discoveryUrl" type="url" required placeholder="https://www.enseigne.fr/categorie" /></label>
+          <p className="admin-muted">Ajouter une page prépare la couverture, sans déclarer l’enseigne active. Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce nécessitent encore une autorisation de collecte ou un flux partenaire ; le statut LIVE exige ensuite un rapport sain récent.</p>
           <button className="primary-button" type="submit">Ajouter à la couverture</button>
         </form>
       </div>

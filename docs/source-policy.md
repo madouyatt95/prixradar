@@ -11,6 +11,18 @@ source depuis le centre de pilotage.
 - Boulanger : `boulanger.com`
 - Darty : `darty.com`
 - Cdiscount : `cdiscount.com`
+- Fnac : `fnac.com` — connecteur prêt, autorisation ou flux partenaire requis
+- Carrefour : `carrefour.fr` — connecteur prêt, autorisation ou flux partenaire requis
+- Leroy Merlin : `leroymerlin.fr` — connecteur prêt, autorisation ou flux partenaire requis
+- Castorama : `castorama.fr` — connecteur prêt, autorisation ou flux partenaire requis
+- Conforama : `conforama.fr` — connecteur prêt, autorisation ou flux partenaire requis
+- Rue du Commerce : `rueducommerce.fr` — connecteur prêt, autorisation ou flux partenaire requis
+
+La présence d’un domaine dans cette liste autorise uniquement sa validation
+technique. Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
+restent verrouillés tant qu’une autorisation de collecte ou un flux partenaire
+n’est pas enregistré côté serveur. Aucun de ces connecteurs ne peut être déclaré
+LIVE sur la seule réussite d’un build ou d’un test sur fixture.
 
 ## Indice interne et panier fantôme
 
@@ -32,6 +44,11 @@ personnelles. Les URL sont dédupliquées et la cadence est adaptée à la volat
 Les liens découverts alimentent une frontière persistante : priorité plus forte
 après une anomalie, plus faible après des doublons ou un blocage, et coupe-circuit
 immédiat si une protection anti-bot se déclenche.
+
+Pour les enseignes à accès partenaire requis, la page ne peut être activée
+qu’après validation de l’autorisation ou du flux. Le premier passage reste en
+recette sans notification ; seul un rapport `live` sain et récent permet ensuite
+l’affichage « Actif ».
 
 ## Données et preuve
 

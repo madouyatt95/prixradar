@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { alerts, collectionRuns, discoverySegments, inspectionRequests, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
+import { ACTIVE_SOURCE_IDS, isPartnerSourceAuthorized } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,11 @@ function ingestSecret() {
     : null;
 }
 
+function authorizedPartnerSources() {
+  const value = (env as unknown as { AUTHORIZED_PARTNER_SOURCES?: unknown }).AUTHORIZED_PARTNER_SOURCES;
+  return typeof value === "string" ? value : undefined;
+}
+
 function effectiveCadence(cadenceMinutes: number, volatilityScore: number) {
   if (volatilityScore >= 70) return Math.max(15, Math.floor(cadenceMinutes / 2));
   if (volatilityScore <= 20) return Math.min(1_440, cadenceMinutes * 2);
@@ -58,6 +64,8 @@ export async function GET(request: Request) {
 
   try {
     const database = getDb();
+    const partnerAuthorization = authorizedPartnerSources();
+    const authorizedSourceIds = ACTIVE_SOURCE_IDS.filter((source) => isPartnerSourceAuthorized(source, partnerAuthorization));
     const staleClaim = new Date(Date.now() - 15 * 60_000).toISOString();
     await database.update(recheckRequests).set({ status: "pending", claimedAt: null, updatedAt: new Date().toISOString() })
       .where(and(eq(recheckRequests.status, "processing"), sql`${recheckRequests.claimedAt} < ${staleClaim}`));
@@ -70,7 +78,7 @@ export async function GET(request: Request) {
       database
         .select()
         .from(sourceConfigurations)
-        .where(eq(sourceConfigurations.enabled, true))
+        .where(and(eq(sourceConfigurations.enabled, true), inArray(sourceConfigurations.source, authorizedSourceIds)))
         .orderBy(asc(sourceConfigurations.lastRunAt), asc(sourceConfigurations.source)),
       database
         .select()
@@ -78,14 +86,15 @@ export async function GET(request: Request) {
         .where(eq(discoverySegments.enabled, true))
         .orderBy(desc(discoverySegments.priority), asc(discoverySegments.lastRunAt)),
       database.select().from(recheckRequests)
-        .where(eq(recheckRequests.status, "pending"))
+        .where(and(eq(recheckRequests.status, "pending"), inArray(recheckRequests.source, authorizedSourceIds)))
         .orderBy(asc(recheckRequests.requestedAt)).limit(25),
       database.select().from(inspectionRequests)
-        .where(eq(inspectionRequests.status, "pending"))
+        .where(and(eq(inspectionRequests.status, "pending"), inArray(inspectionRequests.source, authorizedSourceIds)))
         .orderBy(asc(inspectionRequests.requestedAt)).limit(25),
       database.select().from(sentinelFrontier)
         .where(and(
           inArray(sentinelFrontier.status, ["queued", "active"]),
+          inArray(sentinelFrontier.source, authorizedSourceIds),
           sql`${sentinelFrontier.nextScanAt} <= ${new Date().toISOString()}`,
         ))
         .orderBy(desc(sentinelFrontier.priority), asc(sentinelFrontier.nextScanAt)).limit(50),

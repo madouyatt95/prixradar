@@ -25,6 +25,22 @@ test("ships the complete PrixRadar application shell", async () => {
   );
 });
 
+test("shows the six additional French retailers without claiming they are live", async () => {
+  const [application, admin] = await Promise.all([
+    readFile(new URL("../app/components/price-radar-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/admin-view.tsx", import.meta.url), "utf8"),
+  ]);
+  for (const merchant of ["Fnac", "Carrefour", "Leroy Merlin", "Castorama", "Conforama", "Rue du Commerce"]) {
+    assert.match(application, new RegExp(merchant));
+    assert.match(admin, new RegExp(merchant));
+  }
+  assert.match(application, /Connecteur prêt · accès requis/);
+  assert.match(application, /premier rapport sain/);
+  assert.match(application, /sources: preferredSources/);
+  assert.match(admin, /statut LIVE exige ensuite un rapport sain récent/);
+  assert.doesNotMatch(application, /sur 4 enseignes \+ Amazon/);
+});
+
 test("ships an installable PWA without caching private APIs", async () => {
   const [manifest, serviceWorker, layout, packageJson, hosting] = await Promise.all([
     readFile(new URL("../app/manifest.ts", import.meta.url), "utf8"),

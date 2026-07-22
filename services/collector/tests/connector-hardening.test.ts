@@ -9,15 +9,21 @@ import {
   extractRetailOffers,
 } from "../src/connectors/index.js";
 
-test("les quatre adaptateurs panier sont spécifiques et ne ciblent jamais achat immédiat ou paiement", () => {
+test("les dix familles d’adaptateurs panier sont spécifiques et ne ciblent jamais achat immédiat ou paiement", () => {
   const urls = [
     "https://www.amazon.fr/dp/B012345678",
     "https://www.boulanger.com/ref/123456",
     "https://www.darty.com/nav/achat/informatique/ordinateur/fixture.html",
     "https://www.cdiscount.com/high-tech/fixture/f-106-fixture.html",
+    "https://www.fnac.com/a21851909/produit-test",
+    "https://www.carrefour.fr/p/produit-test-5904204753289",
+    "https://www.leroymerlin.fr/produits/produit-test-80159772.html",
+    "https://www.castorama.fr/produit-test/5059340904245_CAFR.prd",
+    "https://www.conforama.fr/meuble/produit-test/p/M78384060",
+    "https://www.rueducommerce.fr/p/r24060027222.html",
   ];
   const selectors = urls.map((url) => connectorForUrl(url).shadowCart.addButton);
-  assert.equal(new Set(selectors.map((list) => list.join("|"))).size, 4);
+  assert.equal(new Set(selectors.map((list) => list.join("|"))).size, 10);
   for (const list of selectors) {
     assert.ok(list.length >= 3);
     assert.equal(list.some((selector) => /buy.?now|checkout|payment|paiement|commande/iu.test(selector)), false);
@@ -75,7 +81,7 @@ test("Darty et Cdiscount prouvent les URL sans SKU public par leur canonical ren
 
 test("le registre est versionné et la pagination avance d'une seule page sous une borne dure", () => {
   const registry = connectorRegistrySnapshot();
-  assert.equal(registry.length, 8);
+  assert.equal(registry.length, 14);
   assert.ok(registry.every((entry) => entry.version === CONNECTOR_REGISTRY_VERSION));
   const page = "https://www.amazon.fr/s?k=ordinateur&page=1";
   assert.equal(

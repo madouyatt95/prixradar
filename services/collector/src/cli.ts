@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runActor } from "./actor.js";
-import { scanSourceUrl, verifySourceUrl } from "./crawler.js";
+import { assertSourceScanAuthorized, scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import { loadConfig } from "./config.js";
 import { KeepaClient, scanKeepaMarket } from "./keepa.js";
 import { CollectorQueue } from "./queue.js";
@@ -36,7 +36,16 @@ async function scanSource(args: string[]): Promise<void> {
   if (!url) throw new Error("URL manquante pour scan-source.");
   const config = loadConfig();
   const fixture = hasFlag(args, "--fixture");
+  const options = {
+    browserFallback: hasFlag(args, "--browser") || config.browserFallback,
+    fixture,
+    timeoutMs: config.httpTimeoutMs,
+    maxDiscoveredUrls: config.maxDiscoveredUrls,
+    proxyUrls: config.proxyUrls,
+    authorizedPartnerSources: config.authorizedPartnerSources,
+  };
   if (hasFlag(args, "--enqueue")) {
+    assertSourceScanAuthorized(url, options);
     const queue = new CollectorQueue(config.redisUrl);
     try {
       const jobId = await queue.add({ kind: "discover-source", url, fixture });
@@ -46,14 +55,6 @@ async function scanSource(args: string[]): Promise<void> {
     }
     return;
   }
-
-  const options = {
-    browserFallback: hasFlag(args, "--browser") || config.browserFallback,
-    fixture,
-    timeoutMs: config.httpTimeoutMs,
-    maxDiscoveredUrls: config.maxDiscoveredUrls,
-    proxyUrls: config.proxyUrls,
-  };
   const initial = await scanSourceUrl(url, options);
   if (initial.offers.length === 0) {
     output({ ok: true, dataKind: "discovery", ...initial });

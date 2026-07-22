@@ -1,6 +1,6 @@
 const api = globalThis.browser ?? globalThis.chrome;
 const DEFAULT_BASE_URL = "https://prixradar-seven.vercel.app";
-const SUPPORTED_HOSTS = /(^|\.)(amazon\.(fr|de|it|es|co\.uk)|boulanger\.com|darty\.com|cdiscount\.com)$/i;
+const SUPPORTED_HOSTS = /(^|\.)(amazon\.(fr|de|it|es|co\.uk)|boulanger\.com|darty\.com|cdiscount\.com|fnac\.com|carrefour\.fr|leroymerlin\.fr|castorama\.fr|conforama\.fr|rueducommerce\.fr)$/i;
 
 async function activeUrl() {
   const tabs = await api.tabs.query({ active: true, currentWindow: true });
@@ -22,7 +22,7 @@ activeUrl().then((raw) => {
     status.textContent = `Page reconnue : ${url.hostname.replace(/^www\./i, "")}`;
   } catch {
     button.disabled = true;
-    status.textContent = "Ouvrez une fiche Amazon Europe, Boulanger, Darty ou Cdiscount.";
+    status.textContent = "Ouvrez une fiche Amazon Europe, Boulanger, Darty, Cdiscount, Fnac, Carrefour, Leroy Merlin, Castorama, Conforama ou Rue du Commerce.";
   }
 });
 

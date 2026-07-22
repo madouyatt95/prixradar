@@ -7,11 +7,11 @@
     "source": {
       "title": "Source",
       "type": "string",
-      "description": "Source attendue. 'all' autorise les trois marchands et Keepa.",
+      "description": "Source attendue. Les six sources partenaires restent bloquées en direct tant qu'elles ne sont pas autorisées côté serveur via AUTHORIZED_PARTNER_SOURCES.",
       "editor": "select",
       "default": "all",
-      "enum": ["all", "boulanger", "darty", "cdiscount", "amazon"],
-      "enumTitles": ["Toutes", "Boulanger", "Darty", "Cdiscount", "Amazon Europe"]
+      "enum": ["all", "boulanger", "darty", "cdiscount", "amazon", "fnac", "carrefour", "leroy_merlin", "castorama", "conforama", "rueducommerce"],
+      "enumTitles": ["Toutes les sources autorisées", "Boulanger", "Darty", "Cdiscount", "Amazon Europe", "Fnac (partenaire)", "Carrefour (partenaire)", "Leroy Merlin (partenaire)", "Castorama (partenaire)", "Conforama (partenaire)", "Rue du Commerce (partenaire)"]
     },
     "market": {
       "title": "Marché Amazon",
@@ -32,7 +32,7 @@
     "urls": {
       "title": "URLs autorisées",
       "type": "array",
-      "description": "Pages produit, catégorie ou recherche Boulanger, Darty ou Cdiscount.",
+      "description": "Pages produit, catégorie ou recherche d'un connecteur déclaré. Une URL partenaire en mode direct exige aussi son autorisation serveur.",
       "editor": "requestListSources",
       "default": [],
       "items": {
