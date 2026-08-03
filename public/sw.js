@@ -111,7 +111,7 @@ self.addEventListener("push", (event) => {
     typeof payload.url === "string" && payload.url.startsWith("/")
       ? payload.url
       : "/";
-  const tier = payload.tier === "urgent" ? "urgent" : payload.tier === "digest" ? "digest" : "personal";
+  const tier = payload.tier === "urgent" ? "urgent" : payload.tier === "digest" ? "digest" : payload.tier === "protection" ? "protection" : "personal";
   const badgeCount = Number.isSafeInteger(payload.badgeCount) && payload.badgeCount > 0 ? payload.badgeCount : 1;
 
   event.waitUntil(
@@ -120,7 +120,7 @@ self.addEventListener("push", (event) => {
       icon: "/icon-192.png",
       badge: "/icon-192.png",
       tag: `prixradar-${tier}-${alertId}`,
-      renotify: tier === "urgent",
+      renotify: tier === "urgent" || tier === "protection",
       data: { url, tier },
     })),
   );
