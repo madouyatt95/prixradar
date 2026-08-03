@@ -1,267 +1,262 @@
-import { and, asc, eq, gt, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
-import { getDb } from "../../../../db";
+import { getDb } from "../../../db";
+import { pushSubscriptions, userPreferences } from "../../../db/schema";
 import {
-  pushSubscriptions,
-  missionItems,
-  radarRules,
-  userPreferences,
-} from "../../../../db/schema";
-import { radarIntentMatches, type RadarIntent } from "../../../../lib/radar-intent";
-import { authorizePushDelivery, serverJson } from "../server-auth";
-import { isQuietNow } from "../quiet-hours";
+  deviceDatabaseError,
+  deviceError,
+  deviceJson,
+  readJsonObject,
+  resolveDevice,
+} from "./device";
+import { vapidPublicKey } from "./server-env";
 
 export const dynamic = "force-dynamic";
 
-function positiveInteger(value: string | null, fallback: number, maximum: number) {
-  if (value === null) return fallback;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= maximum
-    ? parsed
-    : null;
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const CONTENT_ENCODINGS = new Set(["aes128gcm", "aesgcm"]);
+
+type SubscriptionInput = {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  contentEncoding: string;
+};
+
+function requiredString(
+  value: unknown,
+  name: string,
+  minLength: number,
+  maxLength: number
+) {
+  if (typeof value !== "string") {
+    throw new Error(`${name} est obligatoire.`);
+  }
+  const cleaned = value.trim();
+  if (cleaned.length < minLength || cleaned.length > maxLength) {
+    throw new Error(`${name} a une longueur invalide.`);
+  }
+  return cleaned;
+}
+
+function parseSubscription(body: Record<string, unknown>): SubscriptionInput {
+  const endpoint = requiredString(body.endpoint, "endpoint", 12, 2_048);
+  let endpointUrl: URL;
+  try {
+    endpointUrl = new URL(endpoint);
+  } catch {
+    throw new Error("endpoint doit être une adresse HTTPS valide.");
+  }
+  if (endpointUrl.protocol !== "https:") {
+    throw new Error("endpoint doit utiliser HTTPS.");
+  }
+
+  const keys = body.keys;
+  if (!keys || typeof keys !== "object" || Array.isArray(keys)) {
+    throw new Error("Les clés p256dh et auth sont obligatoires.");
+  }
+  const keyRecord = keys as Record<string, unknown>;
+  const p256dh = requiredString(keyRecord.p256dh, "p256dh", 40, 512);
+  const auth = requiredString(keyRecord.auth, "auth", 16, 256);
+  if (!BASE64URL_PATTERN.test(p256dh) || !BASE64URL_PATTERN.test(auth)) {
+    throw new Error("Les clés de souscription doivent être encodées en base64url.");
+  }
+
+  const rawEncoding = body.contentEncoding ?? "aes128gcm";
+  const contentEncoding = requiredString(
+    rawEncoding,
+    "contentEncoding",
+    6,
+    16
+  ).toLowerCase();
+  if (!CONTENT_ENCODINGS.has(contentEncoding)) {
+    throw new Error("contentEncoding doit être aes128gcm ou aesgcm.");
+  }
+
+  return {
+    endpoint: endpointUrl.toString(),
+    p256dh,
+    auth,
+    contentEncoding,
+  };
 }
 
 export async function GET(request: Request) {
-  const authentication = await authorizePushDelivery(request);
-  if (!authentication.ok) return authentication.response;
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const device = identity.device;
 
-  const search = new URL(request.url).searchParams;
-  const limit = positiveInteger(search.get("limit"), 100, 500);
-  const after = positiveInteger(search.get("after"), 0, Number.MAX_SAFE_INTEGER);
-  const score = positiveInteger(search.get("score"), 100, 100);
-  const discount = positiveInteger(search.get("discount"), 0, 100);
-  const priceCents = positiveInteger(search.get("priceCents"), 0, 100_000_000);
-  const source = search.get("source")?.trim().toLowerCase() ?? "";
-  const market = search.get("market")?.trim().toUpperCase() ?? "";
-  const category = search.get("category")?.trim() ?? "";
-  const deliveryCountry = search.get("deliveryCountry")?.trim().toUpperCase() ?? "";
-  const deliveryPostalPrefix = search.get("deliveryPostalPrefix")?.trim().toUpperCase() ?? "";
-  const deliveryMode = search.get("deliveryMode")?.trim().toLowerCase() ?? "";
-  const locationVerified = search.get("locationVerified") === "true";
-  const title = search.get("title")?.trim().slice(0, 300) ?? "";
-  const brand = search.get("brand")?.trim().slice(0, 100) ?? "";
-  const condition = search.get("condition")?.trim().toLowerCase().slice(0, 30) ?? "";
-  const accessibleToAll = search.get("accessibleToAll") !== "false";
-  const sellerScore = positiveInteger(search.get("sellerScore"), 0, 100);
-  const historyPoints = positiveInteger(search.get("historyPoints"), 0, 10_000);
-  const verifiedAgeMinutes = positiveInteger(search.get("verifiedAgeMinutes"), 1_440, 1_440);
-  const exactVariantConfirmed = search.get("exactVariantConfirmed") === "true";
-  const cartConfirmed = search.get("cartConfirmed") === "true";
-  const tier = search.get("tier") === "urgent" ? "urgent" as const : "personal" as const;
-  if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null || sellerScore === null || historyPoints === null || verifiedAgeMinutes === null) {
-    return serverJson(
-      {
-        ok: false,
-        code: "invalid_pagination",
-        error: "limit, after ou score est invalide.",
-      },
-      400
+  try {
+    const db = getDb();
+    const subscriptions = await db
+      .select({
+        id: pushSubscriptions.id,
+        enabled: pushSubscriptions.enabled,
+        updatedAt: pushSubscriptions.updatedAt,
+      })
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.ownerId, device.ownerId))
+      .orderBy(desc(pushSubscriptions.updatedAt));
+
+    const [preference] = await db
+      .select({ notificationEnabled: userPreferences.notificationEnabled })
+      .from(userPreferences)
+      .where(eq(userPreferences.ownerId, device.ownerId))
+      .limit(1);
+
+    const publicKey = vapidPublicKey();
+    const activeSubscriptions = subscriptions.filter((item) => item.enabled);
+
+    return deviceJson(device, {
+      ok: true,
+      configured: publicKey !== null,
+      publicKey,
+      notificationEnabled: preference?.notificationEnabled ?? true,
+      subscribed: activeSubscriptions.length > 0,
+      activeSubscriptionCount: activeSubscriptions.length,
+      lastUpdatedAt: subscriptions[0]?.updatedAt ?? null,
+    });
+  } catch (error) {
+    return deviceDatabaseError(device, error);
+  }
+}
+
+export async function POST(request: Request) {
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const device = identity.device;
+  if (vapidPublicKey() === null) {
+    return deviceError(
+      device,
+      503,
+      "push_not_configured",
+      "Les notifications push ne sont pas encore configurées sur le serveur."
+    );
+  }
+
+  const body = await readJsonObject(request);
+  if (body === null) {
+    return deviceError(device, 400, "invalid_json", "Le corps JSON est invalide.");
+  }
+
+  let subscription: SubscriptionInput;
+  try {
+    subscription = parseSubscription(body);
+  } catch (error) {
+    return deviceError(
+      device,
+      400,
+      "invalid_subscription",
+      error instanceof Error ? error.message : "La souscription est invalide."
     );
   }
 
   try {
-    const database = getDb();
-    const page: Array<{
-      id: number;
-      endpoint: string;
-      p256dh: string;
-      auth: string;
-      contentEncoding: string;
-      minScore: number;
-      tier: "urgent" | "personal";
-    }> = [];
-    const now = new Date();
-    let cursor = after;
-    let scanned = 0;
-    let suppressedQuietHours = 0;
-    let suppressedFilters = 0;
-    let exhausted = false;
+    const db = getDb();
+    await db
+      .insert(userPreferences)
+      .values({ ownerId: device.ownerId })
+      .onConflictDoNothing({ target: userPreferences.ownerId });
 
-    while (page.length < limit && !exhausted && scanned < 2_500) {
-      const batchSize = Math.min(500, Math.max(50, (limit - page.length) * 3));
-      const rows = await database
-        .select({
-          id: pushSubscriptions.id,
-          endpoint: pushSubscriptions.endpoint,
-          p256dh: pushSubscriptions.p256dh,
-          auth: pushSubscriptions.auth,
-          contentEncoding: pushSubscriptions.contentEncoding,
-          minScore: userPreferences.minScore,
-          minSellerScore: userPreferences.minSellerScore,
-          requireExactVariant: userPreferences.requireExactVariant,
-          requireCartConfirmation: userPreferences.requireCartConfirmation,
-          maxAlertAgeMinutes: userPreferences.maxAlertAgeMinutes,
-          minimumHistoryPoints: userPreferences.minimumHistoryPoints,
-          deviceOwner: pushSubscriptions.ownerId,
-          notificationSpeed: userPreferences.notificationSpeed,
-          quietHours: userPreferences.quietHours,
-          quietStart: userPreferences.quietStart,
-          quietEnd: userPreferences.quietEnd,
-          timezone: userPreferences.timezone,
-          minDiscount: userPreferences.minDiscount,
-          maxPriceCents: userPreferences.maxPriceCents,
-          marketsJson: userPreferences.marketsJson,
-          categoriesJson: userPreferences.categoriesJson,
-          sourcesJson: userPreferences.sourcesJson,
-          deliveryCountry: userPreferences.deliveryCountry,
-          postalCode: userPreferences.postalCode,
-          deliveryMode: userPreferences.deliveryMode,
-          requireLocationMatch: userPreferences.requireLocationMatch,
-        })
-        .from(pushSubscriptions)
-        .innerJoin(
-          userPreferences,
-          eq(userPreferences.ownerId, pushSubscriptions.ownerId),
-        )
-        .where(
-          and(
-            eq(pushSubscriptions.enabled, true),
-            eq(userPreferences.notificationEnabled, true),
-            gt(pushSubscriptions.id, cursor),
-            lte(userPreferences.minScore, score),
-          ),
-        )
-        .orderBy(asc(pushSubscriptions.id))
-        .limit(batchSize);
-
-      if (rows.length === 0) {
-        exhausted = true;
-        break;
-      }
-      const ownerIds = [...new Set(rows.map((row) => row.deviceOwner))];
-      const ruleRows = ownerIds.length === 0 ? [] : await database.select({
-        deviceOwner: radarRules.ownerId,
-        intentJson: radarRules.intentJson,
-        kind: radarRules.kind,
-      }).from(radarRules).where(and(
-        inArray(radarRules.ownerId, ownerIds),
-        eq(radarRules.enabled, true),
-        eq(radarRules.status, "active"),
-      ));
-      const projectItemRows = ownerIds.length === 0 ? [] : await database.select({
-        deviceOwner: missionItems.ownerId,
-        intentJson: missionItems.intentJson,
-      }).from(missionItems).innerJoin(radarRules, eq(radarRules.id, missionItems.missionId)).where(and(
-        inArray(missionItems.ownerId, ownerIds),
-        inArray(missionItems.status, ["searching", "matched"]),
-        eq(radarRules.enabled, true),
-        eq(radarRules.status, "active"),
-      ));
-      const rulesByOwner = new Map<string, RadarIntent[]>();
-      for (const rule of [...ruleRows.filter((item) => item.kind === "single"), ...projectItemRows]) {
-        try {
-          const parsed = JSON.parse(rule.intentJson) as RadarIntent;
-          const current = rulesByOwner.get(rule.deviceOwner) ?? [];
-          current.push(parsed);
-          rulesByOwner.set(rule.deviceOwner, current);
-        } catch { /* ignore une règle corrompue */ }
-      }
-      for (const row of rows) {
-        cursor = row.id;
-        scanned += 1;
-        const parseList = (value: string) => {
-          try {
-            const parsed: unknown = JSON.parse(value);
-            return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-          } catch {
-            return [];
-          }
-        };
-        const markets = parseList(row.marketsJson);
-        const categories = parseList(row.categoriesJson);
-        const sources = parseList(row.sourcesJson);
-        const userPostalPrefix = row.postalCode
-          ? row.deliveryCountry === "GB"
-            ? row.postalCode.replace(/\s.+$/u, "").slice(0, 4)
-            : row.postalCode.slice(0, 2)
-          : "";
-        const compatibleDeliveryMode = row.deliveryMode === "either" || deliveryMode === "either" || row.deliveryMode === deliveryMode;
-        const locationMismatch = row.requireLocationMatch && (
-          !locationVerified ||
-          row.deliveryCountry !== deliveryCountry ||
-          !compatibleDeliveryMode ||
-          (userPostalPrefix !== "" && userPostalPrefix !== deliveryPostalPrefix)
-        );
-        const ownerRules = rulesByOwner.get(row.deviceOwner) ?? [];
-        const radarMismatch = ownerRules.length > 0 && !ownerRules.some((intent) => radarIntentMatches(intent, {
-          title,
-          brand,
-          category,
-          market,
-          priceCents,
-          discountPercent: discount,
-          condition,
-          accessibleToAll,
-          deliveryCountry,
-        }));
-        const speedMismatch = tier === "personal" && (
-          row.notificationSpeed === "digest" ||
-          (row.notificationSpeed === "balanced" && score < Math.min(100, row.minScore + 8))
-        );
-        const filtered =
-          discount < row.minDiscount ||
-          sellerScore < row.minSellerScore ||
-          historyPoints < row.minimumHistoryPoints ||
-          verifiedAgeMinutes > row.maxAlertAgeMinutes ||
-          (row.requireExactVariant && !exactVariantConfirmed) ||
-          (row.requireCartConfirmation && !cartConfirmed) ||
-          (row.maxPriceCents !== null && priceCents > row.maxPriceCents) ||
-          (markets.length > 0 && !markets.includes(market)) ||
-          (categories.length > 0 && !categories.includes(category)) ||
-          (sources.length > 0 && !sources.includes(source)) ||
-          locationMismatch || radarMismatch || speedMismatch;
-        if (isQuietNow(row, now)) {
-          suppressedQuietHours += 1;
-        } else if (filtered) {
-          suppressedFilters += 1;
-        } else {
-          page.push({
-            id: row.id,
-            endpoint: row.endpoint,
-            p256dh: row.p256dh,
-            auth: row.auth,
-            contentEncoding: row.contentEncoding,
-            minScore: row.minScore,
-            tier,
-          });
-        }
-        if (page.length === limit || scanned >= 2_500) break;
-      }
-      if (rows.length < batchSize) exhausted = true;
+    const currentSubscriptions = await db
+      .select({ endpoint: pushSubscriptions.endpoint, enabled: pushSubscriptions.enabled })
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.ownerId, device.ownerId))
+      .limit(6);
+    const existingEndpoint = currentSubscriptions.some(
+      (item) => item.endpoint === subscription.endpoint,
+    );
+    const activeCount = currentSubscriptions.filter((item) => item.enabled).length;
+    if (!existingEndpoint && activeCount >= 5) {
+      return deviceError(
+        device,
+        409,
+        "subscription_limit_reached",
+        "Cet appareil a atteint la limite de cinq souscriptions actives.",
+      );
     }
 
-    return serverJson({
+    const [saved] = await db
+      .insert(pushSubscriptions)
+      .values({ ownerId: device.ownerId, ...subscription })
+      .onConflictDoUpdate({
+        target: [pushSubscriptions.ownerId, pushSubscriptions.endpoint],
+        set: {
+          p256dh: subscription.p256dh,
+          auth: subscription.auth,
+          contentEncoding: subscription.contentEncoding,
+          enabled: true,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        },
+      })
+      .returning({
+        id: pushSubscriptions.id,
+        enabled: pushSubscriptions.enabled,
+        updatedAt: pushSubscriptions.updatedAt,
+      });
+
+    return deviceJson(
+      device,
+      { ok: true, subscribed: true, subscription: saved },
+      { status: 201 }
+    );
+  } catch (error) {
+    return deviceDatabaseError(device, error);
+  }
+}
+
+export async function DELETE(request: Request) {
+  const identity = await resolveDevice(request);
+  if (!identity.ok) return identity.response;
+  const device = identity.device;
+  let endpoint: string | null = null;
+
+  if (request.headers.get("content-type")?.includes("application/json")) {
+    const body = await readJsonObject(request);
+    if (body === null) {
+      return deviceError(
+        device,
+        400,
+        "invalid_json",
+        "Le corps JSON est invalide."
+      );
+    }
+
+    if (body.endpoint !== undefined) {
+      try {
+        endpoint = requiredString(body.endpoint, "endpoint", 12, 2_048);
+        const parsed = new URL(endpoint);
+        if (parsed.protocol !== "https:") throw new Error();
+        endpoint = parsed.toString();
+      } catch {
+        return deviceError(
+          device,
+          400,
+          "invalid_endpoint",
+          "endpoint doit être une adresse HTTPS valide."
+        );
+      }
+    }
+  }
+
+  try {
+    const conditions = [eq(pushSubscriptions.ownerId, device.ownerId)];
+    if (endpoint !== null) {
+      conditions.push(eq(pushSubscriptions.endpoint, endpoint));
+    }
+
+    const disabled = await getDb()
+      .update(pushSubscriptions)
+      .set({ enabled: false, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(and(...conditions))
+      .returning({ id: pushSubscriptions.id });
+
+    return deviceJson(device, {
       ok: true,
-      count: page.length,
-      score,
-      scanned,
-      suppressedQuietHours,
-      suppressedFilters,
-      targets: page.map((row) => ({
-        id: row.id,
-        endpoint: row.endpoint,
-        keys: { p256dh: row.p256dh, auth: row.auth },
-        contentEncoding: row.contentEncoding,
-        minScore: row.minScore,
-        tier: row.tier,
-      })),
-      nextAfter: page.length === limit || !exhausted ? cursor : null,
+      subscribed: false,
+      disabled: disabled.length,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const unavailable =
-      message.includes("no such table") ||
-      message.includes("D1 binding") ||
-      message.includes("env.DB");
-    if (!unavailable) console.error("[push-targets] D1 request failed");
-
-    return serverJson(
-      {
-        ok: false,
-        code: unavailable ? "push_targets_not_ready" : "push_targets_failed",
-        error: "Impossible de charger les destinataires push.",
-      },
-      unavailable ? 503 : 500
-    );
+    return deviceDatabaseError(device, error);
   }
 }
