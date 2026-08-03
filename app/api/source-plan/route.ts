@@ -2,7 +2,7 @@ import { runtimeEnv as env } from "@/lib/runtime-env";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { alerts, collectionRuns, discoverySegments, inspectionRequests, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
+import { alerts, collectionRuns, discoverySegments, inspectionRequests, purchases, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 import { ACTIVE_SOURCE_IDS, isPartnerSourceAuthorized } from "@/lib/source-registry";
 
@@ -74,7 +74,8 @@ export async function GET(request: Request) {
     await database.update(sentinelFrontier).set({ status: "queued", updatedAt: new Date().toISOString() })
       .where(and(eq(sentinelFrontier.status, "processing"), sql`${sentinelFrontier.updatedAt} < ${staleClaim}`));
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const [rows, segments, pendingRechecks, pendingInspections, dueFrontier, runMetrics, alertMetrics] = await Promise.all([
+    const planNow = new Date().toISOString();
+    const [rows, segments, pendingRechecks, pendingInspections, dueFrontier, duePurchaseChecks, runMetrics, alertMetrics] = await Promise.all([
       database
         .select()
         .from(sourceConfigurations)
@@ -98,6 +99,14 @@ export async function GET(request: Request) {
           sql`${sentinelFrontier.nextScanAt} <= ${new Date().toISOString()}`,
         ))
         .orderBy(desc(sentinelFrontier.priority), asc(sentinelFrontier.nextScanAt)).limit(50),
+      database.select().from(purchases)
+        .where(and(
+          inArray(purchases.status, ["protected", "action_available"]),
+          inArray(purchases.source, authorizedSourceIds),
+          sql`${purchases.nextCheckAt} <= ${planNow}`,
+          sql`${purchases.protectionEndsAt} > ${planNow}`,
+        ))
+        .orderBy(asc(purchases.nextCheckAt)).limit(25),
       database.select({
         source: collectionRuns.source,
         market: collectionRuns.market,
@@ -229,6 +238,20 @@ export async function GET(request: Request) {
       await database.update(sentinelFrontier).set({ status: "processing", updatedAt: claimedAt })
         .where(inArray(sentinelFrontier.id, frontierItems.map((item) => item.id)));
     }
+    const protectionItems = duePurchaseChecks.map((row) => ({
+      id: row.id,
+      source: row.source,
+      market: row.market,
+      url: row.url,
+      shadowCart: true,
+    }));
+    if (protectionItems.length > 0) {
+      const claimedAt = new Date(now).toISOString();
+      await database.update(purchases).set({
+        nextCheckAt: new Date(now + 6 * 60 * 60_000).toISOString(),
+        updatedAt: claimedAt,
+      }).where(inArray(purchases.id, protectionItems.map((item) => item.id)));
+    }
     return json({
       ok: true,
       generatedAt: new Date(now).toISOString(),
@@ -243,6 +266,8 @@ export async function GET(request: Request) {
       inspections: inspectionItems,
       frontierCount: frontierItems.length,
       frontier: frontierItems,
+      protectionCount: protectionItems.length,
+      protectionChecks: protectionItems,
     });
   } catch {
     return json({ ok: false, code: "SOURCE_PLAN_UNAVAILABLE" }, 503);
