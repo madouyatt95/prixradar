@@ -4,6 +4,7 @@ import { runtimeEnv as env } from "@/lib/runtime-env";
 import { getDb } from "@/db";
 import { alertFeedback, alertIntelligence, alerts, priceObservations } from "@/db/schema";
 import { ANOMALY_LIMITS, type AnomalyEvaluation } from "@/lib/anomaly";
+import { assessPurchasability } from "@/lib/purchasability";
 import { isActiveSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
@@ -131,6 +132,20 @@ function serializeAlert(
     affiliateUrl = url.toString();
   }
   const buyNow = parseBuyNow(row.buyNowJson, row.buyNowScore);
+  const totalCents = intelligence?.finalTotalCents ?? (row.shippingCents === null ? null : row.priceCents + row.shippingCents);
+  const purchasability = assessPurchasability({
+    sourceMode: row.sourceMode,
+    status: row.status,
+    verifiedAt: row.verifiedAt,
+    expiresAt: row.expiresAt,
+    totalCents,
+    priceAccessibleToAll: row.priceAccessibleToAll,
+    cartStatus: intelligence?.shadowCartStatus,
+    variantConfidence: intelligence?.variantConfidence,
+    sellerScore: intelligence?.sellerScore,
+    communityPositive: community?.positive,
+    communityNegative: community?.negative,
+  });
 
   return {
     id: row.id,
@@ -153,7 +168,7 @@ function serializeAlert(
     priceCents: row.priceCents,
     shippingCents: row.shippingCents,
     shippingKnown: row.shippingCents !== null,
-    totalCents: row.shippingCents === null ? null : row.priceCents + row.shippingCents,
+    totalCents,
     usualPriceCents: row.usualPriceCents,
     discountPercent: row.discountPercent,
     score: row.score,
@@ -197,6 +212,7 @@ function serializeAlert(
       reason: "demo_data",
     },
     community: community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 },
+    purchasability,
     intelligence: serializeIntelligence(intelligence),
     evidence: evidence === null ? null : {
       historyPoints: evidence.historyPoints,
