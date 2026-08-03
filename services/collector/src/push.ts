@@ -39,6 +39,14 @@ interface DigestTarget extends PushSubscriptionTarget {
   url: string;
 }
 
+interface ProtectionTarget extends PushSubscriptionTarget {
+  notificationId: number;
+  purchaseId: string;
+  title: string;
+  body: string;
+  url: string;
+}
+
 type DeliveryAction =
   | { action: "reserve"; alertId: string; subscriptionId: number; tier?: "urgent" | "personal" | "digest" }
   | { action: "complete"; reservationId: number; status: "sent" | "failed"; errorCode?: string };
@@ -333,6 +341,49 @@ export async function sendDailyDigests(
       summary.sent += 1;
     } catch (error) {
       await deliveryAction({ action: "complete", reservationId: reservation.reservationId, status: "failed", errorCode: deliveryErrorCode(error) }, config, fetchImpl);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+export async function sendProtectionPush(
+  purchaseId: string,
+  config: PushConfig,
+  dependencies: { fetchImpl?: typeof fetch; sendNotification?: typeof webPush.sendNotification } = {},
+): Promise<PushDeliverySummary> {
+  if (!config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
+    throw new SinkConfigurationError("Clés VAPID absentes: bouclier Push désactivé.");
+  }
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  if (!dependencies.sendNotification) webPush.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
+  const endpoint = apiEndpoint(config.baseUrl, "api/push/protection");
+  endpoint.searchParams.set("purchaseId", purchaseId);
+  const response = await protectedJson<{ ok: boolean; targets?: ProtectionTarget[] }>(config, endpoint, { method: "GET" }, fetchImpl);
+  const targets = Array.isArray(response.targets)
+    ? response.targets.filter((target): target is ProtectionTarget => validTarget(target) && Number.isSafeInteger(target.notificationId) && target.notificationId > 0 && typeof target.purchaseId === "string")
+    : [];
+  const summary: PushDeliverySummary = { eligible: targets.length > 0, targets: targets.length, reserved: targets.length, sent: 0, failed: 0 };
+  for (const target of targets) {
+    const payload = JSON.stringify({
+      alertId: target.purchaseId,
+      title: target.title,
+      body: target.body,
+      url: target.url,
+      tier: "protection",
+      badgeCount: 1,
+    });
+    try {
+      await (dependencies.sendNotification ?? webPush.sendNotification)({ endpoint: target.endpoint, keys: target.keys }, payload, {
+        TTL: 21_600,
+        urgency: "high",
+        topic: `shield-${purchaseId}`.slice(0, 32),
+        ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm" ? { contentEncoding: target.contentEncoding } : {}),
+      });
+      await protectedJson(config, endpoint, { method: "POST", body: JSON.stringify({ notificationId: target.notificationId, status: "sent" }) }, fetchImpl);
+      summary.sent += 1;
+    } catch (error) {
+      await protectedJson(config, endpoint, { method: "POST", body: JSON.stringify({ notificationId: target.notificationId, status: "failed", errorCode: deliveryErrorCode(error) }) }, fetchImpl).catch(() => undefined);
       summary.failed += 1;
     }
   }
