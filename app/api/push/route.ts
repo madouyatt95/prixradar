@@ -1,140 +1,120 @@
-import { and, desc, eq, gt, gte, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { evidenceBoolean, evidenceNumber } from "@/lib/alert-evidence";
-import { verifiedCartEvidence } from "@/lib/cart-proof.js";
-import { alertMatchesPushPreferences } from "@/lib/push-preferences";
-import { alertIntelligence, alerts, missionItems, pushSubscriptions, radarRules, userPreferences } from "@/db/schema";
-import { radarIntentMatches, type RadarIntent } from "@/lib/radar-intent";
+import { protectionNotifications, purchases, pushSubscriptions, userPreferences } from "@/db/schema";
 import { authorizePushDelivery, serverJson } from "../server-auth";
 import { isQuietNow } from "../quiet-hours";
 
 export const dynamic = "force-dynamic";
 
-function intent(value: string): RadarIntent | null {
-  try { return JSON.parse(value) as RadarIntent; } catch { return null; }
+const PURCHASE_ID = /^purchase:[0-9a-f-]{36}$/u;
+const GONE_CODES = new Set(["PUSH_404", "PUSH_410"]);
+
+function money(cents: number, currency: string) {
+  return new Intl.NumberFormat("fr-FR", { style: "currency", currency, maximumFractionDigits: 2 }).format(cents / 100);
 }
 
 export async function GET(request: Request) {
   const authentication = await authorizePushDelivery(request);
   if (!authentication.ok) return authentication.response;
+  const purchaseId = new URL(request.url).searchParams.get("purchaseId")?.trim() ?? "";
+  if (!PURCHASE_ID.test(purchaseId)) return serverJson({ ok: false, code: "invalid_purchase" }, 400);
   try {
     const database = getDb();
-    const now = new Date();
-    const nowIso = now.toISOString();
-    const since = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
-    const [subscriptions, candidates] = await Promise.all([
-      database.select({
-        id: pushSubscriptions.id,
-        ownerId: pushSubscriptions.ownerId,
-        endpoint: pushSubscriptions.endpoint,
-        p256dh: pushSubscriptions.p256dh,
-        auth: pushSubscriptions.auth,
-        contentEncoding: pushSubscriptions.contentEncoding,
-        minScore: userPreferences.minScore,
-        minSellerScore: userPreferences.minSellerScore,
-        requireExactVariant: userPreferences.requireExactVariant,
-        requireCartConfirmation: userPreferences.requireCartConfirmation,
-        maxAlertAgeMinutes: userPreferences.maxAlertAgeMinutes,
-        minimumHistoryPoints: userPreferences.minimumHistoryPoints,
-        quietHours: userPreferences.quietHours,
-        quietStart: userPreferences.quietStart,
-        quietEnd: userPreferences.quietEnd,
-        timezone: userPreferences.timezone,
-        minDiscount: userPreferences.minDiscount,
-        maxPriceCents: userPreferences.maxPriceCents,
-        marketsJson: userPreferences.marketsJson,
-        categoriesJson: userPreferences.categoriesJson,
-        sourcesJson: userPreferences.sourcesJson,
-        deliveryCountry: userPreferences.deliveryCountry,
-        postalCode: userPreferences.postalCode,
-        deliveryMode: userPreferences.deliveryMode,
-        requireLocationMatch: userPreferences.requireLocationMatch,
-        notificationSpeed: userPreferences.notificationSpeed,
-      }).from(pushSubscriptions).innerJoin(userPreferences, eq(userPreferences.ownerId, pushSubscriptions.ownerId))
-        .where(and(
-          eq(pushSubscriptions.enabled, true),
-          eq(userPreferences.notificationEnabled, true),
-          eq(userPreferences.notificationSpeed, "digest"),
-        )).limit(500),
-      database.select().from(alerts).where(and(
-        eq(alerts.sourceMode, "live"), eq(alerts.status, "active"), eq(alerts.priceAccessibleToAll, true),
-        gte(alerts.updatedAt, since), gt(alerts.expiresAt, nowIso),
-      )).orderBy(desc(alerts.buyNowScore), desc(alerts.score)).limit(60),
-    ]);
-    const intelligenceRows = candidates.length === 0 ? [] : await database.select({
-      alertId: alertIntelligence.alertId,
-      sellerScore: alertIntelligence.sellerScore,
-      variantConfidence: alertIntelligence.variantConfidence,
-      shadowCartStatus: alertIntelligence.shadowCartStatus,
-      shadowCartJson: alertIntelligence.shadowCartJson,
-    }).from(alertIntelligence).where(inArray(alertIntelligence.alertId, candidates.map((candidate) => candidate.id)));
-    const intelligenceByAlert = new Map(intelligenceRows.map((item) => [item.alertId, item]));
-    const owners = [...new Set(subscriptions.map((row) => row.ownerId))];
-    const singleRules = owners.length === 0 ? [] : await database.select({ ownerId: radarRules.ownerId, intentJson: radarRules.intentJson })
-      .from(radarRules).where(and(inArray(radarRules.ownerId, owners), eq(radarRules.enabled, true), eq(radarRules.status, "active"), eq(radarRules.kind, "single")));
-    const projectRules = owners.length === 0 ? [] : await database.select({ ownerId: missionItems.ownerId, intentJson: missionItems.intentJson })
-      .from(missionItems).innerJoin(radarRules, eq(radarRules.id, missionItems.missionId)).where(and(
-        inArray(missionItems.ownerId, owners), inArray(missionItems.status, ["searching", "matched"]),
-        eq(radarRules.enabled, true), eq(radarRules.status, "active"),
-      ));
-    const rulesByOwner = new Map<string, RadarIntent[]>();
-    for (const rule of [...singleRules, ...projectRules]) {
-      const parsed = intent(rule.intentJson);
-      if (parsed) rulesByOwner.set(rule.ownerId, [...(rulesByOwner.get(rule.ownerId) ?? []), parsed]);
+    const [purchase] = await database.select().from(purchases).where(and(
+      eq(purchases.id, purchaseId),
+      eq(purchases.status, "action_available"),
+    )).limit(1);
+    if (!purchase || purchase.bestPriceCents === null || purchase.potentialRecoveryCents <= 0) {
+      return serverJson({ ok: true, targets: [] });
     }
-    const targets = subscriptions.flatMap((subscription) => {
-      if (isQuietNow(subscription, now)) return [];
-      const ownerRules = rulesByOwner.get(subscription.ownerId) ?? [];
-      const matches = candidates.filter((alert) => {
-        const intelligence = intelligenceByAlert.get(alert.id);
-        const priceCents = alert.publicPriceCents ?? alert.priceCents;
-        const radarMatch = ownerRules.length === 0 || ownerRules.some((rule) => radarIntentMatches(rule, {
-          title: alert.title, brand: alert.brand, category: alert.category, market: alert.market,
-          priceCents, discountPercent: alert.discountPercent, condition: alert.condition,
-          accessibleToAll: alert.priceAccessibleToAll, deliveryCountry: alert.deliveryCountry,
-        }));
-        return alertMatchesPushPreferences({
-          preferences: subscription,
-          alert: {
-            score: alert.score,
-            sellerScore: Number(intelligence?.sellerScore ?? 0),
-            historyPoints: evidenceNumber(alert.evidenceJson, "historyPoints") ?? 0,
-            exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true && Number(intelligence?.variantConfidence ?? 0) >= 90,
-            cartConfirmed: intelligence?.shadowCartStatus === "confirmed" && verifiedCartEvidence(intelligence?.shadowCartJson ?? "{}"),
-            verifiedAt: alert.verifiedAt,
-            discountPercent: alert.discountPercent,
-            priceCents: alert.priceCents,
-            publicPriceCents: alert.publicPriceCents,
-            source: alert.source,
-            market: alert.market,
-            category: alert.category,
-            deliveryCountry: alert.deliveryCountry,
-            deliveryPostalPrefix: alert.deliveryPostalPrefix,
-            deliveryMode: alert.deliveryMode,
-            locationVerified: alert.locationVerified,
-          },
-          tier: "digest",
-          radarMatches: radarMatch,
-          nowMs: now.getTime(),
-        });
-      }).slice(0, 5);
-      if (matches.length === 0) return [];
-      const lead = matches[0];
-      const amount = ((lead.publicPriceCents ?? lead.priceCents) / 100).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
-      return [{
+    const subscriptions = await database.select({
+      id: pushSubscriptions.id,
+      endpoint: pushSubscriptions.endpoint,
+      p256dh: pushSubscriptions.p256dh,
+      auth: pushSubscriptions.auth,
+      contentEncoding: pushSubscriptions.contentEncoding,
+      quietHours: userPreferences.quietHours,
+      quietStart: userPreferences.quietStart,
+      quietEnd: userPreferences.quietEnd,
+      timezone: userPreferences.timezone,
+      notificationEnabled: userPreferences.notificationEnabled,
+    }).from(pushSubscriptions).innerJoin(userPreferences, eq(userPreferences.ownerId, pushSubscriptions.ownerId)).where(and(
+      eq(pushSubscriptions.ownerId, purchase.ownerId),
+      eq(pushSubscriptions.enabled, true),
+      eq(userPreferences.notificationEnabled, true),
+    )).limit(5);
+    const targets = [];
+    for (const subscription of subscriptions) {
+      if (isQuietNow(subscription)) continue;
+      const dedupeKey = `${purchase.id}:${subscription.id}:${purchase.bestPriceCents}:protection`;
+      const attemptedAt = new Date().toISOString();
+      const [created] = await database.insert(protectionNotifications).values({
+        purchaseId: purchase.id,
+        subscriptionId: subscription.id,
+        ownerId: purchase.ownerId,
+        priceCents: purchase.bestPriceCents,
+        status: "reserved",
+        dedupeKey,
+        attemptedAt,
+      }).onConflictDoNothing({ target: protectionNotifications.dedupeKey }).returning({ id: protectionNotifications.id });
+      let notificationId = created?.id ?? null;
+      if (notificationId === null) {
+        const [existing] = await database.select({ id: protectionNotifications.id, status: protectionNotifications.status, attemptedAt: protectionNotifications.attemptedAt })
+          .from(protectionNotifications).where(eq(protectionNotifications.dedupeKey, dedupeKey)).limit(1);
+        const staleReservation = existing?.status === "reserved" && Date.parse(existing.attemptedAt) < Date.now() - 15 * 60_000;
+        if (existing && (existing.status === "failed" || staleReservation)) {
+          await database.update(protectionNotifications).set({ status: "reserved", attemptedAt, sentAt: null, errorCode: null }).where(eq(protectionNotifications.id, existing.id));
+          notificationId = existing.id;
+        }
+      }
+      if (notificationId === null) continue;
+      targets.push({
+        notificationId,
         id: subscription.id,
         endpoint: subscription.endpoint,
         keys: { p256dh: subscription.p256dh, auth: subscription.auth },
         contentEncoding: subscription.contentEncoding,
-        alertId: lead.id,
-        title: `PrixRadar · ${matches.length} opportunité${matches.length > 1 ? "s" : ""} aujourd’hui`,
-        body: `${lead.title} à ${amount} ${lead.currency}${matches.length > 1 ? ` · et ${matches.length - 1} autre${matches.length > 2 ? "s" : ""}` : ""}`,
-        url: `/?alert=${encodeURIComponent(lead.id)}`,
-      }];
-    });
-    return serverJson({ ok: true, generatedAt: nowIso, count: targets.length, targets });
+        purchaseId: purchase.id,
+        title: "PrixRadar · baisse après votre achat",
+        body: `${purchase.title} est à ${money(purchase.bestPriceCents, purchase.currency)} · ${money(purchase.potentialRecoveryCents, purchase.currency)} potentiellement récupérables`,
+        url: `/?tab=missions&purchase=${encodeURIComponent(purchase.id)}`,
+      });
+    }
+    return serverJson({ ok: true, targets });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("no such table") || message.includes("D1 binding") || message.includes("env.DB")) return serverJson({ ok: false, code: "protection_push_not_ready" }, 503);
+    return serverJson({ ok: false, code: "protection_push_failed" }, 500);
+  }
+}
+
+export async function POST(request: Request) {
+  const authentication = await authorizePushDelivery(request);
+  if (!authentication.ok) return authentication.response;
+  let body: Record<string, unknown> | null = null;
+  try {
+    const candidate: unknown = await request.json();
+    body = candidate && typeof candidate === "object" && !Array.isArray(candidate) ? candidate as Record<string, unknown> : null;
+  } catch { body = null; }
+  const notificationId = Number(body?.notificationId);
+  const status = body?.status;
+  const errorCode = typeof body?.errorCode === "string" && /^[A-Z0-9_]{3,80}$/u.test(body.errorCode) ? body.errorCode : null;
+  if (!Number.isSafeInteger(notificationId) || notificationId < 1 || status !== "sent" && status !== "failed" || status === "sent" && errorCode !== null) {
+    return serverJson({ ok: false, code: "invalid_protection_delivery" }, 400);
+  }
+  try {
+    const database = getDb();
+    const [notification] = await database.select({ subscriptionId: protectionNotifications.subscriptionId }).from(protectionNotifications).where(and(
+      eq(protectionNotifications.id, notificationId),
+      eq(protectionNotifications.status, "reserved"),
+    )).limit(1);
+    if (!notification) return serverJson({ ok: false, code: "protection_delivery_unavailable" }, 409);
+    const now = new Date().toISOString();
+    await database.update(protectionNotifications).set({ status, sentAt: status === "sent" ? now : null, errorCode }).where(eq(protectionNotifications.id, notificationId));
+    if (errorCode && GONE_CODES.has(errorCode)) await database.update(pushSubscriptions).set({ enabled: false, updatedAt: now }).where(eq(pushSubscriptions.id, notification.subscriptionId));
+    return serverJson({ ok: true, notificationId, status });
   } catch {
-    return serverJson({ ok: false, code: "digests_failed", error: "Impossible de préparer les résumés." }, 503);
+    return serverJson({ ok: false, code: "protection_delivery_failed" }, 500);
   }
 }
