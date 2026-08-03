@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "../../../../db";
 import { evidenceBoolean, evidenceEligible, evidenceNumber } from "../../../../lib/alert-evidence";
@@ -8,6 +8,7 @@ import { radarIntentMatches, type RadarIntent } from "../../../../lib/radar-inte
 import {
   alerts,
   alertIntelligence,
+  missionItems,
   notificationDeliveries,
   pushSubscriptions,
   radarRules,
@@ -143,11 +144,19 @@ async function reserve(body: UnknownRecord) {
   const now = Date.now();
   const freshAfter = now - subscription.maxAlertAgeMinutes * 60_000;
   const historyPoints = alert ? evidenceNumber(alert.evidenceJson, "historyPoints") ?? 0 : 0;
-  const ruleRows = await database.select({ intentJson: radarRules.intentJson }).from(radarRules).where(and(
+  const ruleRows = await database.select({ intentJson: radarRules.intentJson, kind: radarRules.kind }).from(radarRules).where(and(
     eq(radarRules.ownerId, subscription.ownerId),
     eq(radarRules.enabled, true),
+    eq(radarRules.status, "active"),
   ));
-  const intents = ruleRows.flatMap((rule): RadarIntent[] => {
+  const projectItemRows = await database.select({ intentJson: missionItems.intentJson }).from(missionItems)
+    .innerJoin(radarRules, eq(radarRules.id, missionItems.missionId)).where(and(
+      eq(missionItems.ownerId, subscription.ownerId),
+      inArray(missionItems.status, ["searching", "matched"]),
+      eq(radarRules.enabled, true),
+      eq(radarRules.status, "active"),
+    ));
+  const intents = [...ruleRows.filter((rule) => rule.kind === "single"), ...projectItemRows].flatMap((rule): RadarIntent[] => {
     try { return [JSON.parse(rule.intentJson) as RadarIntent]; } catch { return []; }
   });
   const radarMatches = alert !== undefined && (intents.length === 0 || intents.some((intent) => radarIntentMatches(intent, {
