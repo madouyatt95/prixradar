@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sendPushForObservation } from "../src/push.js";
+import { sendProtectionPush, sendPushForObservation } from "../src/push.js";
 import type { VerifiedObservation } from "../src/types.js";
 
 function alert(fixture = false): VerifiedObservation {
@@ -130,4 +130,40 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
     { action: "complete", reservationId: 1, status: "sent" },
   ]);
   assert.ok(auth.every((value) => value === "Bearer PUSH_SECRET_TEST"));
+});
+
+test("livre une baisse après achat uniquement à la réservation du propriétaire", async () => {
+  const completions: unknown[] = [];
+  const payloads: string[] = [];
+  const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer PUSH_SECRET_TEST");
+    if (init?.method === "GET") {
+      assert.equal(url.pathname, "/api/push/protection");
+      assert.equal(url.searchParams.get("purchaseId"), "purchase:00000000-0000-4000-8000-000000000001");
+      return Response.json({ ok: true, targets: [{
+        notificationId: 7,
+        purchaseId: "purchase:00000000-0000-4000-8000-000000000001",
+        id: 3,
+        endpoint: "https://push.example/protected-owner",
+        keys: { p256dh: "p256dh", auth: "auth" },
+        contentEncoding: "aes128gcm",
+        title: "PrixRadar · baisse après votre achat",
+        body: "80 € potentiellement récupérables",
+        url: "/?tab=missions",
+      }] });
+    }
+    completions.push(JSON.parse(String(init?.body)) as unknown);
+    return Response.json({ ok: true });
+  };
+  const summary = await sendProtectionPush("purchase:00000000-0000-4000-8000-000000000001", config, {
+    fetchImpl: fakeFetch,
+    sendNotification: async (_subscription, payload) => {
+      payloads.push(String(payload));
+      return { statusCode: 201, headers: {}, body: "" };
+    },
+  });
+  assert.deepEqual(summary, { eligible: true, targets: 1, reserved: 1, sent: 1, failed: 0 });
+  assert.deepEqual(completions, [{ notificationId: 7, status: "sent" }]);
+  assert.match(payloads[0], /"tier":"protection"/u);
 });

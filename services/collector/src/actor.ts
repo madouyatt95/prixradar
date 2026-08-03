@@ -11,7 +11,7 @@ import {
   SourceStatusReporter,
 } from "./source-status.js";
 import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
-import { sendDailyDigests } from "./push.js";
+import { sendDailyDigests, sendProtectionPush } from "./push.js";
 import { postFrontierItems, privateApiHeaders } from "./sink.js";
 import { isRetailSource, type Market, type RetailSource } from "./types.js";
 
@@ -47,7 +47,7 @@ type RemoteDiscoverySegment = {
 };
 
 type RemoteRecheck = { id: string; alertId: string; source: RetailSource; market: Market; url: string };
-type RemotePriority = { id: string; source: RetailSource; market: Market; url: string; kind: "inspection" | "frontier"; shadowCart: boolean };
+type RemotePriority = { id: string; source: RetailSource; market: Market; url: string; kind: "inspection" | "frontier" | "purchase"; shadowCart: boolean };
 type ActorCoverageTarget = Omit<CoverageTarget, "sourceConfigurationId"> & { sourceConfigurationId: string | null };
 type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[] };
 
@@ -93,6 +93,7 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
     rechecks?: unknown;
     inspections?: unknown;
     frontier?: unknown;
+    protectionChecks?: unknown;
   };
   const segments = Array.isArray(payload.discoverySegments)
     ? payload.discoverySegments.flatMap((candidate): RemoteDiscoverySegment[] => {
@@ -138,6 +139,7 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
     priorityTasks: [
       ...priorityItems(payload.inspections, "inspection"),
       ...priorityItems(payload.frontier, "frontier"),
+      ...priorityItems(payload.protectionChecks, "purchase"),
     ],
   };
 }
@@ -226,7 +228,23 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       });
       if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
       seenProductUrls.add(task.url);
-      await Actor.pushData({ dataKind: `autonomous-${task.kind}`, requestId: task.id, ...observation });
+      let protectionPush: unknown = null;
+      if (task.kind === "purchase" && !fixture && config.priceRadarBaseUrl && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
+        try {
+          protectionPush = await sendProtectionPush(task.id, {
+            baseUrl: config.priceRadarBaseUrl,
+            deliverySecret: config.pushDeliverySecret,
+            ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+            vapidSubject: config.vapidSubject,
+            vapidPublicKey: config.vapidPublicKey,
+            vapidPrivateKey: config.vapidPrivateKey,
+            timeoutMs: config.httpTimeoutMs,
+          });
+        } catch (error) {
+          protectionPush = { error: error instanceof Error ? error.message : "PUSH_PROTECTION_FAILED" };
+        }
+      }
+      await Actor.pushData({ dataKind: `autonomous-${task.kind}`, requestId: task.id, protectionPush, ...observation });
     }
     for (const recheck of plan.rechecks) {
       const observation = await verifySourceUrl(recheck.url, {

@@ -4,7 +4,7 @@ import { getDb } from "@/db";
 import { evidenceBoolean, evidenceNumber } from "@/lib/alert-evidence";
 import { verifiedCartEvidence } from "@/lib/cart-proof.js";
 import { alertMatchesPushPreferences } from "@/lib/push-preferences";
-import { alertIntelligence, alerts, pushSubscriptions, radarRules, userPreferences } from "@/db/schema";
+import { alertIntelligence, alerts, missionItems, pushSubscriptions, radarRules, userPreferences } from "@/db/schema";
 import { radarIntentMatches, type RadarIntent } from "@/lib/radar-intent";
 import { authorizePushDelivery, serverJson } from "../server-auth";
 import { isQuietNow } from "../quiet-hours";
@@ -71,10 +71,15 @@ export async function GET(request: Request) {
     }).from(alertIntelligence).where(inArray(alertIntelligence.alertId, candidates.map((candidate) => candidate.id)));
     const intelligenceByAlert = new Map(intelligenceRows.map((item) => [item.alertId, item]));
     const owners = [...new Set(subscriptions.map((row) => row.ownerId))];
-    const rules = owners.length === 0 ? [] : await database.select({ ownerId: radarRules.ownerId, intentJson: radarRules.intentJson })
-      .from(radarRules).where(and(inArray(radarRules.ownerId, owners), eq(radarRules.enabled, true)));
+    const singleRules = owners.length === 0 ? [] : await database.select({ ownerId: radarRules.ownerId, intentJson: radarRules.intentJson })
+      .from(radarRules).where(and(inArray(radarRules.ownerId, owners), eq(radarRules.enabled, true), eq(radarRules.status, "active"), eq(radarRules.kind, "single")));
+    const projectRules = owners.length === 0 ? [] : await database.select({ ownerId: missionItems.ownerId, intentJson: missionItems.intentJson })
+      .from(missionItems).innerJoin(radarRules, eq(radarRules.id, missionItems.missionId)).where(and(
+        inArray(missionItems.ownerId, owners), inArray(missionItems.status, ["searching", "matched"]),
+        eq(radarRules.enabled, true), eq(radarRules.status, "active"),
+      ));
     const rulesByOwner = new Map<string, RadarIntent[]>();
-    for (const rule of rules) {
+    for (const rule of [...singleRules, ...projectRules]) {
       const parsed = intent(rule.intentJson);
       if (parsed) rulesByOwner.set(rule.ownerId, [...(rulesByOwner.get(rule.ownerId) ?? []), parsed]);
     }

@@ -584,13 +584,114 @@ export const radarRules = sqliteTable(
     name: text("name").notNull(),
     query: text("query").notNull(),
     intentJson: text("intent_json").notNull(),
+    kind: text("kind").notNull().default("single"),
+    status: text("status").notNull().default("active"),
+    budgetCents: integer("budget_cents"),
+    deadlineAt: text("deadline_at"),
+    allowAlternatives: integer("allow_alternatives", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    completedAt: text("completed_at"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("radar_rules_owner_enabled_idx").on(table.ownerId, table.enabled),
+    index("radar_rules_owner_status_idx").on(table.ownerId, table.status),
     index("radar_rules_updated_idx").on(table.updatedAt),
+    check("radar_rules_kind_allowed", sql`${table.kind} IN ('single', 'project')`),
+    check("radar_rules_status_allowed", sql`${table.status} IN ('active', 'paused', 'completed')`),
+    check("radar_rules_budget_positive", sql`${table.budgetCents} > 0`),
+  ]
+);
+
+export const missionItems = sqliteTable(
+  "mission_items",
+  {
+    id: text("id").primaryKey(),
+    missionId: text("mission_id").notNull().references(() => radarRules.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull(),
+    label: text("label").notNull(),
+    query: text("query").notNull(),
+    intentJson: text("intent_json").notNull(),
+    quantity: integer("quantity").notNull().default(1),
+    required: integer("required", { mode: "boolean" }).notNull().default(true),
+    targetPriceCents: integer("target_price_cents"),
+    selectedAlertId: text("selected_alert_id").references(() => alerts.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("searching"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("mission_items_mission_status_idx").on(table.missionId, table.status),
+    index("mission_items_owner_updated_idx").on(table.ownerId, table.updatedAt),
+    check("mission_items_quantity_range", sql`${table.quantity} BETWEEN 1 AND 99`),
+    check("mission_items_target_positive", sql`${table.targetPriceCents} > 0`),
+    check("mission_items_status_allowed", sql`${table.status} IN ('searching', 'matched', 'purchased', 'skipped')`),
+  ]
+);
+
+export const purchases = sqliteTable(
+  "purchases",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    alertId: text("alert_id").references(() => alerts.id, { onDelete: "set null" }),
+    missionId: text("mission_id").references(() => radarRules.id, { onDelete: "set null" }),
+    missionItemId: text("mission_item_id").references(() => missionItems.id, { onDelete: "set null" }),
+    source: text("source").notNull(),
+    market: text("market").notNull(),
+    productId: text("product_id").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    currency: text("currency").notNull(),
+    paidTotalCents: integer("paid_total_cents").notNull(),
+    referencePriceCents: integer("reference_price_cents").notNull(),
+    realizedSavingsCents: integer("realized_savings_cents").notNull().default(0),
+    latestPriceCents: integer("latest_price_cents"),
+    bestPriceCents: integer("best_price_cents"),
+    potentialRecoveryCents: integer("potential_recovery_cents").notNull().default(0),
+    status: text("status").notNull().default("protected"),
+    actionReason: text("action_reason"),
+    purchasedAt: text("purchased_at").notNull(),
+    deliveredAt: text("delivered_at"),
+    protectionEndsAt: text("protection_ends_at").notNull(),
+    lastCheckedAt: text("last_checked_at"),
+    nextCheckAt: text("next_check_at").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("purchases_owner_alert_unique").on(table.ownerId, table.alertId),
+    index("purchases_owner_purchased_idx").on(table.ownerId, table.purchasedAt),
+    index("purchases_protection_due_idx").on(table.status, table.nextCheckAt, table.protectionEndsAt),
+    index("purchases_product_lookup_idx").on(table.source, table.market, table.productId),
+    check("purchases_paid_positive", sql`${table.paidTotalCents} > 0`),
+    check("purchases_reference_positive", sql`${table.referencePriceCents} > 0`),
+    check("purchases_savings_nonnegative", sql`${table.realizedSavingsCents} >= 0`),
+    check("purchases_latest_nonnegative", sql`${table.latestPriceCents} >= 0`),
+    check("purchases_best_nonnegative", sql`${table.bestPriceCents} >= 0`),
+    check("purchases_recovery_nonnegative", sql`${table.potentialRecoveryCents} >= 0`),
+    check("purchases_currency_allowed", sql`${table.currency} IN ('EUR', 'GBP')`),
+    check("purchases_status_allowed", sql`${table.status} IN ('protected', 'action_available', 'kept', 'returned', 'closed')`),
+  ]
+);
+
+export const purchaseEvents = sqliteTable(
+  "purchase_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    purchaseId: text("purchase_id").notNull().references(() => purchases.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    priceCents: integer("price_cents"),
+    note: text("note"),
+    occurredAt: text("occurred_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("purchase_events_purchase_time_idx").on(table.purchaseId, table.occurredAt),
+    check("purchase_events_price_nonnegative", sql`${table.priceCents} >= 0`),
+    check("purchase_events_type_allowed", sql`${table.eventType} IN ('purchased', 'price_checked', 'price_drop', 'action_opened', 'returned', 'kept', 'closed')`),
   ]
 );
 
@@ -686,6 +787,29 @@ export const pushSubscriptions = sqliteTable(
       "push_subscriptions_encoding_allowed",
       sql`${table.contentEncoding} IN ('aes128gcm', 'aesgcm')`
     ),
+  ]
+);
+
+export const protectionNotifications = sqliteTable(
+  "protection_notifications",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    purchaseId: text("purchase_id").notNull().references(() => purchases.id, { onDelete: "cascade" }),
+    subscriptionId: integer("subscription_id").notNull().references(() => pushSubscriptions.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull(),
+    priceCents: integer("price_cents").notNull(),
+    status: text("status").notNull().default("reserved"),
+    dedupeKey: text("dedupe_key").notNull(),
+    attemptedAt: text("attempted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    sentAt: text("sent_at"),
+    errorCode: text("error_code"),
+  },
+  (table) => [
+    uniqueIndex("protection_notifications_dedupe_unique").on(table.dedupeKey),
+    index("protection_notifications_purchase_idx").on(table.purchaseId, table.attemptedAt),
+    index("protection_notifications_owner_idx").on(table.ownerId, table.attemptedAt),
+    check("protection_notifications_price_positive", sql`${table.priceCents} > 0`),
+    check("protection_notifications_status_allowed", sql`${table.status} IN ('reserved', 'sent', 'failed')`),
   ]
 );
 

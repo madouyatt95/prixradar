@@ -69,6 +69,17 @@ type AlertItem = {
     seller: { score: number; level?: string };
     lifetime: { urgencyScore: number; predictedLifetimeMinutes: number; predictedExpiresAt?: string | null };
   };
+  purchasability?: {
+    status: "confirmed" | "check_now" | "stale" | "blocked";
+    label: string;
+    message: string;
+    totalCents: number | null;
+    ageMinutes: number | null;
+    minutesRemaining: number | null;
+    checks: Record<string, boolean>;
+    blockers: string[];
+    community: { positive: number; negative: number; confidencePercent: number | null };
+  };
 };
 
 type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
@@ -78,6 +89,68 @@ type RadarRule = {
   name: string;
   query: string;
   enabled: boolean;
+};
+
+type MissionItem = {
+  id: string;
+  missionId: string;
+  label: string;
+  query: string;
+  quantity: number;
+  required: boolean;
+  targetPriceCents: number | null;
+  status: "searching" | "matched" | "purchased" | "skipped";
+  bestMatch: null | { alertId: string; title: string; merchant: string; priceCents: number; discountPercent: number; currency: "EUR" | "GBP" };
+};
+
+type Mission = {
+  id: string;
+  name: string;
+  query: string;
+  kind: "single" | "project";
+  status: "active" | "paused" | "completed";
+  budgetCents: number | null;
+  deadlineAt: string | null;
+  allowAlternatives: boolean;
+  items: MissionItem[];
+  progress: { total: number; matched: number; purchased: number; percent: number };
+};
+
+type ProtectedPurchase = {
+  id: string;
+  alertId: string | null;
+  title: string;
+  source: string;
+  market: string;
+  url: string;
+  currency: "EUR" | "GBP";
+  paidTotalCents: number;
+  referencePriceCents: number;
+  realizedSavingsCents: number;
+  latestPriceCents: number | null;
+  potentialRecoveryCents: number;
+  status: "protected" | "action_available" | "kept" | "returned" | "closed";
+  protectionEndsAt: string;
+  lastCheckedAt: string | null;
+  actionReason: string | null;
+};
+
+type SavingsSummary = {
+  purchaseCount: number;
+  realizedSavingsCents: number;
+  potentialRecoveryCents: number;
+  protectedCount: number;
+  actionCount: number;
+};
+
+type MissionDraft = {
+  kind: "single" | "project";
+  name: string;
+  query: string;
+  budgetCents: number | null;
+  deadlineAt: string | null;
+  allowAlternatives: boolean;
+  items: Array<{ label: string; query: string }>;
 };
 
 type SourceRuntimeStatus = {
@@ -176,6 +249,20 @@ type IntegrityResponse = {
     };
   }>;
 };
+
+async function loadMissionCenter() {
+  const [missionResponse, purchaseResponse] = await Promise.all([
+    fetch("/api/missions", { headers: { accept: "application/json" } }),
+    fetch("/api/purchases", { headers: { accept: "application/json" } }),
+  ]);
+  const missionPayload = missionResponse.ok ? await missionResponse.json() as { items?: Mission[] } : {};
+  const purchasePayload = purchaseResponse.ok ? await purchaseResponse.json() as { items?: ProtectedPurchase[]; summary?: SavingsSummary } : {};
+  return {
+    missions: Array.isArray(missionPayload.items) ? missionPayload.items : [],
+    purchases: Array.isArray(purchasePayload.items) ? purchasePayload.items : [],
+    savings: purchasePayload.summary ?? { purchaseCount: 0, realizedSavingsCents: 0, potentialRecoveryCents: 0, protectedCount: 0, actionCount: 0 },
+  };
+}
 
 const ALERT_PRESETS: Record<AlertPreset, {
   label: string;
@@ -432,7 +519,7 @@ for (const alert of ALERTS) {
 
 const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "radar", label: "Radar", icon: "◎" },
-  { id: "watchlist", label: "Suivis", icon: "◇" },
+  { id: "watchlist", label: "Missions", icon: "◇" },
   { id: "sources", label: "Sources", icon: "⌁" },
   { id: "admin", label: "Pilotage", icon: "◈" },
   { id: "settings", label: "Réglages", icon: "☷" },
@@ -591,6 +678,9 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const anomalyRecord = record(intelligenceRecord?.anomaly);
   const sellerRecord = record(intelligenceRecord?.seller);
   const lifetimeRecord = record(intelligenceRecord?.lifetime);
+  const purchasabilityRecord = record(item.purchasability);
+  const purchaseChecks = record(purchasabilityRecord?.checks);
+  const purchaseCommunity = record(purchasabilityRecord?.community);
   let reasons: string[] = [];
   if (Array.isArray(item.reasons)) {
     reasons = item.reasons.filter((reason): reason is string => typeof reason === "string");
@@ -749,6 +839,21 @@ function mapLiveAlert(value: unknown): AlertItem | null {
         predictedExpiresAt: typeof lifetimeRecord?.predictedExpiresAt === "string" ? lifetimeRecord.predictedExpiresAt : null,
       },
     } : undefined,
+    purchasability: purchasabilityRecord ? {
+      status: ["confirmed", "check_now", "stale", "blocked"].includes(String(purchasabilityRecord.status)) ? purchasabilityRecord.status as "confirmed" | "check_now" | "stale" | "blocked" : "blocked",
+      label: typeof purchasabilityRecord.label === "string" ? purchasabilityRecord.label : "À vérifier",
+      message: typeof purchasabilityRecord.message === "string" ? purchasabilityRecord.message : "Une vérification est nécessaire.",
+      totalCents: typeof purchasabilityRecord.totalCents === "number" ? purchasabilityRecord.totalCents : null,
+      ageMinutes: typeof purchasabilityRecord.ageMinutes === "number" ? purchasabilityRecord.ageMinutes : null,
+      minutesRemaining: typeof purchasabilityRecord.minutesRemaining === "number" ? purchasabilityRecord.minutesRemaining : null,
+      checks: purchaseChecks ? Object.fromEntries(Object.entries(purchaseChecks).map(([key, value]) => [key, value === true])) : {},
+      blockers: Array.isArray(purchasabilityRecord.blockers) ? purchasabilityRecord.blockers.filter((value): value is string => typeof value === "string") : [],
+      community: {
+        positive: finite(purchaseCommunity?.positive),
+        negative: finite(purchaseCommunity?.negative),
+        confidencePercent: typeof purchaseCommunity?.confidencePercent === "number" ? purchaseCommunity.confidencePercent : null,
+      },
+    } : undefined,
   };
 }
 
@@ -822,6 +927,10 @@ export function PriceRadarApp() {
   const [radarRules, setRadarRules] = useState<RadarRule[]>([]);
   const [radarQuery, setRadarQuery] = useState("");
   const [radarSaving, setRadarSaving] = useState(false);
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [purchases, setPurchases] = useState<ProtectedPurchase[]>([]);
+  const [savings, setSavings] = useState<SavingsSummary>({ purchaseCount: 0, realizedSavingsCents: 0, potentialRecoveryCents: 0, protectedCount: 0, actionCount: 0 });
+  const [missionCenterLoading, setMissionCenterLoading] = useState(true);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [preferencesSaveState, setPreferencesSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -841,6 +950,12 @@ export function PriceRadarApp() {
     return () => {
       window.removeEventListener("beforeinstallprompt", installHandler);
     };
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") !== "missions") return;
+    const frame = window.requestAnimationFrame(() => setTab("watchlist"));
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -1017,6 +1132,19 @@ export function PriceRadarApp() {
             : [];
         }));
       }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    loadMissionCenter().then((data) => {
+      if (!active) return;
+      setMissions(data.missions);
+      setPurchases(data.purchases);
+      setSavings(data.savings);
+    }).catch(() => undefined).finally(() => {
+      if (active) setMissionCenterLoading(false);
+    });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -1296,6 +1424,7 @@ export function PriceRadarApp() {
       setRadarRules((current) => [data.item as RadarRule, ...current]);
       setRadarQuery("");
       setToast("Radar personnel activé");
+      void refreshMissionCenter();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Impossible de créer ce radar");
     } finally {
@@ -1307,8 +1436,75 @@ export function PriceRadarApp() {
     const response = await fetch(`/api/radars?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     if (response.ok) {
       setRadarRules((current) => current.filter((rule) => rule.id !== id));
+      setMissions((current) => current.filter((mission) => mission.id !== id));
       setToast("Radar supprimé");
     } else setToast("Suppression impossible");
+  }
+
+  async function refreshMissionCenter() {
+    const data = await loadMissionCenter();
+    setMissions(data.missions);
+    setPurchases(data.purchases);
+    setSavings(data.savings);
+  }
+
+  async function createMission(draft: MissionDraft) {
+    try {
+      const response = await fetch("/api/missions", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const payload = await response.json() as { item?: Mission; error?: string };
+      if (!response.ok || !payload.item) throw new Error(payload.error ?? "Mission invalide");
+      await refreshMissionCenter();
+      setToast(draft.kind === "project" ? "Panier-projet lancé" : "Mission d’achat lancée");
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Impossible de créer la mission");
+      return false;
+    }
+  }
+
+  async function updateMission(id: string, status: Mission["status"] | "delete") {
+    const response = await fetch(status === "delete" ? `/api/missions?id=${encodeURIComponent(id)}` : "/api/missions", {
+      method: status === "delete" ? "DELETE" : "PATCH",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: status === "delete" ? undefined : JSON.stringify({ id, status }),
+    });
+    if (!response.ok) return setToast("Impossible de modifier cette mission");
+    await refreshMissionCenter();
+    setToast(status === "delete" ? "Mission supprimée" : status === "paused" ? "Mission mise en pause" : status === "completed" ? "Mission terminée" : "Mission réactivée");
+  }
+
+  async function recordPurchase(alert: AlertItem, paidTotalCents: number, protectionDays: number, missionItemId?: string) {
+    const selectedItem = missionItemId ? missions.flatMap((mission) => mission.items).find((item) => item.id === missionItemId) : undefined;
+    try {
+      const response = await fetch("/api/purchases", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ alertId: alert.id, paidTotalCents, protectionDays, missionId: selectedItem?.missionId, missionItemId: selectedItem?.id }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Achat non enregistré");
+      await refreshMissionCenter();
+      setToast(`Achat protégé pendant ${protectionDays} jours`);
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Impossible de protéger cet achat");
+      return false;
+    }
+  }
+
+  async function updatePurchase(id: string, action: "action_opened" | "kept" | "returned" | "closed") {
+    const response = await fetch("/api/purchases", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ id, action }),
+    });
+    if (!response.ok) return setToast("Impossible de mettre à jour cet achat");
+    await refreshMissionCenter();
+    setToast(action === "returned" ? "Retour enregistré" : action === "kept" ? "Achat conservé" : "Action enregistrée");
   }
 
   async function lookupKeepa(event: FormEvent<HTMLFormElement>) {
@@ -1449,12 +1645,20 @@ export function PriceRadarApp() {
     if (tab === "admin") return <AdminView />;
     if (tab === "watchlist") {
       return (
-        <WatchlistView
+        <MissionCenterView
+          missions={missions}
+          purchases={purchases}
+          savings={savings}
+          centerLoading={missionCenterLoading}
           alerts={watchedAlerts}
+          availableAlerts={knownAlerts}
           loading={watchLoading}
           onOpen={setSelected}
           onRemove={toggleWatch}
           onExplore={() => setTab("radar")}
+          onCreate={createMission}
+          onUpdateMission={updateMission}
+          onUpdatePurchase={updatePurchase}
         />
       );
     }
@@ -1584,8 +1788,8 @@ export function PriceRadarApp() {
             >
               <span aria-hidden="true">{item.icon}</span>
               {item.label}
-              {item.id === "watchlist" && watched.size > 0 ? (
-                <span className="nav-count">{watched.size}</span>
+              {item.id === "watchlist" && missions.filter((mission) => mission.status === "active").length + savings.actionCount > 0 ? (
+                <span className="nav-count">{missions.filter((mission) => mission.status === "active").length + savings.actionCount}</span>
               ) : null}
             </button>
           ))}
@@ -1664,8 +1868,8 @@ export function PriceRadarApp() {
               {item.icon}
             </span>
             <span>{item.label}</span>
-            {item.id === "watchlist" && watched.size > 0 ? (
-              <span className="mobile-count">{watched.size}</span>
+            {item.id === "watchlist" && missions.filter((mission) => mission.status === "active").length + savings.actionCount > 0 ? (
+              <span className="mobile-count">{missions.filter((mission) => mission.status === "active").length + savings.actionCount}</span>
             ) : null}
           </button>
         ))}
@@ -1677,6 +1881,10 @@ export function PriceRadarApp() {
           watched={watched.has(selected.id)}
           onWatch={() => toggleWatch(selected)}
           onFeedback={(verdict) => void submitFeedback(selected, verdict)}
+          purchaseOptions={missions.flatMap((mission) => mission.items
+            .filter((item) => item.status !== "purchased" && item.bestMatch?.alertId === selected.id)
+            .map((item) => ({ id: item.id, label: item.label, missionName: mission.name })))}
+          onPurchase={(paidTotalCents, protectionDays, missionItemId) => recordPurchase(selected, paidTotalCents, protectionDays, missionItemId)}
           useAffiliateLink={affiliateConsent}
           onClose={() => setSelected(null)}
         />
@@ -1975,26 +2183,104 @@ function AlertCard({
   );
 }
 
-function WatchlistView({
+function MissionCenterView({
+  missions,
+  purchases,
+  savings,
+  centerLoading,
   alerts,
+  availableAlerts,
   loading,
   onOpen,
   onRemove,
   onExplore,
+  onCreate,
+  onUpdateMission,
+  onUpdatePurchase,
 }: {
+  missions: Mission[];
+  purchases: ProtectedPurchase[];
+  savings: SavingsSummary;
+  centerLoading: boolean;
   alerts: AlertItem[];
+  availableAlerts: AlertItem[];
   loading: boolean;
   onOpen: (alert: AlertItem) => void;
   onRemove: (alert: AlertItem) => void;
   onExplore: () => void;
+  onCreate: (draft: MissionDraft) => Promise<boolean>;
+  onUpdateMission: (id: string, status: Mission["status"] | "delete") => Promise<void>;
+  onUpdatePurchase: (id: string, action: "action_opened" | "kept" | "returned" | "closed") => Promise<void>;
 }) {
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [kind, setKind] = useState<"single" | "project">("single");
+  const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
+  const [projectLines, setProjectLines] = useState("");
+  const [budget, setBudget] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [allowAlternatives, setAllowAlternatives] = useState(true);
+  const [advanced, setAdvanced] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const actionable = purchases.filter((purchase) => purchase.status === "action_available");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const lines = projectLines.split(/\n/gu).map((line) => line.trim()).filter(Boolean);
+    if (kind === "single" && query.trim().length < 3 || kind === "project" && lines.length < 2) return;
+    setSaving(true);
+    const created = await onCreate({
+      kind,
+      name: name.trim(),
+      query: query.trim(),
+      budgetCents: budget ? Math.round(Number(budget.replace(",", ".")) * 100) : null,
+      deadlineAt: deadline ? new Date(`${deadline}T23:59:59`).toISOString() : null,
+      allowAlternatives,
+      items: lines.map((line) => ({ label: line, query: line })),
+    });
+    setSaving(false);
+    if (created) {
+      setName(""); setQuery(""); setProjectLines(""); setBudget(""); setDeadline(""); setCreatorOpen(false);
+    }
+  }
+
   return (
     <section className="view-section">
       <PageHeading
-        eyebrow="Votre sélection"
-        title="Produits suivis"
-        description="Retrouvez ici les signaux que vous souhaitez surveiller dans la durée."
+        eyebrow="Votre copilote d’achat"
+        title="Missions, projets et économies"
+        description="Décrivez un besoin, laissez PrixRadar chercher, puis protégez le prix après l’achat."
+        action={<button type="button" className="primary-button" onClick={() => setCreatorOpen((value) => !value)}>{creatorOpen ? "Fermer" : "＋ Nouvelle mission"}</button>}
       />
+
+      <div className="savings-wallet" aria-label="Portefeuille d’économies">
+        <div className="wallet-main"><span>Économies suivies</span><strong>{money(savings.realizedSavingsCents / 100)}</strong><small>calculées sur vos prix réellement payés</small></div>
+        <div><span>Achats protégés</span><strong>{savings.protectedCount}</strong><small>contrôles programmés toutes les 6 h</small></div>
+        <div className={savings.potentialRecoveryCents > 0 ? "wallet-action" : ""}><span>À récupérer</span><strong>{money(savings.potentialRecoveryCents / 100)}</strong><small>{savings.actionCount ? `${savings.actionCount} action${savings.actionCount > 1 ? "s" : ""} possible${savings.actionCount > 1 ? "s" : ""}` : "aucune baisse exploitable"}</small></div>
+      </div>
+
+      {actionable.length ? <section className="protection-alerts" aria-labelledby="protection-alerts-title"><div className="section-label-row"><h2 id="protection-alerts-title">Bouclier après achat</h2><span>Action recommandée</span></div>{actionable.map((purchase) => <article key={purchase.id}><div><span className="eyebrow">Baisse après votre achat</span><h3>{purchase.title}</h3><p>Nouveau prix {purchase.latestPriceCents === null ? "détecté" : money(purchase.latestPriceCents / 100, purchase.currency)} · vous pourriez récupérer <strong>{money(purchase.potentialRecoveryCents / 100, purchase.currency)}</strong>.</p></div><div className="protection-actions"><a className="primary-button" href={purchase.url} target="_blank" rel="noreferrer" onClick={() => void onUpdatePurchase(purchase.id, "action_opened")}>Voir le prix ↗</a><button type="button" className="secondary-button" onClick={() => void onUpdatePurchase(purchase.id, "kept")}>Je garde</button><button type="button" className="secondary-button" onClick={() => void onUpdatePurchase(purchase.id, "returned")}>Retourné</button></div></article>)}</section> : null}
+
+      {creatorOpen ? <form className="mission-creator" onSubmit={submit}>
+        <div className="section-label-row"><div><span className="eyebrow">Configuration guidée</span><h2>Que voulez-vous acheter ?</h2></div><span>1 minute</span></div>
+        <div className="mission-kind"><button type="button" className={kind === "single" ? "is-active" : ""} onClick={() => setKind("single")}><strong>Un produit</strong><small>Une mission ciblée</small></button><button type="button" className={kind === "project" ? "is-active" : ""} onClick={() => setKind("project")}><strong>Un projet complet</strong><small>Plusieurs achats, un budget</small></button></div>
+        <label>Nom de la mission <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder={kind === "project" ? "Mon bureau à domicile" : "Mon prochain smartphone"} /></label>
+        {kind === "single" ? <label>Décrivez le produit <textarea value={query} onChange={(event) => setQuery(event.target.value)} maxLength={300} rows={3} placeholder="Un iPhone 16 neuf sous 850 €, livré en France, prix public" required /></label> : <label>Un achat par ligne <textarea value={projectLines} onChange={(event) => setProjectLines(event.target.value)} maxLength={2400} rows={6} placeholder={"Écran OLED 27 pouces sous 700 €\nBras d’écran sous 120 €\nClavier mécanique silencieux sous 150 €"} required /><small>{projectLines.split(/\n/gu).filter((line) => line.trim()).length} élément(s) · minimum 2</small></label>}
+        <button type="button" className="advanced-toggle" onClick={() => setAdvanced((value) => !value)} aria-expanded={advanced}>{advanced ? "Masquer les paramètres avancés" : "Paramètres avancés"} <span>{advanced ? "−" : "+"}</span></button>
+        {advanced ? <div className="mission-advanced"><label>Budget total (€)<input type="number" min="1" max="1000000" step="0.01" value={budget} onChange={(event) => setBudget(event.target.value)} inputMode="decimal" placeholder="1500" /></label><label>Date limite<input type="date" value={deadline} min={new Date().toISOString().slice(0, 10)} onChange={(event) => setDeadline(event.target.value)} /></label><label className="check-line"><input type="checkbox" checked={allowAlternatives} onChange={(event) => setAllowAlternatives(event.target.checked)} /> Accepter les alternatives équivalentes</label></div> : null}
+        <div className="mission-submit"><p>PrixRadar compare l’historique, les enseignes, le panier final et la variante avant de proposer une alerte.</p><button className="dark-button" disabled={saving}>{saving ? "Lancement…" : kind === "project" ? "Lancer le panier-projet" : "Lancer la mission"}</button></div>
+      </form> : null}
+
+      <div className="section-label-row mission-section-title"><h2>Missions en cours</h2><span>{missions.filter((mission) => mission.status === "active").length} actives</span></div>
+      {centerLoading ? <div className="loading-panel" role="status"><span className="loading-orbit" /> Synchronisation de vos missions…</div> : missions.length ? <div className="mission-grid">{missions.map((mission) => {
+        const spentCents = mission.items.filter((item) => item.status === "purchased").reduce((sum, item) => sum + (item.bestMatch?.priceCents ?? 0) * item.quantity, 0);
+        const singleMatch = mission.items[0]?.bestMatch;
+        return <article className={`mission-card is-${mission.status}`} key={mission.id}><header><div><span className="eyebrow">{mission.kind === "project" ? "Panier-projet" : "Mission d’achat"}</span><h3>{mission.name}</h3></div><span className="mission-status">{mission.status === "active" ? "En veille" : mission.status === "paused" ? "En pause" : "Terminée"}</span></header>{mission.kind === "project" ? <><div className="mission-progress"><i style={{ width: `${mission.progress.percent}%` }} /></div><p>{mission.progress.purchased}/{mission.progress.total} achetés · {mission.progress.matched} opportunités trouvées{mission.budgetCents ? ` · budget ${money(mission.budgetCents / 100)}` : ""}</p><ul>{mission.items.map((item) => <li key={item.id} className={`is-${item.status}`}><span aria-hidden="true">{item.status === "purchased" ? "✓" : item.bestMatch ? "↘" : "○"}</span><div><strong>{item.label}</strong><small>{item.status === "purchased" ? "Acheté" : item.bestMatch ? `${item.bestMatch.merchant} · ${money(item.bestMatch.priceCents / 100, item.bestMatch.currency)} · −${item.bestMatch.discountPercent} %` : "Recherche automatique en cours"}</small></div>{item.bestMatch ? <button type="button" onClick={() => { const alert = availableAlerts.find((candidate) => candidate.id === item.bestMatch?.alertId); if (alert) onOpen(alert); else onExplore(); }}>Voir</button> : null}</li>)}</ul></> : <><p className="mission-query">{mission.query}</p>{singleMatch ? <button type="button" className="single-match" onClick={() => { const alert = availableAlerts.find((candidate) => candidate.id === singleMatch.alertId); if (alert) onOpen(alert); else onExplore(); }}><span><strong>{singleMatch.merchant}</strong><small>{money(singleMatch.priceCents / 100, singleMatch.currency)} · −{singleMatch.discountPercent} %</small></span><i>Voir l’alerte ↗</i></button> : <small className="mission-searching">Recherche automatique en cours…</small>}</>}<footer><span>{mission.deadlineAt ? `Avant le ${new Date(mission.deadlineAt).toLocaleDateString("fr-FR")}` : "Sans date limite"}{mission.allowAlternatives ? " · alternatives permises" : " · modèle exact"}</span><div>{mission.status === "active" ? <button type="button" onClick={() => void onUpdateMission(mission.id, "paused")}>Pause</button> : mission.status === "paused" ? <button type="button" onClick={() => void onUpdateMission(mission.id, "active")}>Réactiver</button> : null}<button type="button" onClick={() => void onUpdateMission(mission.id, mission.status === "completed" ? "delete" : "completed")}>{mission.status === "completed" ? "Supprimer" : "Terminer"}</button></div></footer>{mission.budgetCents && spentCents > 0 ? <small className="budget-note">{money(spentCents / 100)} engagés sur {money(mission.budgetCents / 100)}</small> : null}</article>;
+      })}</div> : <div className="empty-state compact"><div className="empty-radar" aria-hidden="true" /><h2>Aucune mission pour le moment</h2><p>Commencez par un achat simple ou préparez tout un projet.</p><button type="button" className="primary-button" onClick={() => setCreatorOpen(true)}>Créer ma première mission</button></div>}
+
+      {purchases.length ? <section className="purchase-ledger"><div className="section-label-row"><h2>Journal de vos achats</h2><span>{purchases.length} enregistré{purchases.length > 1 ? "s" : ""}</span></div><div>{purchases.map((purchase) => <article key={purchase.id}><span className={`purchase-state is-${purchase.status}`}>{purchase.status === "action_available" ? "Baisse détectée" : purchase.status === "protected" ? "Protégé" : purchase.status === "returned" ? "Retourné" : purchase.status === "kept" ? "Conservé" : "Clos"}</span><h3>{purchase.title}</h3><dl><div><dt>Payé</dt><dd>{money(purchase.paidTotalCents / 100, purchase.currency)}</dd></div><div><dt>Économie suivie</dt><dd>{money(purchase.realizedSavingsCents / 100, purchase.currency)}</dd></div><div><dt>Protection</dt><dd>{new Date(purchase.protectionEndsAt).toLocaleDateString("fr-FR")}</dd></div></dl><small>{purchase.lastCheckedAt ? `Dernier contrôle ${relativeTime(purchase.lastCheckedAt)}` : "Premier contrôle programmé"}</small></article>)}</div></section> : null}
+
+      <div className="section-label-row mission-section-title"><h2>Produits suivis</h2><span>{alerts.length}</span></div>
       {loading ? (
         <div className="loading-panel" role="status">
           <span className="loading-orbit" /> Chargement de vos suivis…
@@ -2029,7 +2315,7 @@ function WatchlistView({
       ) : (
         <div className="empty-state spacious">
           <div className="empty-radar" aria-hidden="true" />
-          <h2>Votre liste est encore vide</h2>
+          <h2>Aucun produit épinglé</h2>
           <p>
             Ajoutez un signal au suivi pour le retrouver ici et préparer ses
             futures alertes.
@@ -2042,10 +2328,10 @@ function WatchlistView({
       <div className="trust-note">
         <span aria-hidden="true">✓</span>
         <div>
-          <strong>Une baisse ne suffit pas à déclencher une alerte.</strong>
+          <strong>Vos chiffres restent séparés et vérifiables.</strong>
           <p>
-            Prix total, variante, vendeur, stock et fraîcheur devront tous être
-            revérifiés par le moteur connecté.
+            Le portefeuille utilise le total que vous confirmez avoir payé. Une baisse
+            future n’est annoncée qu’après une nouvelle lecture du panier.
           </p>
         </div>
       </div>
@@ -2738,6 +3024,8 @@ function AlertDetail({
   watched,
   onWatch,
   onFeedback,
+  purchaseOptions,
+  onPurchase,
   useAffiliateLink,
   onClose,
 }: {
@@ -2745,6 +3033,8 @@ function AlertDetail({
   watched: boolean;
   onWatch: () => void;
   onFeedback: (verdict: "useful" | "false_positive" | "expired" | "purchased" | "cancelled" | "wrong_variant" | "coupon_failed" | "price_confirmed") => void;
+  purchaseOptions: Array<{ id: string; label: string; missionName: string }>;
+  onPurchase: (paidTotalCents: number, protectionDays: number, missionItemId?: string) => Promise<boolean>;
   useAffiliateLink: boolean;
   onClose: () => void;
 }) {
@@ -2752,6 +3042,27 @@ function AlertDetail({
   const community = alert.community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 };
   const [recheck, setRecheck] = useState<"idle" | "pending" | "processing" | "completed" | "failed">("idle");
   const [recheckMessage, setRecheckMessage] = useState("");
+  const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [paidEuros, setPaidEuros] = useState(alert.currentPrice.toFixed(2).replace(".", ","));
+  const [protectionDays, setProtectionDays] = useState(14);
+  const [missionItemId, setMissionItemId] = useState(purchaseOptions[0]?.id ?? "");
+  const [purchaseSaving, setPurchaseSaving] = useState(false);
+  const purchasability = alert.purchasability ?? {
+    status: alert.sourceMode === "live" ? "check_now" as const : "blocked" as const,
+    label: alert.sourceMode === "live" ? "À confirmer maintenant" : "Exemple non achetable",
+    message: alert.sourceMode === "live" ? "Demandez une nouvelle vérification avant de payer." : "Les cartes de démonstration ne peuvent pas alimenter vos économies.",
+    totalCents: Math.round(alert.currentPrice * 100), ageMinutes: null, minutesRemaining: null, checks: {}, blockers: [], community: { positive: 0, negative: 0, confidencePercent: null },
+  };
+
+  async function confirmPurchase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cents = Math.round(Number(paidEuros.replace(",", ".")) * 100);
+    if (!Number.isSafeInteger(cents) || cents <= 0) return;
+    setPurchaseSaving(true);
+    const saved = await onPurchase(cents, protectionDays, missionItemId || undefined);
+    setPurchaseSaving(false);
+    if (saved) setPurchaseOpen(false);
+  }
 
   async function verifyNow() {
     if (alert.sourceMode !== "live") return setRecheckMessage("La vérification immédiate est réservée aux alertes actives.");
@@ -2838,6 +3149,14 @@ function AlertDetail({
           <div><span className="eyebrow">Décision d’achat</span><h3>{buyNow.label}</h3><p>Un score séparé de la simple remise : historique, marché, vendeur, stock, livraison et accessibilité.</p></div><strong>{buyNow.score}<small>/100</small></strong>
           {buyNow.factors.length > 0 ? <div className="buy-now-factors">{buyNow.factors.map((factor, index) => <span key={factor.key ?? index}><i style={{ width: `${Math.min(100, Math.round((Number(factor.points ?? 0) / Math.max(1, Number(factor.maximum ?? 1))) * 100))}%` }} /><small>{factor.label ?? factor.key}</small></span>)}</div> : null}
           {buyNow.cautions.length > 0 ? <p className="buy-now-cautions">{buyNow.cautions.join(" · ")}</p> : null}
+        </section>
+
+        <section className={`purchasability-box is-${purchasability.status}`} aria-labelledby="purchasability-title">
+          <div className="purchasability-head"><span aria-hidden="true">{purchasability.status === "confirmed" ? "✓" : purchasability.status === "blocked" ? "!" : "↻"}</span><div><span className="eyebrow">Disponibilité réelle</span><h3 id="purchasability-title">{purchasability.label}</h3><p>{purchasability.message}</p></div>{purchasability.totalCents ? <strong>{money(purchasability.totalCents / 100, alert.currency)}<small>total</small></strong> : null}</div>
+          <div className="purchasability-checks"><span className={purchasability.checks.cartConfirmed ? "is-ok" : ""}>Panier final</span><span className={purchasability.checks.exactVariant ? "is-ok" : ""}>Variante exacte</span><span className={purchasability.checks.trustedSeller ? "is-ok" : ""}>Vendeur fiable</span><span className={purchasability.checks.fresh ? "is-ok" : ""}>Contrôle récent</span></div>
+          <p className="purchasability-time">{purchasability.minutesRemaining !== null ? `Fenêtre estimée : encore ${purchasability.minutesRemaining} min` : "Aucune durée de validité garantie"}{purchasability.community.confidencePercent !== null ? ` · ${purchasability.community.confidencePercent} % d’avis positifs` : ""}</p>
+          <div className="purchasability-actions"><button type="button" className="dark-button" onClick={() => setPurchaseOpen((value) => !value)} disabled={alert.sourceMode !== "live"}>{alert.sourceMode === "live" ? "J’ai acheté à ce prix" : "Disponible avec une alerte LIVE"}</button>{purchasability.status !== "confirmed" && alert.sourceMode === "live" ? <button type="button" className="secondary-button" onClick={() => void verifyNow()}>Revérifier d’abord</button> : null}</div>
+          {purchaseOpen ? <form className="purchase-confirm" onSubmit={confirmPurchase}><div><label>Total réellement payé<input value={paidEuros} onChange={(event) => setPaidEuros(event.target.value)} inputMode="decimal" aria-label="Total réellement payé en euros" /></label><label>Protection<select value={protectionDays} onChange={(event) => setProtectionDays(Number(event.target.value))}><option value={7}>7 jours</option><option value={14}>14 jours</option><option value={30}>30 jours</option><option value={60}>60 jours</option></select></label></div>{purchaseOptions.length ? <label>Rattacher au projet<select value={missionItemId} onChange={(event) => setMissionItemId(event.target.value)}><option value="">Aucune mission</option>{purchaseOptions.map((option) => <option key={option.id} value={option.id}>{option.missionName} · {option.label}</option>)}</select></label> : null}<p>Le montant payé sert au portefeuille. PrixRadar revérifiera ce produit toutes les 6 h pendant la période choisie.</p><button className="primary-button" disabled={purchaseSaving}>{purchaseSaving ? "Protection…" : "Confirmer et protéger"}</button></form> : null}
         </section>
 
         {alert.intelligence ? (
