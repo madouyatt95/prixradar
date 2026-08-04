@@ -7,16 +7,21 @@ async function source(path) {
 }
 
 test("selects the native Next build on Vercel and vinext on Cloudflare", async () => {
-  const [packageJson, selector] = await Promise.all([
+  const [packageJson, selector, viteConfig] = await Promise.all([
     source("../package.json"),
     source("../build/run-build.mjs"),
+    source("../vite.config.ts"),
   ]);
   const scripts = JSON.parse(packageJson).scripts;
 
   assert.equal(scripts.build, "node build/run-build.mjs");
   assert.match(scripts["build:vercel"], /next build/);
   assert.match(scripts["build:cloudflare"], /vinext build/);
+  assert.match(scripts["deploy:cloudflare"], /d1 migrations apply DB --remote/);
+  assert.match(scripts["deploy:cloudflare"], /wrangler deploy .*--keep-vars/);
   assert.match(selector, /process\.env\.VERCEL === "1"/);
+  assert.match(viteConfig, /D1_DATABASE_ID/);
+  assert.match(viteConfig, /PRODUCTION_DATABASE_ID/);
 });
 
 test("injects Cloudflare bindings without importing them in Vercel bundles", async () => {
