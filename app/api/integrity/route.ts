@@ -146,7 +146,7 @@ export async function GET(request: Request) {
         purpose: "Mesurer la cohérence d’une baisse détectée avec le plus bas prix antérieur sur 30 jours et avec la médiane multi-enseignes.",
         history: "65 % du score. Une remise PrixRadar supérieure à la baisse vérifiable face au plus bas antérieur est pénalisée; cinq points antérieurs sont requis.",
         market: "35 % du score. Le total payable est comparé à la médiane d’au moins deux offres marchandes rapprochées.",
-        scope: "L’indice porte sur les alertes LIVE détectées par PrixRadar. Ce n’est ni le taux de conformité d’une enseigne ni une conclusion juridique.",
+        scope: "L’indice porte sur les alertes vérifiées détectées par PrixRadar. Ce n’est ni le taux de conformité d’une enseigne ni une conclusion juridique.",
         advertisedPriceCaveat: "observedDiscountPercent est la remise calculée par PrixRadar, pas nécessairement le pourcentage publicitaire affiché par le marchand.",
         missingEvidence: "Sans les deux composantes, score reste null et status vaut insufficient_evidence.",
       },

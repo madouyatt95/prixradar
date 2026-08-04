@@ -179,7 +179,7 @@ export async function GET(request: Request) {
     return errorResponse(
       503,
       "KEEPA_NOT_CONFIGURED",
-      "La source Amazon Keepa n’est pas configurée. Aucun résultat de démonstration n’a été substitué.",
+      "La source Amazon Keepa n’est pas configurée. Aucun prix n’est affiché sans réponse vérifiée de Keepa.",
       "off",
     );
   }

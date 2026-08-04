@@ -57,7 +57,7 @@ export default function CertificateClient({ alertId }: { alertId: string }) {
     return () => { active = false; };
   }, [alertId]);
 
-  if (failed) return <main className={styles.page}><section className={styles.empty}><p className={styles.brand}>PrixRadar · passeport de preuve</p><h1>Preuve indisponible</h1><p>Cette alerte n’existe pas, n’est pas LIVE ou sa preuve n’est pas encore accessible.</p><Link href="/">Retour au radar</Link></section></main>;
+  if (failed) return <main className={styles.page}><section className={styles.empty}><p className={styles.brand}>PrixRadar · passeport de preuve</p><h1>Preuve indisponible</h1><p>Cette alerte n’existe pas, ne provient pas d’une source active ou sa preuve n’est pas encore accessible.</p><Link href="/">Retour au radar</Link></section></main>;
   if (!payload) return <main className={styles.page}><section className={styles.empty}><p className={styles.brand}>PrixRadar · passeport de preuve</p><h1>Chargement de la preuve…</h1></section></main>;
 
   const certification = record(payload.certification);

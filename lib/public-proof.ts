@@ -260,7 +260,7 @@ export function buildCertifiedPassport(input: {
     methodology: {
       readings: "La seconde lecture provient du contrôle collecteur horodaté; les points historiques ne la remplacent pas.",
       redaction: "Seuls les champs nécessaires à la preuve publique sont exposés; identifiants propriétaires, secrets et empreintes brutes sont exclus.",
-      certification: "Certifié exige une source LIVE, deux lectures, la variante exacte, un vendeur acceptable, le total panier et un prix accessible à tous.",
+      certification: "Certifié exige une source active, deux lectures, la variante exacte, un vendeur acceptable, le total panier et un prix accessible à tous.",
     },
   };
 }

@@ -115,7 +115,7 @@ export async function GET(request: Request) {
       },
       reliability,
       methodology: {
-        population: "Alertes LIVE observées pendant la période; les données demo et fixture sont exclues.",
+        population: "Alertes vérifiées observées pendant la période; les données non publiées sont exclues.",
         feedback: "Seuls les retours d’un appareil ayant réellement reçu l’alerte sont mesurés; une alerte évaluée est positive ou négative à la majorité de ces retours.",
         availability: "Le taux à 5, 15 ou 30 minutes utilise uniquement les alertes réellement revérifiées dans les 15 minutes suivant l’échéance.",
         latency: "Médiane entre la première observation et le premier push envoyé, une seule mesure par alerte.",

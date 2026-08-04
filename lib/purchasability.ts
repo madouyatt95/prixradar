@@ -59,7 +59,7 @@ export function assessPurchasability(input: PurchasabilityInput, nowMs = Date.no
     fresh: ageMinutes !== null && ageMinutes <= MAX_CONFIRMED_AGE_MINUTES,
   };
   const blockers: string[] = [];
-  if (!checks.live) blockers.push("donnée de démonstration");
+  if (!checks.live) blockers.push("source non active");
   if (!checks.available) blockers.push("prix expiré ou indisponible");
   if (!checks.publicPrice) blockers.push("prix soumis à une condition");
   if (!checks.totalKnown) blockers.push("total livré inconnu");

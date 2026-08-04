@@ -15,13 +15,13 @@ test("ships the complete PrixRadar application shell", async () => {
   assert.match(page, /PrixRadar — Les vraies anomalies de prix, vérifiées/);
   assert.match(page, /<PriceRadarApp \/>/);
   assert.match(layout, /<html lang="fr">/);
-  assert.match(application, /Voici comment seront classées vos alertes/);
-  assert.match(application, /Prix illustratifs, aucun achat réel/);
+  assert.match(application, /Votre radar est prêt/);
+  assert.match(application, /Aucune alerte vérifiée/);
   assert.match(application, /Amazon · Keepa/);
   assert.match(application, /Navigation principale/);
   assert.doesNotMatch(
     `${page}${layout}${application}`,
-    /codex-preview|Your site is taking shape|Building your site|react-loading-skeleton/i,
+    /codex-preview|Your site is taking shape|Building your site|react-loading-skeleton|mode démo|démonstration|prix illustratifs/i,
   );
 });
 
@@ -34,10 +34,11 @@ test("shows the six additional French retailers without claiming they are live",
     assert.match(application, new RegExp(merchant));
     assert.match(admin, new RegExp(merchant));
   }
-  assert.match(application, /Connecteur prêt · accès requis/);
-  assert.match(application, /premier rapport sain/);
+  assert.match(application, /Accès partenaire requis/);
+  assert.match(application, /premier contrôle réussi/);
   assert.match(application, /sources: preferredSources/);
-  assert.match(admin, /statut LIVE exige ensuite un rapport sain récent/);
+  assert.match(admin, /l’activation exige ensuite un contrôle récent réussi/);
+  assert.doesNotMatch(`${application}${admin}`, /pilotage à finaliser|prêt côté code|\bbientôt\b|\brecette\b/i);
   assert.doesNotMatch(application, /sur 4 enseignes \+ Amazon/);
 });
 

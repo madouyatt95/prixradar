@@ -551,15 +551,15 @@ const RETAIL_SOURCE_NAMES = new Map<string, string>(
 );
 
 const FRENCH_SOURCE_COVERAGE = [
-  { id: "boulanger", mark: "B", name: "Boulanger", detail: "France · catalogue + contrôle page", fallbackStatus: "Prêt à déployer", fallbackTone: "prepared", method: "Flux partenaire prioritaire, navigateur uniquement en repli" },
-  { id: "darty", mark: "D", name: "Darty", detail: "France · catalogue + contrôle page", fallbackStatus: "Prêt à déployer", fallbackTone: "prepared", method: "Référence exacte, vendeur et frais de livraison normalisés" },
-  { id: "cdiscount", mark: "C", name: "Cdiscount", detail: "France · marketplace", fallbackStatus: "Prêt à déployer", fallbackTone: "prepared", method: "Vendeurs tiers séparés, score de fiabilité renforcé" },
-  { id: "fnac", mark: "FN", name: "Fnac", detail: "France · marketplace et offres adhérents", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation de collecte ou flux partenaire requis ; prix public séparé des avantages adhérents" },
-  { id: "carrefour", mark: "CF", name: "Carrefour", detail: "France · prix et stock selon le magasin", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; carte fidélité et disponibilité locale restent séparées" },
-  { id: "leroy_merlin", mark: "LM", name: "Leroy Merlin", detail: "France · livraison et retrait localisés", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; prix, stock et retrait sont revérifiés pour la zone choisie" },
-  { id: "castorama", mark: "CA", name: "Castorama", detail: "France · livraison et retrait localisés", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; aucun prix local n’est généralisé à toute la France" },
-  { id: "conforama", mark: "CO", name: "Conforama", detail: "France · stock magasin et livraison", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; disponibilité et coût de livraison sont contrôlés séparément" },
-  { id: "rueducommerce", mark: "RDC", name: "Rue du Commerce", detail: "France · marketplace", fallbackStatus: "Connecteur prêt · accès requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; vendeur tiers, état et total livré restent explicites" },
+  { id: "boulanger", mark: "B", name: "Boulanger", detail: "France · catalogue + contrôle page", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Flux partenaire prioritaire, navigateur uniquement en repli" },
+  { id: "darty", mark: "D", name: "Darty", detail: "France · catalogue + contrôle page", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Référence exacte, vendeur et frais de livraison normalisés" },
+  { id: "cdiscount", mark: "C", name: "Cdiscount", detail: "France · marketplace", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Vendeurs tiers séparés, score de fiabilité renforcé" },
+  { id: "fnac", mark: "FN", name: "Fnac", detail: "France · marketplace et offres adhérents", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation de collecte ou flux partenaire requis ; prix public séparé des avantages adhérents" },
+  { id: "carrefour", mark: "CF", name: "Carrefour", detail: "France · prix et stock selon le magasin", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; carte fidélité et disponibilité locale restent séparées" },
+  { id: "leroy_merlin", mark: "LM", name: "Leroy Merlin", detail: "France · livraison et retrait localisés", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; prix, stock et retrait sont revérifiés pour la zone choisie" },
+  { id: "castorama", mark: "CA", name: "Castorama", detail: "France · livraison et retrait localisés", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; aucun prix local n’est généralisé à toute la France" },
+  { id: "conforama", mark: "CO", name: "Conforama", detail: "France · stock magasin et livraison", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; disponibilité et coût de livraison sont contrôlés séparément" },
+  { id: "rueducommerce", mark: "RDC", name: "Rue du Commerce", detail: "France · marketplace", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; vendeur tiers, état et total livré restent explicites" },
 ] as const;
 
 function money(value: number, currency: "EUR" | "GBP" = "EUR") {
@@ -934,6 +934,7 @@ export function PriceRadarApp() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [preferencesSaveState, setPreferencesSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const preferencesSaveStarted = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1084,6 +1085,10 @@ export function PriceRadarApp() {
 
   useEffect(() => {
     if (!preferencesReady) return;
+    if (!preferencesSaveStarted.current) {
+      preferencesSaveStarted.current = true;
+      return;
+    }
     const timer = window.setTimeout(() => {
       setPreferencesSaveState("saving");
       fetch("/api/preferences", {
@@ -1213,7 +1218,7 @@ export function PriceRadarApp() {
   useEffect(() => {
     const requested = new URL(window.location.href).searchParams.get("alert");
     if (!requested || selected) return;
-    const match = [...liveAlerts, ...ALERTS].find((alert) => alert.id === requested);
+    const match = liveAlerts.find((alert) => alert.id === requested);
     if (match) window.setTimeout(() => setSelected(match), 0);
   }, [liveAlerts, selected]);
 
@@ -1281,7 +1286,7 @@ export function PriceRadarApp() {
   }, []);
 
   const activeAlerts = useMemo(
-    () => (liveAlerts.length ? liveAlerts : ALERTS),
+    () => liveAlerts,
     [liveAlerts],
   );
   const hasLiveSources = useMemo(
@@ -1317,7 +1322,7 @@ export function PriceRadarApp() {
     });
   }, [activeAlerts, closeExpiredMinutes, filter, maxAlertAgeMinutes, search]);
 
-  const knownAlerts = [...liveAlerts, ...ALERTS].filter(
+  const knownAlerts = liveAlerts.filter(
     (alert, index, all) => all.findIndex((candidate) => candidate.id === alert.id) === index,
   );
   const watchedAlerts = knownAlerts.filter((alert) => watched.has(alert.id));
@@ -1751,7 +1756,7 @@ export function PriceRadarApp() {
         watched={watched}
         onWatch={toggleWatch}
         onOpen={setSelected}
-        mode={liveAlerts.length ? "live" : "fixture"}
+        mode={hasLiveSources || liveAlerts.length ? "live" : "fixture"}
         loading={liveLoading}
         onLookup={() => {
           setTab("sources");
@@ -1797,13 +1802,13 @@ export function PriceRadarApp() {
         <div className={`rail-foot ${hasLiveSources ? "is-live" : ""}`}>
           <span className="pulse-dot" />
           <div>
-            <strong>{hasLiveSources ? "Surveillance active" : "Mode démo"}</strong>
+            <strong>{hasLiveSources ? "Surveillance active" : "Radar prêt"}</strong>
             <small>
               {liveAlerts.length
                 ? `${liveAlerts.length} anomalie${liveAlerts.length > 1 ? "s" : ""} vérifiée${liveAlerts.length > 1 ? "s" : ""}`
                 : hasLiveSources
                   ? "Aucune anomalie confirmée"
-                  : "Connecteurs à configurer"}
+                  : "Sources en attente d’activation"}
             </small>
           </div>
         </div>
@@ -1830,17 +1835,6 @@ export function PriceRadarApp() {
             Hors ligne · vos derniers écrans restent disponibles
           </div>
         ) : null}
-
-        <div className={`demo-banner ${hasLiveSources ? "live-banner" : ""}`} role="note">
-          <span className="demo-badge">{hasLiveSources ? "LIVE" : "DÉMO"}</span>
-          <span>
-            {liveAlerts.length
-              ? `${liveAlerts.length} anomalie${liveAlerts.length > 1 ? "s" : ""} issue${liveAlerts.length > 1 ? "s" : ""} de collectes réelles et revérifiées.`
-              : hasLiveSources
-                ? "Collecteurs actifs, aucune anomalie confirmée. Les cartes DÉMO restent affichées comme exemples."
-                : "Prix illustratifs, aucun achat réel. Les sources attendent leurs accès pour passer en surveillance active."}
-          </span>
-        </div>
 
         {inspection ? (
           <div className={`inspection-banner is-${inspection.status}`} role="status">
@@ -1992,6 +1986,7 @@ function RadarView({
   const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
   const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon · Keepa", "France", ...categories.map((category) => `Catégorie · ${category}`)];
   const verifiedCount = alerts.filter((alert) => alert.score >= 75).length;
+  const filtered = search.trim().length > 0 || filter !== "Tout";
   const medianDiscount = alerts.length
     ? [...alerts].sort((a, b) => a.discount - b.discount)[Math.floor(alerts.length / 2)]
         .discount
@@ -1999,18 +1994,20 @@ function RadarView({
   return (
     <section className="view-section">
       <PageHeading
-        eyebrow={mode === "live" ? "Surveillance connectée" : "Aperçu de démonstration"}
+        eyebrow={mode === "live" ? "Surveillance active" : "Tableau des alertes"}
         title={
           loading
             ? "Le radar synchronise ses sources"
             : mode === "live"
-              ? `Le radar a confirmé ${alerts.length} anomalie${alerts.length > 1 ? "s" : ""}`
-              : "Voici comment seront classées vos alertes"
+              ? alerts.length
+                ? `Le radar a confirmé ${alerts.length} anomalie${alerts.length > 1 ? "s" : ""}`
+                : "Aucune anomalie confirmée pour le moment"
+              : "Votre radar est prêt"
         }
         description={
           mode === "live"
-            ? "Ces prix proviennent des collecteurs, puis passent les contrôles de fraîcheur, variante, vendeur et livraison."
-            : "Ces cartes illustrent le produit final. Elles ne représentent aucun prix actuellement disponible."
+            ? "La surveillance continue. Chaque prix publié passe les contrôles de fraîcheur, variante, vendeur et livraison."
+            : "Définissez vos critères dès maintenant. Les alertes apparaîtront ici après confirmation par une source active."
         }
         action={
           <div className="heading-actions"><button type="button" className="secondary-button" onClick={onScan}><span aria-hidden="true">▦</span> Scanner EAN</button><button type="button" className="primary-button" onClick={onLookup}><span aria-hidden="true">＋</span> Vérifier un ASIN</button></div>
@@ -2018,26 +2015,26 @@ function RadarView({
       />
 
       <section className="natural-radar" aria-labelledby="natural-radar-title">
-        <div><span className="eyebrow">Alerte en langage naturel</span><h2 id="natural-radar-title">Dites simplement ce que vous cherchez</h2><p>Exemple : « un iPhone neuf sous 850 €, livré en France, avec au moins 25 % de remise ».</p></div>
+        <div><span className="eyebrow">Alerte en langage naturel</span><h2 id="natural-radar-title">Dites simplement ce que vous cherchez</h2><p>Vous pouvez écrire : « un iPhone neuf sous 850 €, livré en France, avec au moins 25 % de remise ».</p></div>
         <form onSubmit={onCreateRadar}><input value={radarQuery} onChange={(event) => setRadarQuery(event.target.value)} maxLength={300} placeholder="Un OLED 55 pouces sous 800 €…" aria-label="Description du radar personnel" /><button className="dark-button" disabled={radarSaving}>{radarSaving ? "Activation…" : "Activer ce radar"}</button></form>
         {radarRules.length > 0 ? <div className="radar-rule-list" aria-label="Radars actifs">{radarRules.map((rule) => <span key={rule.id}><i aria-hidden="true" />{rule.name}<button type="button" onClick={() => onDeleteRadar(rule.id)} aria-label={`Supprimer ${rule.name}`}>×</button></span>)}</div> : null}
       </section>
 
       <div className="metric-row" aria-label="Résumé du radar">
         <div className="metric-card metric-primary">
-          <span>{mode === "live" ? "Anomalies actives" : "Exemples de signaux"}</span>
+          <span>Alertes vérifiées</span>
           <strong>{loading ? "…" : alerts.length}</strong>
-          <small>{mode === "live" ? "après seconde vérification" : "sur 9 enseignes françaises + Amazon EU5"}</small>
+          <small>après seconde vérification</small>
         </div>
         <div className="metric-card">
-          <span>Doublement vérifiés</span>
+          <span>Prêtes à notifier</span>
           <strong>{loading ? "…" : verifiedCount}</strong>
-          <small>prêts à être notifiés</small>
+          <small>selon vos critères</small>
         </div>
         <div className="metric-card">
           <span>Économie médiane</span>
-          <strong>{loading ? "…" : `−${medianDiscount} %`}</strong>
-          <small>sur les signaux affichés</small>
+          <strong>{loading ? "…" : alerts.length ? `−${medianDiscount} %` : "—"}</strong>
+          <small>sur les alertes vérifiées</small>
         </div>
       </div>
 
@@ -2076,8 +2073,8 @@ function RadarView({
       </div>
 
       <div className="section-label-row">
-        <h2>{mode === "live" ? "Anomalies en cours" : "Signaux de démonstration"}</h2>
-        <span>{alerts.length} résultats</span>
+        <h2>Alertes en cours</h2>
+        <span>{alerts.length} résultat{alerts.length === 1 ? "" : "s"}</span>
       </div>
       {alerts.length ? (
         <div className="alert-grid">
@@ -2096,17 +2093,17 @@ function RadarView({
       ) : (
         <div className="empty-state">
           <div className="empty-radar" aria-hidden="true" />
-          <h2>Aucun signal dans ce filtre</h2>
-          <p>Essayez une autre enseigne ou effacez votre recherche.</p>
+          <h2>{filtered ? "Aucune alerte dans ce filtre" : mode === "live" ? "Aucune anomalie confirmée" : "Aucune alerte vérifiée"}</h2>
+          <p>{filtered ? "Essayez une autre enseigne ou effacez votre recherche." : mode === "live" ? "La surveillance reste active et cette liste se mettra à jour automatiquement." : "Les sources en attente d’activation ne publient aucun prix. Vous pouvez déjà définir vos critères."}</p>
           <button
             type="button"
             className="secondary-button"
-            onClick={() => {
+            onClick={filtered ? () => {
               setFilter("Tout");
               setSearch("");
-            }}
+            } : onLookup}
           >
-            Tout afficher
+            {filtered ? "Tout afficher" : "Consulter les sources"}
           </button>
         </div>
       )}
@@ -2146,7 +2143,7 @@ function AlertCard({
             <span className="card-meta-left">
               <span className="merchant-pill">{alert.merchant}</span>
               <span className={`signal-mode ${alert.sourceMode === "live" ? "is-live" : ""}`}>
-                {alert.sourceMode === "live" ? "LIVE" : "DÉMO"}
+                {alert.sourceMode === "live" ? "VÉRIFIÉE" : "NON PUBLIÉE"}
               </span>
             </span>
             <span className={freshnessState === "stale" ? "freshness-badge is-stale" : "freshness-badge"} title={freshnessState === "stale" ? "État d’affichage local calculé selon vos préférences" : undefined}>{freshnessState === "stale" ? `Fenêtre dépassée · ${alert.freshness}` : alert.freshness}</span>
@@ -2417,19 +2414,19 @@ function SourcesView({
     return { status: fallbackStatus, tone: fallbackTone };
   }
 
-  const keepaState = presentation(runtimeFor("keepa", "amazon"), "À connecter", "pending");
+  const keepaState = presentation(runtimeFor("keepa", "amazon"), "Accès Keepa requis", "pending");
   const frenchSourceStates = new Map(FRENCH_SOURCE_COVERAGE.map((source) => [
     source.id,
     presentation(runtimeFor(source.id), source.fallbackStatus, source.fallbackTone),
   ]));
   const apifyActive = statuses.some((item) => item.mode === "live" && Boolean(item.lastSuccessAt));
   const readiness = [
-    ["Base Cloudflare", health?.database === true, "D1 et API"],
-    ["Keepa", health?.keepa === true, "clé serveur"],
-    ["Collecteur", health?.ingestion === true, "secret d’ingestion"],
-    ["Identité PWA", health?.deviceIdentity === true, "appareils signés"],
-    ["Notifications", health?.pushDeliveryCredentials === true, "Web Push complet"],
-    ["Apify", apifyActive, "premier passage"],
+    ["Stockage", health?.database === true, "base de données"],
+    ["Keepa", health?.keepa === true, "accès à renseigner"],
+    ["Collecte", health?.ingestion === true, "canal sécurisé"],
+    ["Identité PWA", health?.deviceIdentity === true, "appareils reconnus"],
+    ["Notifications", health?.pushDeliveryCredentials === true, "canal d’envoi"],
+    ["Apify", apifyActive, "premier relevé attendu"],
   ] as const;
 
   return (
@@ -2440,7 +2437,7 @@ function SourcesView({
         description={
           liveAlertCount
             ? `${liveAlertCount} anomalie${liveAlertCount > 1 ? "s" : ""} active${liveAlertCount > 1 ? "s" : ""}, avec l’état réel de chaque connecteur.`
-            : "Une vue honnête de ce qui est prêt, à connecter ou hors couverture."
+            : "Consultez les sources actives, celles qui attendent un accès et les limites de couverture."
         }
         action={
           <button
@@ -2453,17 +2450,17 @@ function SourcesView({
         }
       />
 
-      <div className="readiness-panel" aria-label="Préparation production">
+      <div className="readiness-panel" aria-label="État des services">
         <div className="readiness-heading">
-          <span className="eyebrow">Préparation production</span>
-          <h2>{readiness.filter((item) => item[1]).length}/6 blocs raccordés</h2>
-          <p>Les éléments payants restent inactifs tant que leurs secrets ne sont pas ajoutés.</p>
+          <span className="eyebrow">État du service</span>
+          <h2>{readiness.filter((item) => item[1]).length}/6 services disponibles</h2>
+          <p>Les fonctions déjà raccordées sont opérationnelles. Keepa et Apify s’activeront avec leurs accès respectifs.</p>
         </div>
         <div className="readiness-grid">
           {readiness.map(([label, ready, detail]) => (
             <div key={label} className={ready ? "is-ready" : "is-waiting"}>
               <span aria-hidden="true">{ready ? "✓" : "·"}</span>
-              <p><strong>{label}</strong><small>{ready ? "Configuré" : detail}</small></p>
+              <p><strong>{label}</strong><small>{ready ? "Disponible" : detail}</small></p>
             </div>
           ))}
         </div>
@@ -2548,15 +2545,14 @@ function SourcesView({
       <div className="coverage-callout">
         <div>
           <span className="eyebrow">Grandes enseignes françaises</span>
-          <h2>9 enseignes préparées, activation contrôlée</h2>
+          <h2>9 enseignes intégrées au radar</h2>
           <p>
             Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
-            rejoignent Boulanger, Darty et Cdiscount. Un connecteur prêt n’est jamais
-            affiché comme actif avant une autorisation ou un flux partenaire et un
-            premier rapport sain.
+            rejoignent Boulanger, Darty et Cdiscount. Une source devient active uniquement
+            après autorisation, raccordement du flux et premier contrôle réussi.
           </p>
         </div>
-        <div className="market-badges" aria-label="Enseignes françaises préparées">
+        <div className="market-badges" aria-label="Enseignes françaises prises en charge">
           <span>9 FR</span>
         </div>
       </div>
@@ -2850,7 +2846,7 @@ function SettingsView({
         </div>
         <div className="essential-fields">
           <fieldset className="simple-choice-field"><legend>Catégories qui vous intéressent</legend><div className="choice-chips">{categoryChoices.map((category) => <button key={category} type="button" className={selectedCategories.has(category) ? "is-active" : ""} aria-pressed={selectedCategories.has(category)} onClick={() => toggleCategory(category)}>{category}</button>)}</div><label className="custom-category">Autre catégorie<input value={preferredCategories} onChange={(event) => setPreferredCategories(event.target.value)} placeholder="Ex. photo, vélo électrique" /></label></fieldset>
-          <fieldset className="simple-choice-field"><legend>Enseignes à surveiller</legend><div className="choice-chips"><button type="button" className={selectedSources.size === 0 ? "is-active" : ""} aria-pressed={selectedSources.size === 0} onClick={() => setPreferredSources("")}>Toutes</button>{RETAIL_SOURCE_OPTIONS.map((source) => <button key={source.value} type="button" className={selectedSources.has(source.value) ? "is-active" : ""} aria-pressed={selectedSources.has(source.value)} onClick={() => toggleSource(source.value)}>{source.label}</button>)}</div><small>Les six nouveaux connecteurs sont prêts côté code, mais restent silencieux jusqu’à l’autorisation de collecte ou au raccordement d’un flux partenaire, puis un premier contrôle sain.</small></fieldset>
+          <fieldset className="simple-choice-field"><legend>Enseignes à surveiller</legend><div className="choice-chips"><button type="button" className={selectedSources.size === 0 ? "is-active" : ""} aria-pressed={selectedSources.size === 0} onClick={() => setPreferredSources("")}>Toutes</button>{RETAIL_SOURCE_OPTIONS.map((source) => <button key={source.value} type="button" className={selectedSources.has(source.value) ? "is-active" : ""} aria-pressed={selectedSources.has(source.value)} onClick={() => toggleSource(source.value)}>{source.label}</button>)}</div><small>Vos critères sont conservés pour toutes les enseignes. Les alertes commencent dès que la source correspondante est active et qu’un prix passe les contrôles.</small></fieldset>
           <label className="simple-input-field"><span>Budget maximal</span><div><input type="number" min="1" inputMode="decimal" value={maxPriceEuros} onChange={(event) => setMaxPriceEuros(event.target.value)} placeholder="Aucune limite" /><span>€</span></div><small>Laissez vide pour voir tous les prix.</small></label>
           <fieldset className="simple-choice-field"><legend>Pays à surveiller</legend><div className="choice-chips country-chips">{markets.map(([code, label]) => <button key={code} type="button" className={selectedMarkets.has(code) ? "is-active" : ""} aria-pressed={selectedMarkets.has(code)} onClick={() => toggleMarket(code)}><strong>{code}</strong><span>{label}</span></button>)}</div></fieldset>
         </div>
@@ -3007,7 +3003,7 @@ function TransparencyView() {
     <div className="transparency-heading"><div><span className="eyebrow">Transparence publique</span><h2 id="transparency-title">La qualité se mesure, elle ne se proclame pas</h2><p>Ces chiffres viennent exclusivement des contrôles publiés par PrixRadar. Une valeur absente reste absente.</p></div><div className="transparency-meta">{metrics?.generatedAt ? <span>Mis à jour {relativeTime(metrics.generatedAt)}</span> : null}<a href="/transparence">Voir la méthode complète</a></div></div>
     <div className="transparency-columns">
       <section className="public-metrics-view">
-        <div className="section-label-row"><h3>Métriques publiques</h3>{metrics ? <span>{metrics.reliability.sample.alerts} alertes LIVE</span> : null}</div>
+        <div className="section-label-row"><h3>Métriques publiques</h3>{metrics ? <span>{metrics.reliability.sample.alerts} alertes vérifiées</span> : null}</div>
         {metricsState === "loading" ? <p className="data-state">Chargement des mesures…</p> : metricsState === "unavailable" ? <p className="data-state is-unavailable">Les métriques publiques sont indisponibles. Aucun chiffre de remplacement n’est affiché.</p> : measuredCards.length === 0 ? <p className="data-state">Échantillon encore insuffisant pour publier des taux fiables.</p> : <div className="public-metric-grid">{measuredCards.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value.value?.toLocaleString("fr-FR", { maximumFractionDigits: 1 })}{value.unit === "minutes" ? " min" : " %"}</strong><small>{value.sampleSize} mesures</small></div>)}</div>}
         {metrics && metrics.reliability.bySource.length > 0 ? <div className="source-quality-list">{metrics.reliability.bySource.slice(0, 6).map((item) => <div key={item.key}><span><strong>{item.key}</strong><small>{item.alerts} alertes</small></span><span>{item.falsePositiveRate.value === null ? "Mesure insuffisante" : `${item.falsePositiveRate.value.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % de faux positifs`}</span></div>)}</div> : null}
       </section>
@@ -3049,8 +3045,8 @@ function AlertDetail({
   const [purchaseSaving, setPurchaseSaving] = useState(false);
   const purchasability = alert.purchasability ?? {
     status: alert.sourceMode === "live" ? "check_now" as const : "blocked" as const,
-    label: alert.sourceMode === "live" ? "À confirmer maintenant" : "Exemple non achetable",
-    message: alert.sourceMode === "live" ? "Demandez une nouvelle vérification avant de payer." : "Les cartes de démonstration ne peuvent pas alimenter vos économies.",
+    label: alert.sourceMode === "live" ? "À confirmer maintenant" : "Alerte non publiée",
+    message: alert.sourceMode === "live" ? "Demandez une nouvelle vérification avant de payer." : "Cette donnée n’est pas disponible à l’achat.",
     totalCents: Math.round(alert.currentPrice * 100), ageMinutes: null, minutesRemaining: null, checks: {}, blockers: [], community: { positive: 0, negative: 0, confidencePercent: null },
   };
 
@@ -3107,7 +3103,7 @@ function AlertDetail({
           <div>
             <span className="merchant-pill">{alert.merchant}</span>
             <span className={`demo-inline ${alert.sourceMode === "live" ? "is-live" : ""}`}>
-              {alert.sourceMode === "live" ? "DONNÉE ACTIVE" : "EXEMPLE"}
+              {alert.sourceMode === "live" ? "DONNÉE VÉRIFIÉE" : "NON PUBLIÉE"}
             </span>
           </div>
           <button type="button" onClick={onClose} aria-label="Fermer l’analyse">
@@ -3155,7 +3151,7 @@ function AlertDetail({
           <div className="purchasability-head"><span aria-hidden="true">{purchasability.status === "confirmed" ? "✓" : purchasability.status === "blocked" ? "!" : "↻"}</span><div><span className="eyebrow">Disponibilité réelle</span><h3 id="purchasability-title">{purchasability.label}</h3><p>{purchasability.message}</p></div>{purchasability.totalCents ? <strong>{money(purchasability.totalCents / 100, alert.currency)}<small>total</small></strong> : null}</div>
           <div className="purchasability-checks"><span className={purchasability.checks.cartConfirmed ? "is-ok" : ""}>Panier final</span><span className={purchasability.checks.exactVariant ? "is-ok" : ""}>Variante exacte</span><span className={purchasability.checks.trustedSeller ? "is-ok" : ""}>Vendeur fiable</span><span className={purchasability.checks.fresh ? "is-ok" : ""}>Contrôle récent</span></div>
           <p className="purchasability-time">{purchasability.minutesRemaining !== null ? `Fenêtre estimée : encore ${purchasability.minutesRemaining} min` : "Aucune durée de validité garantie"}{purchasability.community.confidencePercent !== null ? ` · ${purchasability.community.confidencePercent} % d’avis positifs` : ""}</p>
-          <div className="purchasability-actions"><button type="button" className="dark-button" onClick={() => setPurchaseOpen((value) => !value)} disabled={alert.sourceMode !== "live"}>{alert.sourceMode === "live" ? "J’ai acheté à ce prix" : "Disponible avec une alerte LIVE"}</button>{purchasability.status !== "confirmed" && alert.sourceMode === "live" ? <button type="button" className="secondary-button" onClick={() => void verifyNow()}>Revérifier d’abord</button> : null}</div>
+          <div className="purchasability-actions"><button type="button" className="dark-button" onClick={() => setPurchaseOpen((value) => !value)} disabled={alert.sourceMode !== "live"}>{alert.sourceMode === "live" ? "J’ai acheté à ce prix" : "Disponible après vérification"}</button>{purchasability.status !== "confirmed" && alert.sourceMode === "live" ? <button type="button" className="secondary-button" onClick={() => void verifyNow()}>Revérifier d’abord</button> : null}</div>
           {purchaseOpen ? <form className="purchase-confirm" onSubmit={confirmPurchase}><div><label>Total réellement payé<input value={paidEuros} onChange={(event) => setPaidEuros(event.target.value)} inputMode="decimal" aria-label="Total réellement payé en euros" /></label><label>Protection<select value={protectionDays} onChange={(event) => setProtectionDays(Number(event.target.value))}><option value={7}>7 jours</option><option value={14}>14 jours</option><option value={30}>30 jours</option><option value={60}>60 jours</option></select></label></div>{purchaseOptions.length ? <label>Rattacher au projet<select value={missionItemId} onChange={(event) => setMissionItemId(event.target.value)}><option value="">Aucune mission</option>{purchaseOptions.map((option) => <option key={option.id} value={option.id}>{option.missionName} · {option.label}</option>)}</select></label> : null}<p>Le montant payé sert au portefeuille. PrixRadar revérifiera ce produit toutes les 6 h pendant la période choisie.</p><button className="primary-button" disabled={purchaseSaving}>{purchaseSaving ? "Protection…" : "Confirmer et protéger"}</button></form> : null}
         </section>
 
@@ -3225,7 +3221,7 @@ function AlertDetail({
         </section>
 
         <section className="detail-section proof-passport">
-          <div className="section-label-row"><h3>Passeport de preuve</h3><span>{alert.sourceMode === "live" ? "Traçable" : "Exemple"}</span></div>
+          <div className="section-label-row"><h3>Passeport de preuve</h3><span>{alert.sourceMode === "live" ? "Traçable" : "Non publié"}</span></div>
           <dl><div><dt>Identité exacte</dt><dd>{alert.gtin ? `EAN ${alert.gtin}` : `${alert.brand ?? "Marque non transmise"} · ${alert.model ?? alert.sku}`}</dd></div><div><dt>Observation</dt><dd>{alert.observedAt ? new Date(alert.observedAt).toLocaleString("fr-FR") : alert.freshness}</dd></div><div><dt>Double contrôle</dt><dd>{alert.verifiedAt} · prix, variante, vendeur</dd></div><div><dt>Validité</dt><dd>{alert.expiresAt ? `jusqu’au ${new Date(alert.expiresAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "à revérifier"}</dd></div><div><dt>Comparaison</dt><dd>{alert.marketSources ? `${alert.marketSources} enseignes comparables` : "historique interne ou Keepa"}</dd></div></dl>
           <button type="button" className="dark-button verify-now" onClick={() => void verifyNow()} disabled={recheck === "pending" || recheck === "processing"}>{recheck === "pending" || recheck === "processing" ? "Vérification en cours…" : recheck === "completed" ? "Revérifier à nouveau" : "Vérifier maintenant"}</button>
           {recheckMessage ? <p className={`recheck-status is-${recheck}`} role="status">{recheckMessage}</p> : null}

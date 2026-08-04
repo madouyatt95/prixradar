@@ -1,4 +1,4 @@
-# PrixRadar v0.8.0
+# PrixRadar v0.8.1
 
 PWA mobile-first pour détecter, vérifier et suivre des anomalies de prix sans
 présenter une remise comme une « erreur certaine ».
