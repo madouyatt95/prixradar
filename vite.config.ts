@@ -18,6 +18,10 @@ const databaseId =
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
+  // Keep the generated Wrangler config aligned with the public Worker URL.
+  // Without an explicit name, the Cloudflare plugin falls back to the npm
+  // package name (`prixradar-pwa`) and deploys a second Worker.
+  name: "prixradar",
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
