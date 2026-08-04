@@ -1859,10 +1859,8 @@ export function PriceRadarApp() {
             onClick={() => setTab(item.id)}
             aria-current={tab === item.id ? "page" : undefined}
           >
-            <span className="mobile-nav-icon" aria-hidden="true">
-              {item.icon}
-            </span>
-            <span>{item.label}</span>
+            <span className="mobile-nav-icon" aria-hidden="true">{item.icon}</span>
+            <span className="mobile-nav-label">{item.label}</span>
             {item.id === "watchlist" && missions.filter((mission) => mission.status === "active").length + savings.actionCount > 0 ? (
               <span className="mobile-count">{missions.filter((mission) => mission.status === "active").length + savings.actionCount}</span>
             ) : null}

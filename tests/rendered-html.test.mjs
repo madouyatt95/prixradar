@@ -3,13 +3,14 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("ships the complete PrixRadar application shell", async () => {
-  const [page, layout, application] = await Promise.all([
+  const [page, layout, application, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(
       new URL("../app/components/price-radar-app.tsx", import.meta.url),
       "utf8",
     ),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /PrixRadar — Les vraies anomalies de prix, vérifiées/);
@@ -21,7 +22,11 @@ test("ships the complete PrixRadar application shell", async () => {
   assert.match(application, /Amazon · Keepa/);
   assert.match(application, /Navigation principale/);
   const publicNavigation = application.slice(application.indexOf("const NAV_ITEMS"), application.indexOf("const MARKET_OPTIONS"));
+  assert.equal(publicNavigation.match(/^\s*\{ id: "/gm)?.length, 4);
   assert.doesNotMatch(publicNavigation, /Pilotage|admin/);
+  const mobileNavigationStyles = styles.slice(styles.lastIndexOf("  .mobile-nav {"), styles.lastIndexOf("  .page-heading {"));
+  assert.match(mobileNavigationStyles, /grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(mobileNavigationStyles, /bottom:\s*max\(8px, var\(--safe-bottom\)\)/);
   assert.doesNotMatch(
     `${page}${layout}${application}`,
     /codex-preview|Your site is taking shape|Building your site|react-loading-skeleton|mode démo|démonstration|prix illustratifs|préférences · deux niveaux|configurez votre radar sans jargon/i,
