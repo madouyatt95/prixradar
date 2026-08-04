@@ -17,11 +17,14 @@ test("ships the complete PrixRadar application shell", async () => {
   assert.match(layout, /<html lang="fr">/);
   assert.match(application, /Votre radar est prêt/);
   assert.match(application, /Aucune alerte vérifiée/);
+  assert.match(application, /Personnalisez vos alertes/);
   assert.match(application, /Amazon · Keepa/);
   assert.match(application, /Navigation principale/);
+  const publicNavigation = application.slice(application.indexOf("const NAV_ITEMS"), application.indexOf("const MARKET_OPTIONS"));
+  assert.doesNotMatch(publicNavigation, /Pilotage|admin/);
   assert.doesNotMatch(
     `${page}${layout}${application}`,
-    /codex-preview|Your site is taking shape|Building your site|react-loading-skeleton|mode démo|démonstration|prix illustratifs/i,
+    /codex-preview|Your site is taking shape|Building your site|react-loading-skeleton|mode démo|démonstration|prix illustratifs|préférences · deux niveaux|configurez votre radar sans jargon/i,
   );
 });
 

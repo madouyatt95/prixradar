@@ -521,7 +521,6 @@ const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "radar", label: "Radar", icon: "◎" },
   { id: "watchlist", label: "Missions", icon: "◇" },
   { id: "sources", label: "Sources", icon: "⌁" },
-  { id: "admin", label: "Pilotage", icon: "◈" },
   { id: "settings", label: "Réglages", icon: "☷" },
 ];
 
@@ -954,8 +953,9 @@ export function PriceRadarApp() {
   }, []);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") !== "missions") return;
-    const frame = window.requestAnimationFrame(() => setTab("watchlist"));
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (requestedTab !== "missions" && requestedTab !== "admin") return;
+    const frame = window.requestAnimationFrame(() => setTab(requestedTab === "admin" ? "admin" : "watchlist"));
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
@@ -1758,9 +1758,10 @@ export function PriceRadarApp() {
         onOpen={setSelected}
         mode={hasLiveSources || liveAlerts.length ? "live" : "fixture"}
         loading={liveLoading}
+        keepaAvailable={health?.keepa === true}
         onLookup={() => {
           setTab("sources");
-          setLookupOpen(true);
+          setLookupOpen(health?.keepa === true);
         }}
         radarRules={radarRules}
         radarQuery={radarQuery}
@@ -1951,6 +1952,7 @@ function RadarView({
   onLookup,
   mode,
   loading,
+  keepaAvailable,
   radarRules,
   radarQuery,
   setRadarQuery,
@@ -1973,6 +1975,7 @@ function RadarView({
   onLookup: () => void;
   mode: SourceMode;
   loading: boolean;
+  keepaAvailable: boolean;
   radarRules: RadarRule[];
   radarQuery: string;
   setRadarQuery: (value: string) => void;
@@ -2010,7 +2013,7 @@ function RadarView({
             : "Définissez vos critères dès maintenant. Les alertes apparaîtront ici après confirmation par une source active."
         }
         action={
-          <div className="heading-actions"><button type="button" className="secondary-button" onClick={onScan}><span aria-hidden="true">▦</span> Scanner EAN</button><button type="button" className="primary-button" onClick={onLookup}><span aria-hidden="true">＋</span> Vérifier un ASIN</button></div>
+          <div className="heading-actions"><button type="button" className="secondary-button" onClick={onScan}><span aria-hidden="true">▦</span> Scanner EAN</button><button type="button" className="primary-button" onClick={onLookup}><span aria-hidden="true">{keepaAvailable ? "＋" : "⌁"}</span> {keepaAvailable ? "Vérifier un ASIN" : "Voir les sources"}</button></div>
         }
       />
 
@@ -2419,61 +2422,35 @@ function SourcesView({
     source.id,
     presentation(runtimeFor(source.id), source.fallbackStatus, source.fallbackTone),
   ]));
-  const apifyActive = statuses.some((item) => item.mode === "live" && Boolean(item.lastSuccessAt));
-  const readiness = [
-    ["Stockage", health?.database === true, "base de données"],
-    ["Keepa", health?.keepa === true, "accès à renseigner"],
-    ["Collecte", health?.ingestion === true, "canal sécurisé"],
-    ["Identité PWA", health?.deviceIdentity === true, "appareils reconnus"],
-    ["Notifications", health?.pushDeliveryCredentials === true, "canal d’envoi"],
-    ["Apify", apifyActive, "premier relevé attendu"],
-  ] as const;
-
   return (
     <section className="view-section">
       <PageHeading
-        eyebrow="État des connecteurs"
-        title="Sources & couverture"
+        eyebrow="Enseignes surveillées"
+        title="Où PrixRadar cherche les bons prix"
         description={
           liveAlertCount
-            ? `${liveAlertCount} anomalie${liveAlertCount > 1 ? "s" : ""} active${liveAlertCount > 1 ? "s" : ""}, avec l’état réel de chaque connecteur.`
-            : "Consultez les sources actives, celles qui attendent un accès et les limites de couverture."
+            ? `${liveAlertCount} anomalie${liveAlertCount > 1 ? "s" : ""} vérifiée${liveAlertCount > 1 ? "s" : ""} en ce moment.`
+            : "Retrouvez les enseignes prises en charge et leur disponibilité actuelle."
         }
         action={
-          <button
+          health?.keepa ? <button
             type="button"
             className="primary-button"
             onClick={() => setLookupOpen(!lookupOpen)}
           >
-            {lookupOpen ? "Fermer le test" : "Tester Keepa"}
-          </button>
+            {lookupOpen ? "Fermer la recherche" : "Vérifier un produit Amazon"}
+          </button> : undefined
         }
       />
-
-      <div className="readiness-panel" aria-label="État des services">
-        <div className="readiness-heading">
-          <span className="eyebrow">État du service</span>
-          <h2>{readiness.filter((item) => item[1]).length}/6 services disponibles</h2>
-          <p>Les fonctions déjà raccordées sont opérationnelles. Keepa et Apify s’activeront avec leurs accès respectifs.</p>
-        </div>
-        <div className="readiness-grid">
-          {readiness.map(([label, ready, detail]) => (
-            <div key={label} className={ready ? "is-ready" : "is-waiting"}>
-              <span aria-hidden="true">{ready ? "✓" : "·"}</span>
-              <p><strong>{label}</strong><small>{ready ? "Disponible" : detail}</small></p>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {lookupOpen ? (
         <div className="lookup-panel">
           <div className="lookup-heading">
             <div className="source-logo keepa-logo">K</div>
             <div>
-              <span className="eyebrow">Connexion serveur sécurisée</span>
-              <h2>Vérifier un ASIN avec Keepa</h2>
-              <p>La clé API ne quitte jamais le serveur.</p>
+              <span className="eyebrow">Recherche Amazon Europe</span>
+              <h2>Vérifier un produit par son ASIN</h2>
+              <p>PrixRadar consulte l’historique disponible sans exposer vos données.</p>
             </div>
           </div>
           <form className="lookup-form" onSubmit={onSubmit}>
@@ -2504,9 +2481,8 @@ function SourcesView({
           </form>
           {error ? (
             <div className="lookup-message is-error" role="alert">
-              <strong>Connexion requise</strong>
+              <strong>Recherche indisponible</strong>
               <p>{error}</p>
-              <code>KEEPA_API_KEY</code>
             </div>
           ) : null}
           {normalized ? (
@@ -2529,10 +2505,10 @@ function SourcesView({
       <div className="coverage-callout">
         <div>
           <span className="eyebrow">Amazon Europe</span>
-          <h2>5 marchés couverts par Keepa</h2>
+          <h2>5 marchés pris en charge</h2>
           <p>
-            France, Allemagne, Italie, Espagne et Royaume-Uni. Chaque marché
-            conserve son catalogue, sa devise et son historique propres.
+            France, Allemagne, Italie, Espagne et Royaume-Uni seront surveillés
+            dès l’activation d’Amazon. Chaque marché conserve sa devise et son historique propres.
           </p>
         </div>
         <div className="market-badges" aria-label="Marchés Amazon couverts">
@@ -2545,7 +2521,7 @@ function SourcesView({
       <div className="coverage-callout">
         <div>
           <span className="eyebrow">Grandes enseignes françaises</span>
-          <h2>9 enseignes intégrées au radar</h2>
+          <h2>9 enseignes prises en charge</h2>
           <p>
             Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
             rejoignent Boulanger, Darty et Cdiscount. Une source devient active uniquement
@@ -2571,22 +2547,6 @@ function SourcesView({
           const state = frenchSourceStates.get(source.id) ?? { status: source.fallbackStatus, tone: source.fallbackTone };
           return <SourceRow key={source.id} mark={source.mark} name={source.name} detail={source.detail} status={state.status} tone={state.tone} runtime={runtimeFor(source.id)} method={source.method} />;
         })}
-        <SourceRow
-          mark="◎"
-          name="Indice PrixRadar"
-          detail="Médiane interne · rapprochement multi-enseignes"
-          status="Automatique"
-          tone="live"
-          method="Compare uniquement les variantes suffisamment identiques et les prix accessibles à tous"
-        />
-        <SourceRow
-          mark="S"
-          name="Sentinelle autonome"
-          detail="Découverte · priorité · fréquence adaptative"
-          status="Automatique"
-          tone="live"
-          method="Découvre les fiches, évite les doublons et rescane plus vite les zones rentables"
-        />
       </div>
 
       <div className="coverage-limit">
@@ -2822,18 +2782,18 @@ function SettingsView({
   return (
     <section className="view-section settings-view">
       <PageHeading
-        eyebrow="Préférences · deux niveaux"
-        title="Configurez votre radar sans jargon"
-        description="Choisissez un niveau simple. Les réglages techniques restent disponibles seulement si vous en avez besoin."
+        eyebrow="Vos préférences"
+        title="Personnalisez vos alertes"
+        description="Choisissez ce que vous souhaitez surveiller. Vous pourrez modifier ces choix à tout moment."
       />
 
       <div className="settings-level-bar">
-        <div><span className="eyebrow">Mode {experienceLevel === "expert" ? "expert" : "essentiel"}</span><strong>{experienceLevel === "expert" ? "Tous les critères sont visibles" : "Trois choix suffisent pour commencer"}</strong></div>
+        <div><span className="eyebrow">{experienceLevel === "expert" ? "Réglages avancés" : "Réglages simples"}</span><strong>{experienceLevel === "expert" ? "Tous vos critères sont visibles" : "L’essentiel pour recevoir les bonnes alertes"}</strong></div>
         <span className={`preferences-save-state is-${preferencesSaveState}`} role="status" aria-live="polite">{saveLabel}</span>
       </div>
 
       <section className="essential-settings" aria-labelledby="essential-settings-title">
-        <div className="essential-heading"><div><span className="eyebrow">Étape 1</span><h2 id="essential-settings-title">Choisissez votre priorité</h2></div><span>Modifiable à tout moment</span></div>
+        <div className="essential-heading"><div><span className="eyebrow">Niveau d’alerte</span><h2 id="essential-settings-title">Choisissez votre priorité</h2></div><span>Modifiable à tout moment</span></div>
         <div className="preset-grid" role="group" aria-label="Niveau de sélection des alertes">
           {(Object.entries(ALERT_PRESETS) as Array<[AlertPreset, (typeof ALERT_PRESETS)[AlertPreset]]>).map(([value, option], index) => (
             <button type="button" key={value} className={`preset-card preset-${value} ${preset === value ? "is-active" : ""}`} aria-pressed={preset === value} onClick={() => setPreset(value)}>
@@ -2850,11 +2810,11 @@ function SettingsView({
           <label className="simple-input-field"><span>Budget maximal</span><div><input type="number" min="1" inputMode="decimal" value={maxPriceEuros} onChange={(event) => setMaxPriceEuros(event.target.value)} placeholder="Aucune limite" /><span>€</span></div><small>Laissez vide pour voir tous les prix.</small></label>
           <fieldset className="simple-choice-field"><legend>Pays à surveiller</legend><div className="choice-chips country-chips">{markets.map(([code, label]) => <button key={code} type="button" className={selectedMarkets.has(code) ? "is-active" : ""} aria-pressed={selectedMarkets.has(code)} onClick={() => toggleMarket(code)}><strong>{code}</strong><span>{label}</span></button>)}</div></fieldset>
         </div>
-        <div className="plain-summary" aria-live="polite"><span className="summary-mark" aria-hidden="true">✓</span><div><span className="eyebrow">Votre radar en clair</span><h3>Mode {selectedPreset.label} · {categorySummary}</h3><p>Vous recevrez des alertes pour {sourceSummary}, dans {marketSummary}, {budgetSummary}. PrixRadar exigera un vendeur noté au moins {minSellerScore}/100{requireCartConfirmation ? ", un panier confirmé" : ""} et {minimumHistoryPoints} points d’historique minimum.</p></div></div>
+        <div className="plain-summary" aria-live="polite"><span className="summary-mark" aria-hidden="true">✓</span><div><span className="eyebrow">Votre sélection</span><h3>{selectedPreset.label} · {categorySummary}</h3><p>Vous recevrez des alertes pour {sourceSummary}, dans {marketSummary}, {budgetSummary}. PrixRadar exigera un vendeur noté au moins {minSellerScore}/100{requireCartConfirmation ? ", un panier confirmé" : ""} et {minimumHistoryPoints} points d’historique minimum.</p></div></div>
       </section>
 
       <section className={`expert-disclosure ${experienceLevel === "expert" ? "is-open" : ""}`}>
-        <button type="button" className="expert-disclosure-button" aria-expanded={experienceLevel === "expert"} aria-controls="expert-settings-panel" onClick={() => setExperienceLevel(experienceLevel === "expert" ? "essential" : "expert")}><span><span className="eyebrow">Réglages avancés</span><strong>{experienceLevel === "expert" ? "Masquer le mode expert" : "Ouvrir le mode expert"}</strong><small>Scores, fraîcheur, historique, panier, notifications et localisation.</small></span><i aria-hidden="true">⌄</i></button>
+        <button type="button" className="expert-disclosure-button" aria-expanded={experienceLevel === "expert"} aria-controls="expert-settings-panel" onClick={() => setExperienceLevel(experienceLevel === "expert" ? "essential" : "expert")}><span><span className="eyebrow">Réglages avancés</span><strong>{experienceLevel === "expert" ? "Masquer les critères avancés" : "Afficher les critères avancés"}</strong><small>Scores, fraîcheur, historique, panier, notifications et localisation.</small></span><i aria-hidden="true">⌄</i></button>
         {experienceLevel === "expert" ? <div id="expert-settings-panel" className="settings-grid expert-settings-grid">
         <section className="setting-card expert-score-card">
           <div className="setting-row-heading"><div><span className="eyebrow">Sélection</span><h2>Seuils de qualité</h2></div><span className="setting-status">Score {minScore}</span></div>
@@ -2883,8 +2843,8 @@ function SettingsView({
             <span className="setting-status">{notificationState}</span>
           </div>
           <p>
-            Activez l’autorisation locale. L’envoi automatique commencera lorsque
-            le moteur de collecte sera connecté.
+            Autorisez cet appareil à recevoir les alertes vérifiées selon la
+            fréquence choisie ci-dessous.
           </p>
           <button type="button" className="secondary-button" onClick={onNotifications}>
             Autoriser et tester
@@ -2944,10 +2904,10 @@ function SettingsView({
       <div className="privacy-card">
         <span className="privacy-mark">P</span>
         <div>
-          <strong>Vos suivis restent liés à cet appareil.</strong>
+          <strong>Vos préférences restent privées.</strong>
           <p>
-            La liste est enregistrée côté serveur avec un identifiant anonyme.
-            Aucune clé Keepa ni donnée sensible n’est stockée dans le navigateur.
+            Elles sont associées à cet appareil avec un identifiant anonyme.
+            Vous gardez le contrôle sur les mesures d’usage et les liens affiliés.
           </p>
           <div className="consent-actions">
             <label><input type="checkbox" checked={analyticsConsent} onChange={(event) => setAnalyticsConsent(event.target.checked)} /> Mesure d’usage optionnelle</label>
