@@ -3,6 +3,7 @@ import { and, asc, eq, gt, inArray, lte } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import {
   pushSubscriptions,
+  missionItems,
   radarRules,
   userPreferences,
 } from "../../../../db/schema";
@@ -131,12 +132,23 @@ export async function GET(request: Request) {
       const ruleRows = ownerIds.length === 0 ? [] : await database.select({
         deviceOwner: radarRules.ownerId,
         intentJson: radarRules.intentJson,
+        kind: radarRules.kind,
       }).from(radarRules).where(and(
         inArray(radarRules.ownerId, ownerIds),
         eq(radarRules.enabled, true),
+        eq(radarRules.status, "active"),
+      ));
+      const projectItemRows = ownerIds.length === 0 ? [] : await database.select({
+        deviceOwner: missionItems.ownerId,
+        intentJson: missionItems.intentJson,
+      }).from(missionItems).innerJoin(radarRules, eq(radarRules.id, missionItems.missionId)).where(and(
+        inArray(missionItems.ownerId, ownerIds),
+        inArray(missionItems.status, ["searching", "matched"]),
+        eq(radarRules.enabled, true),
+        eq(radarRules.status, "active"),
       ));
       const rulesByOwner = new Map<string, RadarIntent[]>();
-      for (const rule of ruleRows) {
+      for (const rule of [...ruleRows.filter((item) => item.kind === "single"), ...projectItemRows]) {
         try {
           const parsed = JSON.parse(rule.intentJson) as RadarIntent;
           const current = rulesByOwner.get(rule.deviceOwner) ?? [];

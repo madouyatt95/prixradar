@@ -13,6 +13,8 @@ import {
   keepaUsage,
   notificationDeliveries,
   priceObservations,
+  purchaseEvents,
+  purchases,
   pushSubscriptions,
   recheckRequests,
   inspectionRequests,
@@ -861,6 +863,15 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
   const matchingInspectionIds = pendingInspectionRows
     .filter((row) => productUrlKey(envelope.source, row.url) === currentUrlKey)
     .map((row) => row.id);
+  const protectedPurchases = parsed.sourceMode === "live" && shadowCart.finalTotalCents !== null
+    ? await database.select().from(purchases).where(and(
+        eq(purchases.source, envelope.source),
+        eq(purchases.market, parsed.market),
+        eq(purchases.productId, parsed.productId),
+        inArray(purchases.status, ["protected", "action_available"]),
+        sql`${purchases.protectionEndsAt} > ${now}`,
+      )).limit(100)
+    : [];
   const evidenceJson = JSON.stringify({
     version: 2,
     provider: envelope.source === "amazon" ? "keepa" : envelope.source,
@@ -1121,6 +1132,35 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
 
   if (historyInsert) await database.batch([eventInsert, alertUpsert, intelligenceUpsert, historyInsert, observationInsert, completeRechecks, completeInspections, updateFrontier]);
   else await database.batch([eventInsert, alertUpsert, intelligenceUpsert, observationInsert, completeRechecks, completeInspections, updateFrontier]);
+
+  if (shadowCart.finalTotalCents !== null) {
+    for (const purchase of protectedPurchases) {
+      const priorBest = purchase.bestPriceCents ?? purchase.paidTotalCents;
+      const bestPriceCents = Math.min(priorBest, shadowCart.finalTotalCents);
+      const potentialRecoveryCents = Math.max(0, purchase.paidTotalCents - bestPriceCents);
+      const actionThreshold = Math.max(500, Math.round(purchase.paidTotalCents * 0.03));
+      const actionAvailable = potentialRecoveryCents >= actionThreshold;
+      await database.update(purchases).set({
+        latestPriceCents: shadowCart.finalTotalCents,
+        bestPriceCents,
+        potentialRecoveryCents,
+        status: actionAvailable ? "action_available" : purchase.status,
+        actionReason: actionAvailable ? `Prix revérifié ${potentialRecoveryCents} centimes sous votre total payé.` : purchase.actionReason,
+        lastCheckedAt: now,
+        nextCheckAt: new Date(Date.parse(now) + 6 * 60 * 60_000).toISOString(),
+        updatedAt: now,
+      }).where(eq(purchases.id, purchase.id));
+      if (bestPriceCents < priorBest) {
+        await database.insert(purchaseEvents).values({
+          purchaseId: purchase.id,
+          eventType: actionAvailable ? "price_drop" : "price_checked",
+          priceCents: bestPriceCents,
+          note: actionAvailable ? "Baisse exploitable détectée pendant la période de protection." : "Nouveau prix bas détecté, sous le seuil d’action.",
+          occurredAt: now,
+        });
+      }
+    }
+  }
 
   return json(
     {

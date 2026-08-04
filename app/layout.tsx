@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     template: "%s · PrixRadar",
   },
   description:
-    "Radar mobile-first d’anomalies de prix avec panier fantôme, variante exacte, indice interne et historique Keepa sur Amazon Europe.",
+    "Radar mobile-first d’anomalies de prix avec missions d’achat, panier vérifié et protection du prix après achat.",
   applicationName: "PrixRadar",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
@@ -40,10 +40,10 @@ export const metadata: Metadata = {
       "Panier final, variante, vendeur et indice interne : PrixRadar vérifie avant de vous alerter.",
     images: [
       {
-        url: new URL("/og-v3.png", siteUrl).toString(),
-        width: 1536,
-        height: 1024,
-        alt: "PrixRadar, repérez l’inhabituel et vérifiez avant d’acheter",
+        url: new URL("/og-v4.png", siteUrl).toString(),
+        width: 1200,
+        height: 630,
+        alt: "PrixRadar, missions d’achat et protection du prix après achat",
       },
     ],
   },
@@ -52,7 +52,7 @@ export const metadata: Metadata = {
     title: "PrixRadar — Les anomalies de prix, vérifiées",
     description:
       "Panier final, variante, vendeur et indice interne : PrixRadar vérifie avant de vous alerter.",
-    images: [new URL("/og-v3.png", siteUrl).toString()],
+    images: [new URL("/og-v4.png", siteUrl).toString()],
   },
 };
 

@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { radarRules } from "@/db/schema";
+import { missionItems, radarRules } from "@/db/schema";
 import { parseRadarIntent, radarIntentSummary } from "@/lib/radar-intent";
 import { deviceDatabaseError, deviceError, deviceJson, readJsonObject, resolveDevice } from "../push/device";
 
@@ -48,16 +48,32 @@ export async function POST(request: Request) {
     if (Number(count[0]?.count ?? 0) >= 20) {
       return deviceError(identity.device, 409, "radar_limit", "Désactivez un radar avant d’en ajouter un autre.");
     }
-    const [item] = await getDb().insert(radarRules).values({
-      id,
-      ownerId: identity.device.ownerId,
-      name: radarIntentSummary(intent).slice(0, 120),
-      query,
-      intentJson: JSON.stringify(intent),
-      enabled: true,
-      createdAt: now,
-      updatedAt: now,
-    }).returning();
+    const database = getDb();
+    const name = radarIntentSummary(intent).slice(0, 120);
+    await database.batch([
+      database.insert(radarRules).values({
+        id,
+        ownerId: identity.device.ownerId,
+        name,
+        query,
+        intentJson: JSON.stringify(intent),
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      database.insert(missionItems).values({
+        id: `mission-item:${crypto.randomUUID()}`,
+        missionId: id,
+        ownerId: identity.device.ownerId,
+        label: name,
+        query,
+        intentJson: JSON.stringify(intent),
+        targetPriceCents: intent.maxPriceCents,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    ]);
+    const [item] = await database.select().from(radarRules).where(eq(radarRules.id, id));
     return deviceJson(identity.device, { ok: true, item: serialize(item) }, { status: 201 });
   } catch (error) {
     return deviceDatabaseError(identity.device, error);

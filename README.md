@@ -1,4 +1,4 @@
-# PrixRadar v0.7.0
+# PrixRadar v0.8.0
 
 PWA mobile-first pour détecter, vérifier et suivre des anomalies de prix sans
 présenter une remise comme une « erreur certaine ».
@@ -24,6 +24,11 @@ présenter une remise comme une « erreur certaine ».
 | Pilotage administrateur | actif côté code | JWT Cloudflare Access + liste blanche d'e-mails ; requiert la configuration Access |
 | Envoi d'alertes | mode prudent | `shadow` par défaut : décisions auditées sans Push réel jusqu'à recette |
 | Radars en langage naturel | actif | règles durables par appareil, appliquées au routage Push |
+| Missions d’achat | actif | besoin, budget, échéance et alternatives durables ; pause et clôture sans supprimer l’historique |
+| Panier-projet | actif | 2 à 20 achats, rapprochement automatique des alertes et progression par élément |
+| Statut « achetable » | actif | total panier, variante, vendeur, fraîcheur, durée restante et retours communauté réunis dans un seul verdict |
+| Bouclier après achat | actif | contrôle du même produit toutes les 6 h pendant 1 à 60 jours, seuil prudent `max(5 €, 3 %)`, Push privé et dédupliqué |
+| Portefeuille d’économies | actif | prix réellement payé, référence, économie suivie, montant potentiellement récupérable et journal d’événements |
 | Scan EAN | actif | Barcode Detector, puis ZXing 0.2.1 épinglé sur iPhone, avec saisie manuelle de repli |
 | Vérification immédiate | actif | file prioritaire durable consommée par l'Actor, résultat conservé |
 | Score « Acheter maintenant » | actif | décision séparée du score d'anomalie, cinq facteurs explicables |
@@ -102,6 +107,10 @@ durable des identités produit par segment afin que les paramètres de suivi et 
 chevauchements entre catégories ne gonflent pas le taux de couverture.
 La migration `0008` élargit sans perte les contraintes de source aux six nouveaux
 connecteurs, qui restent désactivés tant que l’autorisation partenaire manque.
+La migration `0009` conserve les radars existants et ajoute les missions, les
+paniers-projets, les achats protégés et leur journal de prix sans désactiver les
+clés étrangères. La migration `0010` ajoute l’audit et la déduplication des Push
+du bouclier après achat.
 
 ## Configuration utilisateur
 
@@ -178,8 +187,11 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `GET|POST|DELETE /api/push` : souscriptions (cinq maximum par appareil) ;
 - `GET /api/push/targets` : cibles autorisées, sans `ownerId` ;
 - `POST /api/push/deliveries` : réservation/déduplication puis résultat d’envoi ;
+- `GET|POST /api/push/protection` : réservation privée et audit du Push de baisse après achat ;
 - `GET /api/keepa` : snapshot historique mis en cache et limité par appareil.
 - `GET|POST|DELETE /api/radars` : alertes en langage naturel, durables par appareil ;
+- `GET|POST|PATCH|DELETE /api/missions` : missions simples ou paniers-projets, budget, échéance, état et meilleures alertes correspondantes ;
+- `GET|POST|PATCH /api/purchases` : achats LIVE confirmés, portefeuille, protection après achat et décisions de retour/conservation ;
 - `GET|POST /api/recheck` : vérification prioritaire et état de son traitement ;
 - `GET|POST /api/inspections` : URL partagée, file durable et résultat par appareil ;
 - `POST /api/frontier` : nouvelles fiches découvertes par la sentinelle privée et rattachement dédupliqué au segment de couverture ;
