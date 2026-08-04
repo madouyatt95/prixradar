@@ -9,7 +9,7 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "build": "node build/run-build.mjs",
     "build:cloudflare": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "deploy:cloudflare": "wrangler d1 migrations apply DB --remote --config dist/server/wrangler.json && wrangler deploy --config dist/server/wrangler.json --keep-vars",
+    "deploy:cloudflare": "CI=true npm run build:cloudflare && WRANGLER_WRITE_LOGS=false WRANGLER_LOG_PATH=.wrangler/wrangler.log wrangler deploy --dry-run --config dist/server/wrangler.json && WRANGLER_WRITE_LOGS=false WRANGLER_LOG_PATH=.wrangler/wrangler.log wrangler d1 migrations apply DB --remote --config dist/server/wrangler.json && WRANGLER_WRITE_LOGS=false WRANGLER_LOG_PATH=.wrangler/wrangler.log wrangler deploy --config dist/server/wrangler.json --keep-vars",
     "build:vercel": "next build --webpack",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",

@@ -18,7 +18,10 @@ test("selects the native Next build on Vercel and vinext on Cloudflare", async (
   assert.match(scripts["build:vercel"], /next build/);
   assert.match(scripts["build:cloudflare"], /vinext build/);
   assert.match(scripts["deploy:cloudflare"], /d1 migrations apply DB --remote/);
+  assert.match(scripts["deploy:cloudflare"], /CI=true npm run build:cloudflare/);
+  assert.match(scripts["deploy:cloudflare"], /deploy --dry-run/);
   assert.match(scripts["deploy:cloudflare"], /wrangler deploy .*--keep-vars/);
+  assert.match(viteConfig, /migrations_dir:\s*"drizzle"/);
   assert.match(selector, /process\.env\.VERCEL === "1"/);
   assert.match(viteConfig, /D1_DATABASE_ID/);
   assert.match(viteConfig, /PRODUCTION_DATABASE_ID/);
@@ -35,5 +38,5 @@ test("injects Cloudflare bindings without importing them in Vercel bundles", asy
   assert.match(runtimeEnv, /__PRIXRADAR_RUNTIME_ENV__/);
   assert.match(worker, /setRuntimeEnv\(env\)/);
   assert.match(health, /runtimeEnv as env/);
-  assert.match(health, /version: "0\.8\.0"/);
+  assert.match(health, /version: "0\.8\.1"/);
 });

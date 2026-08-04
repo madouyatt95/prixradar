@@ -26,6 +26,7 @@ const localBindingConfig = {
           binding: d1,
           database_name: "prixradar-d1",
           database_id: databaseId,
+          migrations_dir: "drizzle",
         },
       ]
     : [],
