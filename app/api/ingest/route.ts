@@ -472,7 +472,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     throw new Error("Une donnée demo ou fixture ne peut jamais demander une notification.");
   }
   if (parsed.historicalPrices.length > 0 && parsed.shippingCents !== 0) {
-    throw new Error("L’historique Keepa n’est accepté que si la livraison actuelle est explicitement gratuite.");
+    throw new Error("L’historique Keepa exige un prix livré sans frais résiduels à ajouter.");
   }
   const minimumHistoryTimestamp = observedAtMs - 180 * 86_400_000;
   const uniqueHistoryHashes = new Set<string>();
@@ -822,12 +822,26 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     ? Math.max(0, Math.min(15, (Number(feedback.falsePositive) - Number(feedback.useful)) * 2))
     : 0;
   const adaptiveMinimumScore = 65 + adaptiveScoreAdjustment;
+  const providerVerifiedLandingPrice = envelope.source === "amazon"
+    && parsed.verificationCount >= 2
+    && parsed.sellerTrusted
+    && parsed.shippingCents === 0
+    && parsed.publicPriceCents === evaluation.currentTotalCents
+    && parsed.priceAccessibleToAll
+    && parsed.promotionType === "public_price"
+    && parsed.historicalPrices.length > 0
+    && evaluation.checks.historicalBaseline
+    && evaluation.checks.enoughHistory
+    && evaluation.checks.exactVariant
+    && evaluation.checks.trustedSeller
+    && evaluation.checks.shippingIncluded
+    && evaluation.checks.secondVerification;
   const autonomyEligible = origin.actionable
     && origin.evidenceStrength >= 55
     && variant.comparable
     && sellerAssessment.score >= 55
     && shadowCart.usable
-    && shadowCart.consistent;
+    && (shadowCart.consistent || providerVerifiedLandingPrice);
   const notificationEligible = evaluation.notificationEligible
     && evaluation.score >= adaptiveMinimumScore
     && autonomyEligible;
@@ -900,6 +914,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     },
     autonomy: {
       eligible: autonomyEligible,
+      providerVerifiedLandingPrice,
       variant,
       shadowCart,
       priceIndex,
