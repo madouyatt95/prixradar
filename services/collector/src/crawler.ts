@@ -356,6 +356,9 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
     maxRequestRetries: 0,
     requestHandlerTimeoutSecs: Math.ceil((options.timeoutMs ?? 30_000) / 1_000),
     navigationTimeoutSecs: Math.ceil((options.timeoutMs ?? 30_000) / 1_000),
+    preNavigationHooks: [async (_context, gotoOptions) => {
+      gotoOptions.waitUntil = "domcontentloaded";
+    }],
     useSessionPool: true,
     persistCookiesPerSession: true,
     respectRobotsTxtFile: true,
