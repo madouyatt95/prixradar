@@ -1,0 +1,39 @@
+name: Publish JD response fix
+
+on:
+  push:
+    branches:
+      - agent/cloudflare-production
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/cloudflare-production
+      - name: Apply response fix
+        shell: bash
+        run: |
+          set -eu
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("services/collector/src/crawler.ts")
+          text = path.read_text()
+          before_nav = 'gotoOptions.waitUntil = "domcontentloaded";'
+          after_nav = 'gotoOptions.waitUntil = "commit";'
+          before_wait = 'await page.waitForLoadState("domcontentloaded");'
+          after_wait = 'await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined);'
+          if before_nav not in text or before_wait not in text:
+              raise SystemExit("Expected JD navigation markers missing")
+          path.write_text(text.replace(before_nav, after_nav, 1).replace(before_wait, after_wait, 1))
+          PY
+          rm ".github/workflows/publish-jd-commit.yml"
+          git config user.name "prixradar-release"
+          git config user.email "actions@users.noreply.github.com"
+          git add "services/collector/src/crawler.ts" ".github/workflows/publish-jd-commit.yml"
+          git commit -m "fix: read slow JD Sports responses safely"
+          git push origin HEAD:agent/cloudflare-production
