@@ -28,7 +28,7 @@
       "description": "Permet de scanner EU5 dans une seule exécution, moins coûteuse que cinq démarrages Actor.",
       "editor": "stringList",
       "default": ["FR", "DE", "IT", "ES", "GB"],
-      "items": { "type": "string", "enum": ["FR", "DE", "IT", "ES", "GB"] }
+      "items": { "type": "string" }
     },
     "urls": {
       "title": "URLs autorisées",
