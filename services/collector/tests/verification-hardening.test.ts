@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { loadConfig } from "../src/config.js";
 import { cartTextMatchesOffer } from "../src/crawler.js";
 import type { OfferSnapshot } from "../src/types.js";
 import { hasExactVariantEvidence, verifyWithSecondRead } from "../src/verify.js";
+import { deliverObservation } from "../src/worker.js";
 
 function verifiedOffer(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
   return {
@@ -94,6 +96,28 @@ test("rejette une variante rendue différente même si productKey et prix resten
   const result = await twoReads(verifiedOffer(), second);
   assert.equal(result.verification.matchingIdentity, false);
   assert.equal(result.verification.status, "rejected");
+});
+
+test("conserve une observation rejetée dans le rapport sans interrompre l'ingestion suivante", async () => {
+  const second = verifiedOffer();
+  second.price = { amountMinor: 98_900, currency: "EUR" };
+  const result = await twoReads(verifiedOffer(), second);
+  let networkCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    networkCalled = true;
+    throw new Error("Le réseau ne doit pas être appelé.");
+  };
+  try {
+    await deliverObservation(result, loadConfig({
+      PRICE_RADAR_BASE_URL: "https://prixradar.example",
+      INGEST_SECRET: "ingest-secret-test",
+    }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(result.verification.status, "rejected");
+  assert.equal(networkCalled, false);
 });
 
 test("rejette tout changement de vendeur, livraison, total ou panier à la seconde lecture", async () => {
