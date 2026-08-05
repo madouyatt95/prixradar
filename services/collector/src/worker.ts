@@ -23,6 +23,15 @@ export async function deliverObservation(
     logger.info("fixture_skipped", { productKey: observation.offer.product.productKey });
     return;
   }
+  if (observation.verification.status !== "confirmed") {
+    logger.warn("observation_ingest_skipped", {
+      productKey: observation.offer.product.productKey,
+      verificationStatus: observation.verification.status,
+      matchingIdentity: observation.verification.matchingIdentity,
+      matchingPrice: observation.verification.matchingPrice,
+    });
+    return;
+  }
   if (!config.priceRadarBaseUrl || !config.ingestSecret) {
     logger.warn("ingest_not_configured", { productKey: observation.offer.product.productKey });
     return;
