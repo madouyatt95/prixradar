@@ -189,8 +189,7 @@ function inputMarkets(input: ActorInput): Market[] {
 }
 
 export async function runActor(config: CollectorConfig): Promise<void> {
-  await Actor.init();
-  try {
+  await Actor.main(async () => {
     const statusReporter = new SourceStatusReporter(config);
     const input = (await Actor.getInput<ActorInput>()) ?? {};
     const mode = input.mode ?? "full";
@@ -550,7 +549,5 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         });
       }
     }
-  } finally {
-    await Actor.exit();
-  }
+  });
 }
