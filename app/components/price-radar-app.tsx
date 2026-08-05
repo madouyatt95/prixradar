@@ -2304,7 +2304,7 @@ function RadarView({
       <section className="single-check-section" aria-labelledby="single-check-title">
         <div className="single-check-heading">
           <div><span className="eyebrow">À regarder avant confirmation</span><h2 id="single-check-title">Signaux à confirmer</h2><p>Un premier relevé a détecté un prix intéressant, mais la seconde lecture n’a pas encore concordé. Ces signaux ne déclenchent ni notification ni passeport certifié.</p></div>
-          <span>{singleCheckSignals.length} signal{singleCheckSignals.length === 1 ? "" : "aux"} · 1/2</span>
+          <span>{singleCheckSignals.length} signal{singleCheckSignals.length === 1 ? "" : "s"} · 1/2</span>
         </div>
         {singleCheckSignals.length > 0 ? <div className="single-check-list">
           {singleCheckSignals.map((alert) => <article key={alert.id} className="single-check-card">
