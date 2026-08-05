@@ -107,7 +107,7 @@ test("une fixture ne peut jamais atteindre le réseau", async () => {
   assert.equal(called, false);
 });
 
-test("transmet l’historique Keepa uniquement avec une livraison explicitement gratuite", () => {
+test("transmet l’historique Keepa uniquement avec un prix livré sans frais résiduels", () => {
   const item = observation();
   item.offer.product.source = "amazon";
   item.offer.product.market = "FR";
