@@ -131,7 +131,7 @@ obtenir le produit, les statistiques et un historique borné à 60 points sur 18
 jours. Les marchés sont GB=2, DE=3, FR=4, IT=8 et ES=9. Les cinq marchés peuvent
 être traités dans une seule exécution Actor. Les cinq meilleurs candidats de
 chaque marché sont ensuite contrôlés deux fois sur leur page Amazon. L’historique
-n’est injecté au moteur que lorsque la livraison est explicitement gratuite.
+n’est injecté au moteur que lorsque le prix Keepa est un total livré sans frais résiduels à ajouter.
 Le client suit `tokensLeft`, `refillIn` et `refillRate`, attend un refill court et
 diffère les attentes supérieures à la limite configurée. La clé Keepa ne figure
 jamais dans une URL journalisée.
