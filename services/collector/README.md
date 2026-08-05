@@ -153,7 +153,7 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-Il regroupe Amazon EU5 dans un Actor toutes les 15 minutes et, lorsque
+Il regroupe Amazon EU5 dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
 Actor toutes les 30 minutes. Après vérification du JSON produit, la seule
 commande qui écrit sur Apify est :
