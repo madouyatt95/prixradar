@@ -65,6 +65,11 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(observations[0]?.historicalPrices?.length, 6);
   assert.equal(client.quota.tokensLeft, 10);
   assert.deepEqual(dealSelection.includeCategories, [172282]);
+  assert.deepEqual(dealSelection.priceTypes, [18]);
+  assert.deepEqual(dealSelection.deltaPercentRange, [30, 100]);
+  assert.equal(dealSelection.deltaRange, undefined);
+  assert.equal(dealSelection.isRangeEnabled, true);
+  assert.equal(dealSelection.dateRange, 0);
   assert.deepEqual(dealSelection.currentRange, [10_000, 50_000]);
 
   const keepa = observations[0];
