@@ -534,51 +534,51 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           }));
       const seenAmazonProducts = new Set<string>();
       const verifiedByMarket = new Map<Market, number>();
+      const keepaClient = new KeepaClient({
+        apiKey: config.keepaApiKey,
+        timeoutMs: config.httpTimeoutMs,
+        maxQuotaWaitMs: config.keepaMaxQuotaWaitMs,
+      });
       for (const segment of segments) {
         const market = segment.market;
         await runReportedSourceAttempt({
           reporter: statusReporter,
           attempt: sourceAttempt("amazon", market, fixture),
           run: async () => {
-          const client = new KeepaClient({
-            apiKey: config.keepaApiKey as string,
-            timeoutMs: config.httpTimeoutMs,
-            maxQuotaWaitMs: config.keepaMaxQuotaWaitMs,
-          });
-          const observations = await scanKeepaMarket(client, market, {
-            limit: segment.limit,
-            page: segment.page,
-            minimumDropPercent: segment.minimumDropPercent,
-            categoryIds: segment.categoryIds,
-            minPriceCents: segment.minPriceCents,
-            maxPriceCents: segment.maxPriceCents,
-            fixture,
-          });
-          const uniqueObservations = observations.filter((observation) => {
-            if (seenAmazonProducts.has(observation.alertCandidateId)) return false;
-            seenAmazonProducts.add(observation.alertCandidateId);
-            return true;
-          });
-          for (const observation of uniqueObservations) {
-            const alreadyVerified = verifiedByMarket.get(market) ?? 0;
-            const live = input.verifyAmazonPage !== false && alreadyVerified < liveVerificationLimit
-              ? await liveVerifyKeepaObservation(observation, config, {
-                  browserFallback: input.browserFallback ?? config.browserFallback,
-                })
-              : { observation, liveVerified: false, errorCode: "AMAZON_LIVE_SKIPPED" };
-            if (live.liveVerified) verifiedByMarket.set(market, alreadyVerified + 1);
-            if (!fixture) {
-              await deliverObservation(live.observation, config, { allowPush: input.notify === true });
-            }
-            await Actor.pushData({
-              dataKind: "verified-observation",
-              discoverySegmentId: segment.id,
-              discoverySegmentLabel: segment.label,
-              liveVerified: live.liveVerified,
-              liveVerificationErrorCode: live.errorCode,
-              ...live.observation,
+            const observations = await scanKeepaMarket(keepaClient, market, {
+              limit: segment.limit,
+              page: segment.page,
+              minimumDropPercent: segment.minimumDropPercent,
+              categoryIds: segment.categoryIds,
+              minPriceCents: segment.minPriceCents,
+              maxPriceCents: segment.maxPriceCents,
+              fixture,
             });
-          }
+            const uniqueObservations = observations.filter((observation) => {
+              if (seenAmazonProducts.has(observation.alertCandidateId)) return false;
+              seenAmazonProducts.add(observation.alertCandidateId);
+              return true;
+            });
+            for (const observation of uniqueObservations) {
+              const alreadyVerified = verifiedByMarket.get(market) ?? 0;
+              const live = input.verifyAmazonPage !== false && alreadyVerified < liveVerificationLimit
+                ? await liveVerifyKeepaObservation(observation, config, {
+                    browserFallback: input.browserFallback ?? config.browserFallback,
+                  })
+                : { observation, liveVerified: false, errorCode: "AMAZON_LIVE_SKIPPED" };
+              if (live.liveVerified) verifiedByMarket.set(market, alreadyVerified + 1);
+              if (!fixture) {
+                await deliverObservation(live.observation, config, { allowPush: input.notify === true });
+              }
+              await Actor.pushData({
+                dataKind: "verified-observation",
+                discoverySegmentId: segment.id,
+                discoverySegmentLabel: segment.label,
+                liveVerified: live.liveVerified,
+                liveVerificationErrorCode: live.errorCode,
+                ...live.observation,
+              });
+            }
             return uniqueObservations.length;
           },
           productsSeen: (count) => count,
