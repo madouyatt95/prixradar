@@ -9,7 +9,7 @@ import {
   extractRetailOffers,
 } from "../src/connectors/index.js";
 
-test("les dix familles d’adaptateurs panier sont spécifiques et ne ciblent jamais achat immédiat ou paiement", () => {
+test("les onze familles d’adaptateurs panier sont spécifiques et ne ciblent jamais achat immédiat ou paiement", () => {
   const urls = [
     "https://www.amazon.fr/dp/B012345678",
     "https://www.boulanger.com/ref/123456",
@@ -17,13 +17,14 @@ test("les dix familles d’adaptateurs panier sont spécifiques et ne ciblent ja
     "https://www.cdiscount.com/high-tech/fixture/f-106-fixture.html",
     "https://www.fnac.com/a21851909/produit-test",
     "https://www.carrefour.fr/p/produit-test-5904204753289",
+    "https://www.jdsports.fr/product/produit-test/19735246_jdsportsfr/",
     "https://www.leroymerlin.fr/produits/produit-test-80159772.html",
     "https://www.castorama.fr/produit-test/5059340904245_CAFR.prd",
     "https://www.conforama.fr/meuble/produit-test/p/M78384060",
     "https://www.rueducommerce.fr/p/r24060027222.html",
   ];
   const selectors = urls.map((url) => connectorForUrl(url).shadowCart.addButton);
-  assert.equal(new Set(selectors.map((list) => list.join("|"))).size, 10);
+  assert.equal(new Set(selectors.map((list) => list.join("|"))).size, 11);
   for (const list of selectors) {
     assert.ok(list.length >= 3);
     assert.equal(list.some((selector) => /buy.?now|checkout|payment|paiement|commande/iu.test(selector)), false);
@@ -81,7 +82,7 @@ test("Darty et Cdiscount prouvent les URL sans SKU public par leur canonical ren
 
 test("le registre est versionné et la pagination avance d'une seule page sous une borne dure", () => {
   const registry = connectorRegistrySnapshot();
-  assert.equal(registry.length, 14);
+  assert.equal(registry.length, 15);
   assert.ok(registry.every((entry) => entry.version === CONNECTOR_REGISTRY_VERSION));
   const page = "https://www.amazon.fr/s?k=ordinateur&page=1";
   assert.equal(
@@ -92,6 +93,14 @@ test("le registre est versionné et la pagination avance d'une seule page sous u
   assert.equal(discoverNextPageUrl(`<link rel="next" href="https://evil.example/s?k=x&page=2">`, page), null);
   assert.equal(
     discoverNextPageUrl(`<link rel="next" href="/s?k=ordinateur&page=21">`, "https://www.amazon.fr/s?k=ordinateur&page=20"),
+    null,
+  );
+  assert.equal(
+    discoverNextPageUrl(`<link rel="next" href="/c/accessoires/?from=72">`, "https://www.jdsports.fr/c/accessoires/"),
+    "https://www.jdsports.fr/c/accessoires/?from=72",
+  );
+  assert.equal(
+    discoverNextPageUrl(`<link rel="next" href="/c/accessoires/?from=216">`, "https://www.jdsports.fr/c/accessoires/?from=72"),
     null,
   );
 });

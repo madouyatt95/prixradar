@@ -246,7 +246,7 @@ export async function GET(request: Request) {
     const eanItems = pendingEanScans.map((row) => ({
       id: row.id,
       gtin: row.gtin,
-      markets: ["FR", "DE", "IT", "ES", "GB"],
+      markets: ["FR"],
       knownProducts: knownEanProducts.filter((product) => product.gtin === row.gtin).slice(0, 20).map((product) => ({
         source: product.source,
         market: product.market,

@@ -8,6 +8,7 @@ const partnerSources = ["fnac", "carrefour", "leroy_merlin", "castorama", "confo
 test("recognizes stable product identities for every partner merchant", async () => {
   const merchantUrl = await source("../lib/merchant-url.ts");
   for (const merchant of partnerSources) assert.match(merchantUrl, new RegExp(`merchant\\.source === "${merchant}"`, "u"));
+  assert.match(merchantUrl, /merchant\.source === "jd_sports"/u);
   assert.match(merchantUrl, /externalId: string/u);
   assert.match(merchantUrl, /gtin:\$\{gtin\}/u);
   assert.match(merchantUrl, /ref:\$\{externalId\}/u);

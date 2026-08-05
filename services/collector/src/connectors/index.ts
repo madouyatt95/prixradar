@@ -49,11 +49,12 @@ export interface RetailConnector {
   pagination: {
     nextSelectors: readonly string[];
     pageParameters: readonly string[];
+    pageStep?: number;
     maxPage: number;
   };
 }
 
-export const CONNECTOR_REGISTRY_VERSION = "2026.08.1";
+export const CONNECTOR_REGISTRY_VERSION = "2026.08.2";
 
 const BOULANGER: RetailConnector = {
   connectorId: "boulanger-fr",
@@ -262,6 +263,42 @@ const CARREFOUR = frenchConnector({
   },
 });
 
+const JD_SPORTS = frenchConnector({
+  connectorId: "jd-sports-fr",
+  source: "jd_sports",
+  allowedHosts: new Set(["jdsports.fr", "www.jdsports.fr"]),
+  productPathPatterns: [/^\/product\/[^/]+\/[A-Za-z0-9_-]+\/?$/iu],
+  selectors: {
+    title: ["h1[data-e2e='product-name']", "h1[itemprop='name']", "h1"],
+    price: ["[data-e2e='product-price']", "[itemprop='price']", "meta[property='product:price:amount']"],
+    referencePrice: ["[data-e2e*='was-price']", ".itemPrices .was", ".itemPrices .old", ".itemPrices .sav"],
+    externalId: ["[itemprop='sku']", "[data-e2e='product-sku']", "[data-sku]"],
+    shipping: ["[data-e2e*='delivery']", "[itemprop='shippingDetails']", ".tab-delivery"],
+    seller: ["[itemprop='seller']", "[data-e2e*='seller']"],
+    availability: ["[itemprop='availability']", "#addCToBasket", "[data-e2e='pdp-productDetails-addToBasketBtn']"],
+    condition: ["[itemprop='itemCondition']", "[data-e2e*='condition']"],
+  },
+  variantOptions: {
+    color: ["[data-e2e='product-colour']", "[data-e2e*='selected-colour']", "[data-e2e*='color'][aria-selected='true']"],
+    size: ["[data-e2e*='size'][aria-selected='true']", "input[name*='size']:checked + label", "[data-e2e*='selected-size']"],
+  },
+  shadowCart: {
+    addButton: ["button#addCToBasket", "button[data-e2e='pdp-productDetails-addToBasketBtn']", "button.addToBasketWishlist"],
+    confirmation: ["[data-e2e='add-to-basket-modal']", "[data-e2e='mini-cart']", "[role='dialog'][aria-label*='panier' i]"],
+    cartScope: ["[data-e2e='add-to-basket-modal']", "[data-e2e='mini-cart']", "[data-e2e='basket']"],
+    itemPrice: ["[data-e2e='basket-item-price']", "[data-e2e='mini-cart-price']", ".basket-item-price"],
+    shipping: ["[data-e2e='delivery-price']", "[data-e2e='shipping-price']", ".delivery-price"],
+    total: ["[data-e2e='basket-total']", "[data-e2e='mini-cart-total']", ".basket-total"],
+    cartPathPatterns: [/^\/(?:cart|panier|basket)(?:[/?]|$)/iu],
+  },
+  pagination: {
+    nextSelectors: ["link[rel='next']", "a[rel='next']", "a[aria-label*='suivante' i]", "a.pagination-next"],
+    pageParameters: ["from"],
+    pageStep: 72,
+    maxPage: 20,
+  },
+});
+
 const LEROY_MERLIN = frenchConnector({
   connectorId: "leroy-merlin-fr",
   source: "leroy_merlin",
@@ -466,6 +503,7 @@ export const RETAIL_CONNECTORS = [
   CDISCOUNT,
   FNAC,
   CARREFOUR,
+  JD_SPORTS,
   LEROY_MERLIN,
   CASTORAMA,
   CONFORAMA,
@@ -552,6 +590,8 @@ export function expectedVariantIdForUrl(rawUrl: string, connector = connectorFor
     ? /^\/(?:a|mp)(\d+)(?:\/|$)/iu.exec(url.pathname)?.[1] ?? null
     : connector.source === "carrefour"
       ? /-(\d{8,14})\/?$/u.exec(url.pathname)?.[1] ?? null
+      : connector.source === "jd_sports"
+        ? /^\/product\/[^/]+\/([A-Za-z0-9_-]+)\/?$/iu.exec(url.pathname)?.[1] ?? null
       : connector.source === "leroy_merlin"
         ? /-(\d{6,14})\.html$/iu.exec(url.pathname)?.[1] ?? null
         : connector.source === "castorama"
@@ -688,6 +728,7 @@ function trustedSeller(source: RetailSource, value: string | null): boolean {
     cdiscount: ["cdiscount", "cdiscountcom"],
     fnac: ["fnac", "fnaccom"],
     carrefour: ["carrefour", "carrefourfr"],
+    jd_sports: ["jdsports", "jdsportsfr"],
     leroy_merlin: ["leroymerlin", "leroymerlinfr"],
     castorama: ["castorama", "castoramafr"],
     conforama: ["conforama", "conforamafr"],
@@ -884,7 +925,9 @@ export function discoverNextPageUrl(html: string, pageUrl: string): string | nul
   const connector = connectorForUrl(pageUrl);
   const $ = cheerio.load(html);
   const current = new URL(pageUrl);
-  const currentPage = numericPage(current, connector.pagination.pageParameters) ?? 1;
+  const pageStep = connector.pagination.pageStep ?? 1;
+  const currentValue = numericPage(current, connector.pagination.pageParameters) ?? (pageStep === 1 ? 1 : 0);
+  const currentPage = pageStep === 1 ? currentValue : Math.floor(currentValue / pageStep) + 1;
   if (currentPage >= connector.pagination.maxPage) return null;
 
   for (const selector of connector.pagination.nextSelectors) {
@@ -896,8 +939,11 @@ export function discoverNextPageUrl(html: string, pageUrl: string): string | nul
       if (candidateConnector.connectorId !== connector.connectorId) continue;
       if (candidate.pathname === current.pathname && candidate.search === current.search) continue;
       if (connector.productPathPatterns.some((pattern) => pattern.test(candidate.pathname))) continue;
-      const candidatePage = numericPage(candidate, connector.pagination.pageParameters);
-      if (candidatePage !== currentPage + 1 || candidatePage > connector.pagination.maxPage) continue;
+      const candidateValue = numericPage(candidate, connector.pagination.pageParameters);
+      const candidatePage = candidateValue === null
+        ? null
+        : pageStep === 1 ? candidateValue : Math.floor(candidateValue / pageStep) + 1;
+      if (candidateValue !== currentValue + pageStep || candidatePage === null || candidatePage > connector.pagination.maxPage) continue;
       return normalizeProductUrl(candidate.toString(), connector.allowedHosts);
     } catch {
       // Malformed, cross-origin and non-HTTPS pagination candidates are ignored.

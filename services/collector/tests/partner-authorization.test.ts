@@ -20,6 +20,8 @@ const PUBLIC_WEB_URLS = [
   "https://www.fnac.com/index/p/",
   "https://www.carrefour.fr/p/produit-test-3560071234567",
   "https://www.carrefour.fr/edito/plan-du-site",
+  "https://www.jdsports.fr/c/accessoires/",
+  "https://www.jdsports.fr/product/produit-test/19735246_jdsportsfr/",
   "https://www.leroymerlin.fr/produits/produit-test-12345678.html",
   "https://www.leroymerlin.fr/plan-de-site-produits.html",
 ] as const;
@@ -32,7 +34,7 @@ test("la configuration partenaire est vide par défaut et valide une liste expli
 });
 
 test("la configuration refuse les jokers, les sources directes et les identifiants inconnus", () => {
-  for (const value of ["*", "all", "darty", "fnac", "carrefour", "leroy_merlin", "castorama,source_inconnue"]) {
+  for (const value of ["*", "all", "darty", "fnac", "carrefour", "jd_sports", "leroy_merlin", "castorama,source_inconnue"]) {
     assert.throws(
       () => loadConfig({ AUTHORIZED_PARTNER_SOURCES: value }),
       /AUTHORIZED_PARTNER_SOURCES contient une source invalide/u,
@@ -80,6 +82,7 @@ test("les voies publiques refusent les parcours privés, le panier et les proxys
   for (const url of [
     "https://www.fnac.com/account/login",
     "https://www.carrefour.fr/set-store/123",
+    "https://www.jdsports.fr/cart/",
     "https://www.leroymerlin.fr/recherche?q=perceuse",
   ]) {
     assert.throws(() => assertSourceScanAuthorized(url), PublicWebPolicyError);

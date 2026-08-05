@@ -7,13 +7,14 @@ export type ActiveSourceId =
   | "conforama"
   | "darty"
   | "fnac"
+  | "jd_sports"
   | "leroy_merlin"
   | "rueducommerce";
 export type PartnerRequiredSourceId =
   | "castorama"
   | "conforama"
   | "rueducommerce";
-export type PublicWebSourceId = "carrefour" | "fnac" | "leroy_merlin";
+export type PublicWebSourceId = "carrefour" | "fnac" | "jd_sports" | "leroy_merlin";
 export type PlannedSourceId = "e_leclerc";
 export type KnownSourceId = ActiveSourceId | PlannedSourceId;
 
@@ -26,6 +27,7 @@ export const PARTNER_REQUIRED_SOURCE_IDS = [
 export const PUBLIC_WEB_SOURCE_IDS = [
   "fnac",
   "carrefour",
+  "jd_sports",
   "leroy_merlin",
 ] as const satisfies readonly PublicWebSourceId[];
 
@@ -41,15 +43,15 @@ export type SourceRegistryEntry = {
   adapterVersion: string;
 };
 
-export const SOURCE_REGISTRY_VERSION = "2026.08.1";
+export const SOURCE_REGISTRY_VERSION = "2026.08.2";
 
 export const SOURCE_REGISTRY: readonly SourceRegistryEntry[] = [
   {
     id: "amazon",
-    displayName: "Amazon Europe",
+    displayName: "Amazon France",
     status: "active",
     accessMode: "api",
-    markets: ["FR", "DE", "IT", "ES", "GB"],
+    markets: ["FR"],
     hosts: ["amazon.fr", "amazon.de", "amazon.it", "amazon.es", "amazon.co.uk"],
     defaultCadenceMinutes: 15,
     verification: ["api", "http", "browser", "cart"],
@@ -90,6 +92,7 @@ export const SOURCE_REGISTRY: readonly SourceRegistryEntry[] = [
   },
   { id: "fnac", displayName: "Fnac", status: "active", accessMode: "public_web", markets: ["FR"], hosts: ["fnac.com"], defaultCadenceMinutes: 240, verification: ["http", "browser"], adapterVersion: SOURCE_REGISTRY_VERSION },
   { id: "carrefour", displayName: "Carrefour", status: "active", accessMode: "public_web", markets: ["FR"], hosts: ["carrefour.fr"], defaultCadenceMinutes: 240, verification: ["http", "browser"], adapterVersion: SOURCE_REGISTRY_VERSION },
+  { id: "jd_sports", displayName: "JD Sports", status: "active", accessMode: "public_web", markets: ["FR"], hosts: ["jdsports.fr"], defaultCadenceMinutes: 240, verification: ["http", "browser"], adapterVersion: SOURCE_REGISTRY_VERSION },
   { id: "leroy_merlin", displayName: "Leroy Merlin", status: "active", accessMode: "public_web", markets: ["FR"], hosts: ["leroymerlin.fr"], defaultCadenceMinutes: 240, verification: ["http", "browser"], adapterVersion: SOURCE_REGISTRY_VERSION },
   { id: "castorama", displayName: "Castorama", status: "partner_required", accessMode: "authorization_required", markets: ["FR"], hosts: ["castorama.fr"], defaultCadenceMinutes: 60, verification: ["http", "browser", "cart"], adapterVersion: SOURCE_REGISTRY_VERSION },
   { id: "conforama", displayName: "Conforama", status: "partner_required", accessMode: "authorization_required", markets: ["FR"], hosts: ["conforama.fr"], defaultCadenceMinutes: 60, verification: ["http", "browser", "cart"], adapterVersion: SOURCE_REGISTRY_VERSION },
@@ -129,6 +132,9 @@ export function isApprovedPublicWebUrl(source: string, url: URL): boolean {
   if (source === "carrefour") {
     if (/^\/(?:b|g)(?:\/|$)/iu.test(url.pathname)) return false;
     return /^\/(?:p|r)(?:\/|$)/iu.test(url.pathname) || /^\/edito\/plan-du-site\/?$/iu.test(url.pathname);
+  }
+  if (source === "jd_sports") {
+    return /^\/(?:c|product)(?:\/|$)/iu.test(url.pathname);
   }
   return /^\/produits(?:\/|$)/iu.test(url.pathname) || /^\/plan-de-site-produits\.html$/iu.test(url.pathname);
 }

@@ -109,7 +109,7 @@ async function detection(row: ScanRow) {
       ? `Prix anormal confirmé chez ${anomaly.item.merchant}.`
       : verdict === "normal"
         ? "Produit reconnu. Aucun écart de prix suffisamment solide n’est confirmé pour le moment."
-        : "Recherche prioritaire lancée sur Amazon Europe et les enseignes surveillées.",
+        : "Recherche prioritaire lancée sur Amazon.fr et les enseignes surveillées.",
     item: {
       id: row.id,
       gtin: row.gtin,
@@ -133,7 +133,7 @@ async function detection(row: ScanRow) {
     bestOffer: lead ? offer(lead.item, lead.actionable) : null,
     offers: evaluated.slice(0, 12).map((entry) => offer(entry.item, entry.actionable)),
     coverage: {
-      amazonMarkets: ["FR", "DE", "IT", "ES", "GB"],
+      amazonMarkets: ["FR"],
       merchantMatches: products.length,
       offersCompared: evaluated.length,
     },

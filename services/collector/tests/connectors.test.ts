@@ -93,3 +93,33 @@ test("les places de marché Fnac et Rue du Commerce restent non fiables par déf
     assert.equal(offer.total?.amountMinor, 9_498);
   }
 });
+
+test("JD Sports extrait la référence, le prix et le stock depuis la fiche publique", () => {
+  const url = "https://www.jdsports.fr/product/noir-lacoste-sac-messenger-croc-tech/19735246_jdsportsfr/";
+  const html = `<html><head><script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: "Lacoste Sac Messenger Croc Tech",
+    sku: "19735246_jdsportsfr",
+    brand: { "@type": "Brand", name: "Lacoste" },
+    url,
+    offers: {
+      "@type": "Offer",
+      price: "60.00",
+      priceCurrency: "EUR",
+      availability: "https://schema.org/InStock",
+      itemCondition: "https://schema.org/NewCondition",
+      seller: { "@type": "Organization", name: "JD Sports" },
+    },
+  })}</script></head><body><h1 data-e2e="product-name">Lacoste Sac Messenger Croc Tech</h1><button id="addCToBasket">Ajouter au panier</button></body></html>`;
+  const [offer] = extractRetailOffers(html, url, { fixture: true, requestedUrl: url });
+  assert.ok(offer);
+  assert.equal(offer.product.source, "jd_sports");
+  assert.equal(offer.product.externalId, "19735246_jdsportsfr");
+  assert.equal(offer.price.amountMinor, 6_000);
+  assert.equal(offer.shipping, null);
+  assert.equal(offer.sellerTrusted, true);
+  assert.equal(offer.availability, "in_stock");
+  assert.equal(offer.variantIdentity?.expectedId, "sku:19735246_jdsportsfr");
+  assert.equal(offer.variantIdentity?.observedId, "sku:19735246_jdsportsfr");
+});

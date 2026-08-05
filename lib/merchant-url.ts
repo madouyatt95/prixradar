@@ -95,6 +95,13 @@ export function parseCoverageProductUrl(raw: string): {
       identity = `ref:${reference}`;
       parsed.pathname = normalizedPath;
     }
+  } else if (merchant.source === "jd_sports") {
+    const reference = /^\/product\/[^/]+\/([A-Za-z0-9_-]+)$/u.exec(normalizedPath)?.[1] ?? null;
+    if (reference) {
+      externalId = reference;
+      identity = `ref:${reference.toLowerCase()}`;
+      parsed.pathname = normalizedPath;
+    }
   } else if (merchant.source === "castorama") {
     const gtin = /\/([0-9]{8,14})_CAFR\.prd$/iu.exec(normalizedPath)?.[1] ?? null;
     if (gtin) {

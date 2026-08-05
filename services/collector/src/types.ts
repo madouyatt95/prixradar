@@ -7,6 +7,7 @@ export type RetailSource =
   | "conforama"
   | "darty"
   | "fnac"
+  | "jd_sports"
   | "leroy_merlin"
   | "rueducommerce";
 
@@ -19,6 +20,7 @@ export const RETAIL_SOURCES = [
   "conforama",
   "darty",
   "fnac",
+  "jd_sports",
   "leroy_merlin",
   "rueducommerce",
 ] as const satisfies readonly RetailSource[];
@@ -32,6 +34,7 @@ export const PARTNER_RETAIL_SOURCES = [
 export const PUBLIC_WEB_RETAIL_SOURCES = [
   "fnac",
   "carrefour",
+  "jd_sports",
   "leroy_merlin",
 ] as const satisfies readonly RetailSource[];
 

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { buildAutomationPlan } from "../src/automation-plan.js";
 
-test("calibre Amazon EU5 pour le forfait Keepa API 20", () => {
+test("concentre le forfait Keepa API 20 sur Amazon France", () => {
   const [amazon] = buildAutomationPlan("user/prixradar", []);
   assert.equal(amazon?.name, "prixradar-amazon-eu5-api-20");
   assert.equal(amazon?.definition.cronExpression, "15,45 * * * *");
@@ -12,8 +12,8 @@ test("calibre Amazon EU5 pour le forfait Keepa API 20", () => {
   assert.equal(action?.type, "RUN_ACTOR");
   if (!action || action.type !== "RUN_ACTOR") assert.fail("Action Actor attendue");
   const input = JSON.parse(action.runInput?.body ?? "{}") as Record<string, unknown>;
-  assert.deepEqual(input.markets, ["FR", "DE", "IT", "ES", "GB"]);
-  assert.equal(input.limit, 20);
+  assert.deepEqual(input.markets, ["FR"]);
+  assert.equal(input.limit, 100);
   assert.equal(input.minimumDropPercent, 30);
   assert.equal(input.notify, true);
   assert.equal(input.liveVerificationLimit, 0);

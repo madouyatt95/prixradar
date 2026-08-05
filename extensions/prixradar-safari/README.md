@@ -4,12 +4,11 @@ Cette WebExtension ouvre la fiche courante dans la file d’inspection PrixRadar
 Elle ne lit pas l’historique Safari, ne modifie pas la page, et n’effectue ni
 commande ni paiement.
 
-Les domaines reconnus sont Amazon Europe (FR, DE, IT, ES et UK), Boulanger,
-Darty, Cdiscount, Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du
-Commerce. La reconnaissance du domaine ne signifie pas que la collecte est
-active : pour les six nouvelles enseignes, une autorisation de collecte ou un
-flux partenaire et un premier rapport sain restent nécessaires avant toute
-alerte LIVE.
+Les domaines reconnus sont Amazon (FR, DE, IT, ES et UK), Boulanger, Darty,
+Cdiscount, Fnac, Carrefour, JD Sports, Leroy Merlin, Castorama, Conforama et Rue
+du Commerce. PrixRadar utilise les pages publiques de JD Sports, Fnac, Carrefour
+et Leroy Merlin. Castorama, Conforama et Rue du Commerce restent désactivés tant
+qu’un accès adapté n’est pas disponible.
 
 ## Préparer l’application iPhone/iPad
 

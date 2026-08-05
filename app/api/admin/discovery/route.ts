@@ -7,6 +7,7 @@ import { adminJson, authorizeAdmin } from "@/lib/admin";
 export const dynamic = "force-dynamic";
 
 const MARKETS = new Set(["FR", "DE", "IT", "ES", "GB"]);
+const DEFAULT_MARKETS = ["FR"] as const;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
         { label: "Découvertes 100–500 €", min: 10_001, max: 50_000, budget: 72, priority: 80 },
         { label: "Découvertes 500 € et plus", min: 50_001, max: 100_000_000, budget: 48, priority: 60 },
       ];
-      const values = await Promise.all([...MARKETS].flatMap((market) => bands.map(async (band) => ({
+      const values = await Promise.all(DEFAULT_MARKETS.flatMap((market) => bands.map(async (band) => ({
         id: await idFor(`${market}:${band.label}`),
         source: "amazon",
         market,
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
         minPriceCents: band.min,
         maxPriceCents: band.max,
         minimumDropPercent: 30,
-        dailyTokenBudget: band.budget,
+        dailyTokenBudget: band.budget * 5,
         cadenceMinutes: 60,
         priority: band.priority,
         enabled: true,

@@ -233,6 +233,9 @@ function publicWebPathAllowed(source: PublicWebRetailSource, url: URL): boolean 
     if (/^\/(?:b|g)(?:\/|$)/iu.test(url.pathname)) return false;
     return /^\/(?:p|r)(?:\/|$)/iu.test(url.pathname) || /^\/edito\/plan-du-site\/?$/iu.test(url.pathname);
   }
+  if (source === "jd_sports") {
+    return /^\/(?:c|product)(?:\/|$)/iu.test(url.pathname);
+  }
   return /^\/produits(?:\/|$)/iu.test(url.pathname) || /^\/plan-de-site-produits\.html$/iu.test(url.pathname);
 }
 

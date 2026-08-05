@@ -271,7 +271,7 @@ export function AdminView() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "seedDefaults" }),
     });
-    setMessage(response.ok ? "Rotation Amazon EU5 initialisée avec des budgets prudents." : "Initialisation impossible.");
+    setMessage(response.ok ? "Recherche Amazon France initialisée avec des budgets prudents." : "Initialisation impossible.");
     if (response.ok) await refresh();
   }
 
@@ -372,22 +372,22 @@ export function AdminView() {
 
         <form className="admin-panel admin-form" onSubmit={addSource}>
           <div><span className="eyebrow">Sans changement de code</span><h2>Ajouter une page catégorie</h2></div>
-          <label>Enseigne<select name="source" defaultValue="boulanger"><option value="boulanger">Boulanger</option><option value="darty">Darty</option><option value="cdiscount">Cdiscount</option><option value="fnac">Fnac</option><option value="carrefour">Carrefour</option><option value="leroy_merlin">Leroy Merlin</option><option value="castorama">Castorama</option><option value="conforama">Conforama</option><option value="rueducommerce">Rue du Commerce</option><option value="amazon">Amazon</option></select></label>
+          <label>Enseigne<select name="source" defaultValue="boulanger"><option value="boulanger">Boulanger</option><option value="darty">Darty</option><option value="cdiscount">Cdiscount</option><option value="fnac">Fnac</option><option value="carrefour">Carrefour</option><option value="jd_sports">JD Sports</option><option value="leroy_merlin">Leroy Merlin</option><option value="castorama">Castorama</option><option value="conforama">Conforama</option><option value="rueducommerce">Rue du Commerce</option><option value="amazon">Amazon</option></select></label>
           <div className="admin-form-pair"><label>Marché<select name="market" defaultValue="FR"><option>FR</option><option>DE</option><option>IT</option><option>ES</option><option>GB</option></select></label><label>Cadence<select name="cadenceMinutes" defaultValue="60"><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 h</option><option value="240">4 h</option><option value="1440">24 h</option></select></label></div>
           <label>Nom<input name="displayName" required maxLength={120} placeholder="Boulanger TV" /></label>
           <label>Catégorie<input name="category" required maxLength={80} placeholder="Image & son" /></label>
           <div className="admin-form-pair"><label>Découverte<select name="discoveryStrategy" defaultValue="links"><option value="links">Index ou page publique</option><option value="sitemap" disabled>Sitemap XML · non disponible</option><option value="feed" disabled>Flux partenaire · non disponible</option><option value="api" disabled>API partenaire · non disponible</option></select></label><label>Taille catalogue estimée<input name="estimatedProductCount" type="number" min="1" max="100000000" placeholder="ex. 2400" /></label></div>
           <label>Budget produits / jour<input name="dailyProductBudget" type="number" min="1" max="100000" defaultValue="500" /></label>
           <label>URL HTTPS<input name="discoveryUrl" type="url" required placeholder="https://www.enseigne.fr/categorie" /></label>
-          <p className="admin-muted">Fnac, Carrefour et Leroy Merlin utilisent leurs fiches, catégories et index publics, à cadence limitée et dans le respect de robots.txt. Castorama, Conforama et Rue du Commerce restent bloqués car leur politique publique restreint la veille automatisée. Toute activation exige ensuite un contrôle récent réussi.</p>
+          <p className="admin-muted">Fnac, Carrefour, JD Sports et Leroy Merlin utilisent leurs pages publiques, à cadence limitée et dans le respect de robots.txt. Castorama, Conforama et Rue du Commerce restent désactivés tant qu’un accès adapté n’est pas disponible. Toute activation exige ensuite un contrôle récent réussi.</p>
           <button className="primary-button" type="submit">Ajouter à la couverture</button>
         </form>
       </div>
 
       <div className="admin-subgrid">
         <section className="admin-panel">
-          <div className="section-label-row"><div><span className="eyebrow">Amazon EU5</span><h2>Découverte sous budget</h2></div>{segments.length === 0 ? <button className="primary-button" onClick={() => void seedDiscovery()}>Initialiser EU5</button> : <span>{segments.length} segments</span>}</div>
-          <p className="admin-muted">Les gammes de prix tournent par marché. Chaque segment reçoit une enveloppe quotidienne et change de page automatiquement.</p>
+          <div className="section-label-row"><div><span className="eyebrow">Amazon France</span><h2>Découverte sous budget</h2></div>{segments.length === 0 ? <button className="primary-button" onClick={() => void seedDiscovery()}>Initialiser la France</button> : <span>{segments.filter((segment) => segment.enabled).length} recherches actives</span>}</div>
+          <p className="admin-muted">Le budget est concentré sur Amazon.fr. Les gammes de prix changent de page automatiquement pour voir davantage de produits français.</p>
           <div className="admin-source-list">{segments.slice(0, 15).map((segment) => <div className="admin-source-row" key={segment.id}><div><strong>{segment.market} · {segment.label}</strong><small>{segment.dailyTokenBudget} unités/jour · priorité {segment.priority} · toutes les {segment.cadenceMinutes} min</small></div><button className={segment.enabled ? "danger-button" : "secondary-button"} onClick={() => void toggleSegment(segment)}>{segment.enabled ? "Suspendre" : "Activer"}</button></div>)}</div>
         </section>
 

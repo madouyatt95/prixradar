@@ -569,12 +569,13 @@ const MARKET_OPTIONS = [
 ];
 
 const RETAIL_SOURCE_OPTIONS = [
-  { value: "amazon", label: "Amazon Europe", mark: "K" },
+  { value: "amazon", label: "Amazon France", mark: "K" },
   { value: "boulanger", label: "Boulanger", mark: "B" },
   { value: "darty", label: "Darty", mark: "D" },
   { value: "cdiscount", label: "Cdiscount", mark: "C" },
   { value: "fnac", label: "Fnac", mark: "FN" },
   { value: "carrefour", label: "Carrefour", mark: "CF" },
+  { value: "jd_sports", label: "JD Sports", mark: "JD" },
   { value: "leroy_merlin", label: "Leroy Merlin", mark: "LM" },
   { value: "castorama", label: "Castorama", mark: "CA" },
   { value: "conforama", label: "Conforama", mark: "CO" },
@@ -591,6 +592,7 @@ const FRENCH_SOURCE_COVERAGE = [
   { id: "cdiscount", mark: "C", name: "Cdiscount", detail: "France · marketplace", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Vendeurs tiers séparés, score de fiabilité renforcé" },
   { id: "fnac", mark: "FN", name: "Fnac", detail: "France · marketplace et offres adhérents", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Index et fiches publics avec robots.txt respecté ; prix public séparé des avantages adhérents" },
   { id: "carrefour", mark: "CF", name: "Carrefour", detail: "France · prix et stock selon le magasin", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Catégories et fiches publiques ; aucune alerte tant que prix, fidélité et zone ne sont pas distingués" },
+  { id: "jd_sports", mark: "JD", name: "JD Sports", detail: "France · chaussures, vêtements et accessoires", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Prix, référence et disponibilité vérifiés avant chaque alerte" },
   { id: "leroy_merlin", mark: "LM", name: "Leroy Merlin", detail: "France · livraison et retrait localisés", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Index et fiches publics ; prix, stock et retrait restent soumis à la zone choisie" },
   { id: "castorama", mark: "CA", name: "Castorama", detail: "France · livraison et retrait localisés", fallbackStatus: "Accès explicite requis", fallbackTone: "pending", method: "La politique robots vise les outils de veille de prix : aucun contournement automatique" },
   { id: "conforama", mark: "CO", name: "Conforama", detail: "France · stock magasin et livraison", fallbackStatus: "Accès explicite requis", fallbackTone: "pending", method: "Le robots.txt public bloque les robots génériques : collecte directe désactivée" },
@@ -786,10 +788,10 @@ function mapLiveAlert(value: unknown): AlertItem | null {
       source === "amazon" || source === "keepa"
         ? secondCheckConfirmed
           ? history.length > 0
-            ? "Historique Keepa · double contrôle"
-            : "Signal Keepa · double contrôle"
-          : "Signal Keepa · seconde lecture non concordante"
-        : secondCheckConfirmed ? "Collecteur · double contrôle" : "Collecteur · seconde lecture à confirmer",
+            ? "Amazon.fr · historique vérifié"
+            : "Amazon.fr · prix vérifié"
+          : "Amazon.fr · prix à confirmer"
+        : secondCheckConfirmed ? "Prix vérifié deux fois" : "Prix à confirmer",
     currentPrice: current,
     usualPrice: usual,
     currency,
@@ -1428,7 +1430,7 @@ export function PriceRadarApp() {
         (filter === "Prix public" && alert.priceAccessibleToAll !== false) ||
         (filter === "Remise ≥ 30 %" && alert.discount >= 30) ||
         (filter === "Budget ≤ 250 €" && alert.currency === "EUR" && alert.currentPrice <= 250) ||
-        (filter === "Amazon · Keepa" && alert.source.includes("Keepa")) ||
+        (filter === "Amazon" && alert.merchant.startsWith("Amazon")) ||
         (filter === "France" && alert.market.includes("France")) ||
         (filter.startsWith("Catégorie · ") && alert.category === filter.slice("Catégorie · ".length));
       const searchMatch =
@@ -2177,7 +2179,7 @@ function RadarView({
   closeExpiredMinutes: number;
 }) {
   const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
-  const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon · Keepa", "France", ...categories.map((category) => `Catégorie · ${category}`)];
+  const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon", "France", ...categories.map((category) => `Catégorie · ${category}`)];
   const verifiedCount = alerts.filter((alert) => alert.score >= 75).length;
   const filtered = search.trim().length > 0 || filter !== "Tout";
   const medianDiscount = alerts.length
@@ -2652,7 +2654,7 @@ function SourcesView({
           <div className="lookup-heading">
             <div className="source-logo keepa-logo">K</div>
             <div>
-              <span className="eyebrow">Recherche Amazon Europe</span>
+              <span className="eyebrow">Vérification Amazon</span>
               <h2>Vérifier un produit par son ASIN</h2>
               <p>PrixRadar consulte l’historique disponible sans exposer vos données.</p>
             </div>
@@ -2708,11 +2710,11 @@ function SourcesView({
 
       <div className="coverage-callout">
         <div>
-          <span className="eyebrow">Amazon Europe</span>
-          <h2>5 marchés pris en charge</h2>
+          <span className="eyebrow">Vérification à la demande</span>
+          <h2>5 pays restent consultables</h2>
           <p>
-            France, Allemagne, Italie, Espagne et Royaume-Uni seront surveillés
-            dès l’activation d’Amazon. Chaque marché conserve sa devise et son historique propres.
+            La recherche automatique est concentrée sur Amazon.fr. Vous pouvez toujours
+            vérifier manuellement un produit en Allemagne, Italie, Espagne ou au Royaume-Uni.
           </p>
         </div>
         <div className="market-badges" aria-label="Marchés Amazon couverts">
@@ -2725,24 +2727,23 @@ function SourcesView({
       <div className="coverage-callout">
         <div>
           <span className="eyebrow">Grandes enseignes françaises</span>
-          <h2>9 enseignes prises en charge</h2>
+          <h2>10 enseignes prises en charge</h2>
           <p>
-            Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
-            rejoignent Boulanger, Darty et Cdiscount. Fnac, Carrefour et Leroy Merlin
-            utilisent leurs pages publiques ; les trois autres restent restreintes.
+            JD Sports, Fnac, Carrefour et Leroy Merlin utilisent leurs pages publiques.
+            Castorama, Conforama et Rue du Commerce restent désactivés.
             Une source devient active uniquement après un premier contrôle réussi.
           </p>
         </div>
         <div className="market-badges" aria-label="Enseignes françaises prises en charge">
-          <span>9 FR</span>
+          <span>10 FR</span>
         </div>
       </div>
 
       <div className="source-list">
         <SourceRow
           mark="K"
-          name="Amazon via Keepa"
-          detail="FR · DE · IT · ES · UK"
+          name="Amazon France"
+          detail="Recherche automatique sur Amazon.fr"
           status={keepaState.status}
           tone={keepaState.tone}
           runtime={runtimeFor("keepa", "amazon")}
@@ -3480,7 +3481,7 @@ function EanDetectionPanel({
           <button type="button" onClick={onClose} aria-label="Fermer">×</button>
         </header>
         {detection.phase === "submitting" ? (
-          <div className="ean-analysis-progress" role="status"><span aria-hidden="true" /><p>{detection.message}</p><small>Base PrixRadar → Amazon Europe → enseignes françaises</small></div>
+          <div className="ean-analysis-progress" role="status"><span aria-hidden="true" /><p>{detection.message}</p><small>Base PrixRadar → Amazon.fr → enseignes françaises</small></div>
         ) : (
           <>
             <div className="ean-verdict">
@@ -3495,12 +3496,12 @@ function EanDetectionPanel({
               </div>
             ) : null}
             <div className="ean-coverage" aria-label="Couverture du détecteur">
-              <div><strong>{keepaAvailable ? detection.coverage.amazonMarkets.length : "—"}</strong><span>{keepaAvailable ? "Amazon Europe" : "Keepa à activer"}</span></div>
+              <div><strong>{keepaAvailable ? 1 : "—"}</strong><span>{keepaAvailable ? "Amazon France" : "Amazon à activer"}</span></div>
               <div><strong>{detection.coverage.merchantMatches}</strong><span>fiches rapprochées</span></div>
               <div><strong>{detection.coverage.offersCompared}</strong><span>prix comparés</span></div>
             </div>
             {detection.offers.length > 1 ? <div className="ean-offer-list"><span>Prix retrouvés</span>{detection.offers.slice(0, 4).map((item) => <a key={`${item.source}:${item.market}`} href={item.url} target="_blank" rel="noreferrer"><span>{item.merchant} · {item.market}</span><strong>{money((item.totalCents ?? item.priceCents) / 100, item.currency)}</strong></a>)}</div> : null}
-            {detection.phase !== "error" ? <div className="ean-monitoring-note"><i aria-hidden="true" /><p><strong>Le suivi EAN est enregistré.</strong> {keepaAvailable ? "PrixRadar continuera la recherche sur Amazon Europe et les enseignes actives, puis vous préviendra seulement après confirmation d’une anomalie." : "Les enseignes actives continueront la recherche. Amazon Europe sera ajouté automatiquement dès que Keepa sera activé."}</p></div> : null}
+            {detection.phase !== "error" ? <div className="ean-monitoring-note"><i aria-hidden="true" /><p><strong>Ce produit est maintenant suivi.</strong> {keepaAvailable ? "PrixRadar continuera la recherche sur Amazon.fr et les enseignes surveillées, puis vous préviendra uniquement après confirmation d’une baisse inhabituelle." : "PrixRadar poursuivra la recherche chez les enseignes disponibles."}</p></div> : null}
           </>
         )}
         <footer>

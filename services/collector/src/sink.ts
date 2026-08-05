@@ -134,6 +134,7 @@ function directMerchant(source: RetailSource): string {
     conforama: "Conforama",
     darty: "Darty",
     fnac: "Fnac",
+    jd_sports: "JD Sports",
     leroy_merlin: "Leroy Merlin",
     rueducommerce: "Rue du Commerce",
   };

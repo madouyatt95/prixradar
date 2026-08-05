@@ -19,7 +19,8 @@ test("ships the complete PrixRadar application shell", async () => {
   assert.match(application, /Votre radar est prêt/);
   assert.match(application, /Aucune alerte vérifiée/);
   assert.match(application, /Personnalisez vos alertes/);
-  assert.match(application, /Amazon · Keepa/);
+  assert.match(application, /Amazon France/);
+  assert.match(application, /JD Sports/);
   assert.match(application, /Navigation principale/);
   const publicNavigation = application.slice(application.indexOf("const NAV_ITEMS"), application.indexOf("const MARKET_OPTIONS"));
   assert.equal(publicNavigation.match(/^\s*\{ id: "/gm)?.length, 4);

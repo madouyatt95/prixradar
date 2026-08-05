@@ -253,7 +253,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       try {
         const observation = await verifySourceUrl(task.url, {
           ...scanOptions,
-          shadowCart: task.shadowCart,
+          shadowCart: isPublicWebRetailSource(task.source) ? false : task.shadowCart,
           verifyDelayMs: config.verifyDelayMs,
         });
         if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
@@ -294,7 +294,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         const observation = await verifySourceUrl(recheck.url, {
           ...scanOptions,
           verifyDelayMs: config.verifyDelayMs,
-          shadowCart: input.shadowCart ?? true,
+          shadowCart: isPublicWebRetailSource(recheck.source) ? false : input.shadowCart ?? true,
         });
         if (!fixture) await deliverObservation(observation, config, { allowPush: false });
         seenProductUrls.add(recheck.url);
@@ -463,7 +463,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               const observation = await verifySourceUrl(targetUrl, {
                 ...scanOptions,
                 verifyDelayMs: config.verifyDelayMs,
-                shadowCart: input.shadowCart ?? mode === "verify",
+                shadowCart: isPublicWebRetailSource(connector.source) ? false : input.shadowCart ?? mode === "verify",
               });
               if (!fixture) {
                 await deliverObservation(observation, config, { allowPush: input.notify === true });
@@ -519,9 +519,12 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     }
 
     if ((source === "amazon" || (source === "all" && input.scanAmazon !== false)) && config.keepaApiKey) {
-      const segments: RemoteDiscoverySegment[] = input.useRemoteDiscovery === true && plan.discoverySegments.length > 0
-        ? plan.discoverySegments
-        : inputMarkets(input).map((market) => ({
+      const requestedMarkets = inputMarkets(input);
+      const requestedMarketSet = new Set<Market>(requestedMarkets);
+      const requestedRemoteSegments = plan.discoverySegments.filter((segment) => requestedMarketSet.has(segment.market));
+      const segments: RemoteDiscoverySegment[] = input.useRemoteDiscovery === true && requestedRemoteSegments.length > 0
+        ? requestedRemoteSegments
+        : requestedMarkets.map((market) => ({
             id: `${market}:fallback`,
             market,
             label: "Découverte générale",

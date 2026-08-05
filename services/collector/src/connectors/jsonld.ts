@@ -115,6 +115,7 @@ function isTrustedRetailSeller(source: RetailSource, seller: string | null): boo
     darty: ["darty", "dartycom"],
     cdiscount: ["cdiscount", "cdiscountcom"],
     fnac: ["fnac", "fnaccom"],
+    jd_sports: ["jdsports", "jdsportsfr"],
     leroy_merlin: ["leroymerlin", "leroymerlinfr"],
     rueducommerce: ["rueducommerce", "rueducommercefr"],
     amazon: ["amazon", "amazonfr", "amazonde", "amazonit", "amazones", "amazoncouk"],
