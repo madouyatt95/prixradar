@@ -331,11 +331,13 @@ export class KeepaClient {
         .filter((value) => Number.isSafeInteger(value) && value > 0)
         .slice(0, 20),
       excludeCategories: [],
-      priceTypes: [PRICE_INDEXES.amazon, PRICE_INDEXES.new, PRICE_INDEXES.buyBox],
-      deltaRange: [options.minimumDropPercent ?? 30, 100],
+      priceTypes: [PRICE_INDEXES.buyBox],
+      deltaPercentRange: [options.minimumDropPercent ?? 30, 100],
       currentRange: [minPriceCents, maxPriceCents],
+      isRangeEnabled: true,
       isLowest: true,
       sortType: 4,
+      dateRange: 0,
     };
     const payload = await this.#request("/deal", { selection: JSON.stringify(selection) });
     return normalizeDeals(payload);
