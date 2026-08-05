@@ -366,11 +366,12 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       if (source !== "all" && source !== connector.source) {
         throw new Error(`L’URL ne correspond pas à la source ${source}.`);
       }
-      await runReportedSourceAttempt({
-        reporter: statusReporter,
-        attempt: sourceAttempt(connector.source, connector.market, fixture),
-        baseMetrics: { sourceConfigurationId },
-        run: async () => {
+      try {
+        await runReportedSourceAttempt({
+          reporter: statusReporter,
+          attempt: sourceAttempt(connector.source, connector.market, fixture),
+          baseMetrics: { sourceConfigurationId },
+          run: async () => {
           const coverageScanOptions = {
             ...scanOptions,
             maxDiscoveredUrls: Math.min(productLimit ?? limit, config.maxDiscoveredUrls),
@@ -472,8 +473,20 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           : result.attemptedProducts > 0 && result.verificationFailures === result.attemptedProducts
             ? "PRODUCT_VERIFICATION_FAILED"
             : null,
-        queueLag: () => 0,
-      });
+          queueLag: () => 0,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        const blocked = /(?:403|429|captcha|blocked|access denied|robot)/u.test(message);
+        await Actor.pushData({
+          dataKind: "source-failure",
+          source: connector.source,
+          market: connector.market,
+          url,
+          sourceConfigurationId,
+          errorCode: blocked ? "ANTI_BOT_BLOCKED" : "COLLECTOR_JOB_FAILED",
+        });
+      }
     }
 
     if ((source === "amazon" || (source === "all" && input.scanAmazon !== false)) && config.keepaApiKey) {
