@@ -5,7 +5,7 @@ import { KeepaClient, mergeKeepaWithLive, scanKeepaMarket } from "./keepa.js";
 import { logger } from "./logger.js";
 import { CollectorQueue, createCollectorWorker, MAX_PAGINATION_DEPTH, type CollectorJob } from "./queue.js";
 import { sendPushForObservation } from "./push.js";
-import { postObservation } from "./sink.js";
+import { postObservation, postSignalObservation } from "./sink.js";
 import {
   runReportedSourceAttempt,
   sourceAttempt,
@@ -24,7 +24,34 @@ export async function deliverObservation(
     return;
   }
   if (observation.verification.status !== "confirmed") {
-    logger.warn("observation_ingest_skipped", {
+    if (!config.priceRadarBaseUrl || !config.ingestSecret) {
+      logger.warn("signal_ingest_not_configured", {
+        productKey: observation.offer.product.productKey,
+        verificationStatus: observation.verification.status,
+      });
+      return;
+    }
+    try {
+      const ingested = await postSignalObservation(observation, {
+        baseUrl: config.priceRadarBaseUrl,
+        ingestSecret: config.ingestSecret,
+        ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+        timeoutMs: config.httpTimeoutMs,
+        requestNotification: false,
+      });
+      logger.info("single_check_signal_ingested", {
+        productKey: observation.offer.product.productKey,
+        accepted: ingested.accepted,
+        duplicate: ingested.duplicate,
+        alertId: ingested.alert?.id,
+      });
+    } catch (error) {
+      logger.warn("single_check_signal_ingest_failed", {
+        productKey: observation.offer.product.productKey,
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+    logger.warn("observation_not_notified", {
       productKey: observation.offer.product.productKey,
       verificationStatus: observation.verification.status,
       matchingIdentity: observation.verification.matchingIdentity,

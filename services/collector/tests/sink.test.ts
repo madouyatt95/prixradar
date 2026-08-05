@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ingestIdempotencyKey, postObservation, toAlertIngestEnvelope } from "../src/sink.js";
+import { ingestIdempotencyKey, postObservation, postSignalObservation, toAlertIngestEnvelope } from "../src/sink.js";
 import type { VerifiedObservation } from "../src/types.js";
 
 function observation(fixture = false): VerifiedObservation {
@@ -105,6 +105,25 @@ test("une fixture ne peut jamais atteindre le réseau", async () => {
     /fixture/u,
   );
   assert.equal(called, false);
+});
+
+test("un signal à une vérification est ingéré sans notification ni horodatage certifié", async () => {
+  const item = observation();
+  item.verification.status = "rejected";
+  item.verification.matchingPrice = false;
+  let payload: Record<string, unknown> | null = null;
+  await postSignalObservation(item, {
+    baseUrl: "https://prixradar.example",
+    ingestSecret: "signal-secret-test",
+    requestNotification: true,
+  }, async (_input, init) => {
+    payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ ok: true, accepted: true, alert: { id: item.alertCandidateId, score: 40, notificationEligible: false } });
+  });
+  const body = payload?.payload as Record<string, unknown>;
+  assert.equal(body.verificationCount, 1);
+  assert.equal(body.verifiedAt, null);
+  assert.equal(body.notify, false);
 });
 
 test("transmet l’historique Keepa uniquement avec un prix livré sans frais résiduels", () => {

@@ -54,6 +54,12 @@ type AlertItem = {
   gtin?: string | null;
   observedAt?: string | null;
   expiresAt?: string | null;
+  verification?: {
+    level: "single" | "double";
+    count: 1 | 2;
+    secondCheckConfirmed: boolean;
+    label: string;
+  };
   buyNow?: {
     score: number;
     label: string;
@@ -697,6 +703,7 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const usualPriceCents = finite(item.usualPriceCents, priceCents);
   const totalCents = finite(item.totalCents, priceCents);
   const evidence = record(item.evidence);
+  const verificationRecord = record(item.verification);
   const deliveryContext = record(item.deliveryContext);
   const buyNowRecord = record(item.buyNow);
   const communityRecord = record(item.community);
@@ -762,6 +769,8 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     ),
   );
   const verified = typeof item.verifiedAt === "string" ? item.verifiedAt : item.observedAt;
+  const secondCheckConfirmed = verificationRecord?.secondCheckConfirmed === true
+    || evidence?.secondVerification === true;
   const history = Array.isArray(item.history)
     ? item.history.map((point) => finite(point)).filter((point) => point > 0).slice(-12)
     : [];
@@ -775,10 +784,12 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     market: source === "amazon" || source === "keepa" ? `Amazon ${market}` : "France",
     source:
       source === "amazon" || source === "keepa"
-        ? history.length > 0
-          ? "Historique Keepa · vérifié"
-          : "Signal Keepa · vérifié"
-        : "Collecteur vérifié",
+        ? secondCheckConfirmed
+          ? history.length > 0
+            ? "Historique Keepa · double contrôle"
+            : "Signal Keepa · double contrôle"
+          : "Signal Keepa · seconde lecture non concordante"
+        : secondCheckConfirmed ? "Collecteur · double contrôle" : "Collecteur · seconde lecture à confirmer",
     currentPrice: current,
     usualPrice: usual,
     currency,
@@ -821,6 +832,12 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     gtin: typeof item.gtin === "string" ? item.gtin : null,
     observedAt: typeof item.observedAt === "string" ? item.observedAt : null,
     expiresAt: typeof item.expiresAt === "string" ? item.expiresAt : null,
+    verification: {
+      level: secondCheckConfirmed ? "double" : "single",
+      count: secondCheckConfirmed ? 2 : 1,
+      secondCheckConfirmed,
+      label: secondCheckConfirmed ? "2/2 vérifications" : "1/2 vérifications",
+    },
     buyNow: {
       score: Math.round(finite(buyNowRecord?.score, finite(item.score, 65))),
       label: typeof buyNowRecord?.label === "string" ? buyNowRecord.label : "À considérer",
@@ -958,6 +975,7 @@ export function PriceRadarApp() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AlertItem | null>(null);
   const [liveAlerts, setLiveAlerts] = useState<AlertItem[]>([]);
+  const [singleCheckSignals, setSingleCheckSignals] = useState<AlertItem[]>([]);
   const [liveLoading, setLiveLoading] = useState(true);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
   const [health, setHealth] = useState<HealthCapabilities | null>(null);
@@ -1065,6 +1083,14 @@ export function PriceRadarApp() {
           return items.map(mapLiveAlert).filter((item): item is AlertItem => item !== null);
         },
       ),
+      fetch("/api/alerts?view=single_check&limit=30&minScore=0&accessibleOnly=false", { headers: { accept: "application/json" } }).then(
+        async (response) => {
+          if (!response.ok) return [];
+          const data = (await response.json()) as Record<string, unknown>;
+          const items = Array.isArray(data.items) ? data.items : [];
+          return items.map(mapLiveAlert).filter((item): item is AlertItem => item !== null);
+        },
+      ),
       fetch("/api/sources", { headers: { accept: "application/json" } }).then(
         async (response) => {
           if (!response.ok) return [];
@@ -1116,9 +1142,10 @@ export function PriceRadarApp() {
           } satisfies HealthCapabilities;
         },
       ),
-    ]).then(([alertsResult, sourcesResult, healthResult]) => {
+    ]).then(([alertsResult, signalsResult, sourcesResult, healthResult]) => {
       if (!active) return;
       if (alertsResult.status === "fulfilled") setLiveAlerts(alertsResult.value);
+      if (signalsResult.status === "fulfilled") setSingleCheckSignals(signalsResult.value);
       if (sourcesResult.status === "fulfilled") setSourceStatuses(sourcesResult.value);
       if (healthResult.status === "fulfilled") setHealth(healthResult.value);
       setLiveLoading(false);
@@ -1413,7 +1440,7 @@ export function PriceRadarApp() {
     });
   }, [activeAlerts, closeExpiredMinutes, filter, maxAlertAgeMinutes, search]);
 
-  const knownAlerts = liveAlerts.filter(
+  const knownAlerts = [...liveAlerts, ...singleCheckSignals].filter(
     (alert, index, all) => all.findIndex((candidate) => candidate.id === alert.id) === index,
   );
   const watchedAlerts = knownAlerts.filter((alert) => watched.has(alert.id));
@@ -1900,6 +1927,7 @@ export function PriceRadarApp() {
     return (
       <RadarView
         alerts={visibleAlerts}
+        singleCheckSignals={singleCheckSignals}
         filter={filter}
         setFilter={setFilter}
         search={search}
@@ -2101,6 +2129,7 @@ function PageHeading({
 
 function RadarView({
   alerts,
+  singleCheckSignals,
   filter,
   setFilter,
   search,
@@ -2124,6 +2153,7 @@ function RadarView({
   closeExpiredMinutes,
 }: {
   alerts: AlertItem[];
+  singleCheckSignals: AlertItem[];
   filter: string;
   setFilter: (value: string) => void;
   search: string;
@@ -2178,7 +2208,7 @@ function RadarView({
       />
 
       <section className="natural-radar" aria-labelledby="natural-radar-title">
-        <div><span className="eyebrow">Alerte en langage naturel</span><h2 id="natural-radar-title">Dites simplement ce que vous cherchez</h2><p>Vous pouvez écrire : « un iPhone neuf sous 850 €, livré en France, avec au moins 25 % de remise ».</p></div>
+        <div><span className="eyebrow">Alerte en langage naturel</span><h2 id="natural-radar-title">Dites simplement ce que vous cherchez</h2><p>Vous pouvez écrire : « un iPhone neuf sous 850 €, livré en France, avec au moins 25 % de remise ».</p><span className="zero-token-note">0 jeton Keepa · filtre la surveillance déjà active</span></div>
         <form onSubmit={onCreateRadar}><input value={radarQuery} onChange={(event) => setRadarQuery(event.target.value)} maxLength={300} placeholder="Un OLED 55 pouces sous 800 €…" aria-label="Description du radar personnel" /><button className="dark-button" disabled={radarSaving}>{radarSaving ? "Activation…" : "Activer ce radar"}</button></form>
         {radarRules.length > 0 ? <div className="radar-rule-list" aria-label="Radars actifs">{radarRules.map((rule) => <span key={rule.id}><i aria-hidden="true" />{rule.name}<button type="button" onClick={() => onDeleteRadar(rule.id)} aria-label={`Supprimer ${rule.name}`}>×</button></span>)}</div> : null}
       </section>
@@ -2270,6 +2300,20 @@ function RadarView({
           </button>
         </div>
       )}
+
+      <section className="single-check-section" aria-labelledby="single-check-title">
+        <div className="single-check-heading">
+          <div><span className="eyebrow">À regarder avant confirmation</span><h2 id="single-check-title">Signaux à confirmer</h2><p>Un premier relevé a détecté un prix intéressant, mais la seconde lecture n’a pas encore concordé. Ces signaux ne déclenchent ni notification ni passeport certifié.</p></div>
+          <span>{singleCheckSignals.length} signal{singleCheckSignals.length === 1 ? "" : "aux"} · 1/2</span>
+        </div>
+        {singleCheckSignals.length > 0 ? <div className="single-check-list">
+          {singleCheckSignals.map((alert) => <article key={alert.id} className="single-check-card">
+            <button type="button" onClick={() => onOpen(alert)} aria-label={`Analyser le signal ${alert.title}`}><span className={`single-check-mark accent-${alert.accent}`}>{alert.label}</span><span className="single-check-copy"><span><strong>{alert.merchant}</strong><i>1/2 vérifications</i></span><h3>{alert.title}</h3><small>{alert.reasons[0] ?? "Seconde lecture non concordante"}</small></span></button>
+            <span className="single-check-price"><strong>{money(alert.currentPrice, alert.currency)}</strong><small>{alert.shipping}</small></span>
+            <a href={alert.url} target="_blank" rel="noreferrer">Voir le produit ↗</a>
+          </article>)}
+        </div> : <p className="single-check-empty">Aucun prix récent n’attend une seconde confirmation.</p>}
+      </section>
     </section>
   );
 }
@@ -3155,6 +3199,7 @@ function AlertDetail({
   useAffiliateLink: boolean;
   onClose: () => void;
 }) {
+  const isDoubleVerified = alert.verification?.secondCheckConfirmed !== false;
   const buyNow = alert.buyNow ?? { score: alert.score, label: "À considérer", factors: [], cautions: [] };
   const community = alert.community ?? { total: 0, positive: 0, negative: 0, expired: 0, purchased: 0 };
   const [recheck, setRecheck] = useState<"idle" | "pending" | "processing" | "completed" | "failed">("idle");
@@ -3224,7 +3269,7 @@ function AlertDetail({
           <div>
             <span className="merchant-pill">{alert.merchant}</span>
             <span className={`demo-inline ${alert.sourceMode === "live" ? "is-live" : ""}`}>
-              {alert.sourceMode === "live" ? "DONNÉE VÉRIFIÉE" : "NON PUBLIÉE"}
+              {alert.sourceMode !== "live" ? "NON PUBLIÉE" : isDoubleVerified ? "DOUBLE CONTRÔLE" : "SIGNAL À CONFIRMER · 1/2"}
             </span>
           </div>
           <button type="button" onClick={onClose} aria-label="Fermer l’analyse">
@@ -3256,8 +3301,9 @@ function AlertDetail({
             </span>
             <h3>Pourquoi ce score ?</h3>
             <p>
-              Plus les références, l’historique et la seconde lecture concordent,
-              plus le signal est fiable.
+              {isDoubleVerified
+                ? "Les références, l’historique et la seconde lecture concordent."
+                : "Le premier prix est visible, mais la seconde lecture n’a pas concordé : vérifiez la page marchande avant toute décision."}
             </p>
           </div>
         </section>
@@ -3272,7 +3318,7 @@ function AlertDetail({
           <div className="purchasability-head"><span aria-hidden="true">{purchasability.status === "confirmed" ? "✓" : purchasability.status === "blocked" ? "!" : "↻"}</span><div><span className="eyebrow">Disponibilité réelle</span><h3 id="purchasability-title">{purchasability.label}</h3><p>{purchasability.message}</p></div>{purchasability.totalCents ? <strong>{money(purchasability.totalCents / 100, alert.currency)}<small>total</small></strong> : null}</div>
           <div className="purchasability-checks"><span className={purchasability.checks.cartConfirmed ? "is-ok" : ""}>Panier final</span><span className={purchasability.checks.exactVariant ? "is-ok" : ""}>Variante exacte</span><span className={purchasability.checks.trustedSeller ? "is-ok" : ""}>Vendeur fiable</span><span className={purchasability.checks.fresh ? "is-ok" : ""}>Contrôle récent</span></div>
           <p className="purchasability-time">{purchasability.minutesRemaining !== null ? `Fenêtre estimée : encore ${purchasability.minutesRemaining} min` : "Aucune durée de validité garantie"}{purchasability.community.confidencePercent !== null ? ` · ${purchasability.community.confidencePercent} % d’avis positifs` : ""}</p>
-          <div className="purchasability-actions"><button type="button" className="dark-button" onClick={() => setPurchaseOpen((value) => !value)} disabled={alert.sourceMode !== "live"}>{alert.sourceMode === "live" ? "J’ai acheté à ce prix" : "Disponible après vérification"}</button>{purchasability.status !== "confirmed" && alert.sourceMode === "live" ? <button type="button" className="secondary-button" onClick={() => void verifyNow()}>Revérifier d’abord</button> : null}</div>
+          <div className="purchasability-actions"><button type="button" className="dark-button" onClick={() => setPurchaseOpen((value) => !value)} disabled={alert.sourceMode !== "live" || !isDoubleVerified}>{alert.sourceMode === "live" && isDoubleVerified ? "J’ai acheté à ce prix" : "Disponible après confirmation"}</button>{purchasability.status !== "confirmed" && alert.sourceMode === "live" ? <button type="button" className="secondary-button" onClick={() => void verifyNow()}>Revérifier d’abord</button> : null}</div>
           {purchaseOpen ? <form className="purchase-confirm" onSubmit={confirmPurchase}><div><label>Total réellement payé<input value={paidEuros} onChange={(event) => setPaidEuros(event.target.value)} inputMode="decimal" aria-label="Total réellement payé en euros" /></label><label>Protection<select value={protectionDays} onChange={(event) => setProtectionDays(Number(event.target.value))}><option value={7}>7 jours</option><option value={14}>14 jours</option><option value={30}>30 jours</option><option value={60}>60 jours</option></select></label></div>{purchaseOptions.length ? <label>Rattacher au projet<select value={missionItemId} onChange={(event) => setMissionItemId(event.target.value)}><option value="">Aucune mission</option>{purchaseOptions.map((option) => <option key={option.id} value={option.id}>{option.missionName} · {option.label}</option>)}</select></label> : null}<p>Le montant payé sert au portefeuille. PrixRadar revérifiera ce produit toutes les 6 h pendant la période choisie.</p><button className="primary-button" disabled={purchaseSaving}>{purchaseSaving ? "Protection…" : "Confirmer et protéger"}</button></form> : null}
         </section>
 
@@ -3342,11 +3388,11 @@ function AlertDetail({
         </section>
 
         <section className="detail-section proof-passport">
-          <div className="section-label-row"><h3>Passeport de preuve</h3><span>{alert.sourceMode === "live" ? "Traçable" : "Non publié"}</span></div>
-          <dl><div><dt>Identité exacte</dt><dd>{alert.gtin ? `EAN ${alert.gtin}` : `${alert.brand ?? "Marque non transmise"} · ${alert.model ?? alert.sku}`}</dd></div><div><dt>Observation</dt><dd>{alert.observedAt ? new Date(alert.observedAt).toLocaleString("fr-FR") : alert.freshness}</dd></div><div><dt>Double contrôle</dt><dd>{alert.verifiedAt} · prix, variante, vendeur</dd></div><div><dt>Validité</dt><dd>{alert.expiresAt ? `jusqu’au ${new Date(alert.expiresAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "à revérifier"}</dd></div><div><dt>Comparaison</dt><dd>{alert.marketSources ? `${alert.marketSources} enseignes comparables` : "historique interne ou Keepa"}</dd></div></dl>
+          <div className="section-label-row"><h3>{isDoubleVerified ? "Passeport de preuve" : "État des vérifications"}</h3><span>{alert.sourceMode !== "live" ? "Non publié" : isDoubleVerified ? "Traçable · 2/2" : "À confirmer · 1/2"}</span></div>
+          <dl><div><dt>Identité exacte</dt><dd>{alert.gtin ? `EAN ${alert.gtin}` : `${alert.brand ?? "Marque non transmise"} · ${alert.model ?? alert.sku}`}</dd></div><div><dt>Observation</dt><dd>{alert.observedAt ? new Date(alert.observedAt).toLocaleString("fr-FR") : alert.freshness}</dd></div><div><dt>Seconde lecture</dt><dd>{isDoubleVerified ? `${alert.verifiedAt} · prix, variante, vendeur concordants` : "Non concordante ou indisponible · aucune notification envoyée"}</dd></div><div><dt>Validité</dt><dd>{alert.expiresAt ? `jusqu’au ${new Date(alert.expiresAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "à revérifier"}</dd></div><div><dt>Comparaison</dt><dd>{alert.marketSources ? `${alert.marketSources} enseignes comparables` : "historique interne ou Keepa"}</dd></div></dl>
           <button type="button" className="dark-button verify-now" onClick={() => void verifyNow()} disabled={recheck === "pending" || recheck === "processing"}>{recheck === "pending" || recheck === "processing" ? "Vérification en cours…" : recheck === "completed" ? "Revérifier à nouveau" : "Vérifier maintenant"}</button>
           {recheckMessage ? <p className={`recheck-status is-${recheck}`} role="status">{recheckMessage}</p> : null}
-          {alert.sourceMode === "live" ? <a className="certified-proof-link" href={`/certified/${encodeURIComponent(alert.id)}`} target="_blank" rel="noreferrer"><span aria-hidden="true">i</span><span><strong>Ouvrir le passeport de preuve</strong><small>Statut, contrôles, limites et horodatage</small></span><i aria-hidden="true">↗</i></a> : null}
+          {alert.sourceMode === "live" && isDoubleVerified ? <a className="certified-proof-link" href={`/certified/${encodeURIComponent(alert.id)}`} target="_blank" rel="noreferrer"><span aria-hidden="true">i</span><span><strong>Ouvrir le passeport de preuve</strong><small>Statut, contrôles, limites et horodatage</small></span><i aria-hidden="true">↗</i></a> : null}
         </section>
 
         <section className="detail-section">
@@ -3383,14 +3429,16 @@ function AlertDetail({
             target="_blank"
             rel="noreferrer"
           >
-            Vérifier chez {alert.merchant} ↗
+            {isDoubleVerified ? `Vérifier chez ${alert.merchant} ↗` : `Voir le prix à confirmer chez ${alert.merchant} ↗`}
           </a>
           <button type="button" className="secondary-button" onClick={() => {
-            const proofUrl = alert.sourceMode === "live" ? `${window.location.origin}/certified/${encodeURIComponent(alert.id)}` : `${window.location.origin}/?alert=${encodeURIComponent(alert.id)}`;
-            const text = `${alert.title} · ${money(alert.currentPrice, alert.currency)} · score achat ${buyNow.score}/100 · vérifié à ${alert.verifiedAt}`;
-            if (navigator.share) void navigator.share({ title: "Preuve PrixRadar", text, url: proofUrl });
+            const proofUrl = alert.sourceMode === "live" && isDoubleVerified ? `${window.location.origin}/certified/${encodeURIComponent(alert.id)}` : `${window.location.origin}/?alert=${encodeURIComponent(alert.id)}`;
+            const text = isDoubleVerified
+              ? `${alert.title} · ${money(alert.currentPrice, alert.currency)} · score achat ${buyNow.score}/100 · vérifié à ${alert.verifiedAt}`
+              : `${alert.title} · ${money(alert.currentPrice, alert.currency)} · signal PrixRadar 1/2, prix à confirmer`;
+            if (navigator.share) void navigator.share({ title: isDoubleVerified ? "Preuve PrixRadar" : "Signal PrixRadar à confirmer", text, url: proofUrl });
             else void navigator.clipboard?.writeText(`${text} · ${proofUrl}`);
-          }}>Partager la preuve</button>
+          }}>{isDoubleVerified ? "Partager la preuve" : "Partager le signal"}</button>
         </footer>
       </aside>
     </div>

@@ -45,6 +45,7 @@ function parseEvidence(value: string) {
     const analysis = parsed.analysis;
     return {
       notificationEligible: parsed.notificationEligible === true,
+      secondVerification: analysis?.checks?.secondVerification === true,
       historyPoints: typeof analysis?.historyPoints === "number" ? analysis.historyPoints : null,
       madCents: typeof analysis?.madCents === "number" ? analysis.madCents : null,
       robustZ: typeof analysis?.robustZ === "number" ? analysis.robustZ : null,
@@ -176,6 +177,12 @@ function serializeAlert(
     confidence: row.confidence,
     status: row.status,
     notificationEligible: liveEligible,
+    verification: {
+      level: evidence?.secondVerification === true ? "double" : "single",
+      count: evidence?.secondVerification === true ? 2 : 1,
+      secondCheckConfirmed: evidence?.secondVerification === true,
+      label: evidence?.secondVerification === true ? "2/2 vérifications" : "1/2 vérifications",
+    },
     seller: row.seller,
     condition: row.condition,
     publicPriceCents: row.publicPriceCents,
@@ -191,8 +198,8 @@ function serializeAlert(
     observedAt: row.observedAt,
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
-    certificateUrl: row.sourceMode === "live" ? `/certified/${encodeURIComponent(row.id)}` : null,
-    certificateApiUrl: row.sourceMode === "live" ? `/api/certified/${encodeURIComponent(row.id)}` : null,
+    certificateUrl: liveEligible ? `/certified/${encodeURIComponent(row.id)}` : null,
+    certificateApiUrl: liveEligible ? `/api/certified/${encodeURIComponent(row.id)}` : null,
     history: row.sourceMode === "live" ? {
       mode: "live",
       count: Math.min(history.length, 60),
@@ -219,6 +226,7 @@ function serializeAlert(
       madCents: evidence.madCents,
       robustZ: evidence.robustZ,
       freshnessMinutes: evidence.freshnessMinutes,
+      secondVerification: evidence.secondVerification,
       blockingReasons: evidence.blockingReasons,
       marketMedianCents: evidence.marketMedianCents,
       marketSources: evidence.marketSources,
@@ -240,6 +248,10 @@ function databaseError(error: unknown) {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  const view = url.searchParams.get("view")?.trim() ?? "confirmed";
+  if (view !== "confirmed" && view !== "single_check") {
+    return apiError(400, "INVALID_VIEW", "view doit être confirmed ou single_check.");
+  }
   let limit: number;
   let offset: number;
   let minDiscount: number;
@@ -253,7 +265,7 @@ export async function GET(request: Request) {
     minScore = boundedInteger(
       url.searchParams.get("minScore"),
       "minScore",
-      ANOMALY_LIMITS.minNotificationScore,
+      view === "single_check" ? 0 : ANOMALY_LIMITS.minNotificationScore,
       0,
       100,
     );
@@ -279,7 +291,9 @@ export async function GET(request: Request) {
   if (category !== null && (!category || category.length > 80)) {
     return apiError(400, "INVALID_CATEGORY", "category est invalide.");
   }
-  const accessibleOnly = url.searchParams.get("accessibleOnly") !== "false";
+  const accessibleOnly = url.searchParams.has("accessibleOnly")
+    ? url.searchParams.get("accessibleOnly") !== "false"
+    : view !== "single_check";
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -298,7 +312,17 @@ export async function GET(request: Request) {
     eq(alerts.priceAccessibleToAll, true),
     sql`json_extract(${alerts.evidenceJson}, '$.notificationEligible') = 1`,
   );
-  const visibility = includeDemo
+  const singleCheckVisibility = and(
+    eq(alerts.sourceMode, "live"),
+    inArray(alerts.status, ["review", "monitoring"]),
+    isNotNull(alerts.expiresAt),
+    gt(alerts.expiresAt, now),
+    gte(alerts.observedAt, freshAfter),
+    sql`json_extract(${alerts.evidenceJson}, '$.analysis.checks.secondVerification') = 0`,
+  );
+  const visibility = view === "single_check"
+    ? singleCheckVisibility
+    : includeDemo
     ? or(
         liveEligibility,
         and(eq(alerts.sourceMode, "demo"), isNotNull(alerts.expiresAt), gt(alerts.expiresAt, now)),
@@ -362,7 +386,7 @@ export async function GET(request: Request) {
     return json(
       {
         ok: true,
-        mode: includeDemo ? "live_and_demo" : "live",
+        mode: view === "single_check" ? "single_check" : includeDemo ? "live_and_demo" : "live",
         generatedAt: now,
         count: rows.length,
         items: rows.map((row) => serializeAlert(row, community.get(row.id), intelligence.get(row.id), history.get(row.id))),

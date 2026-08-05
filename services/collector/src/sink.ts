@@ -45,7 +45,7 @@ export interface AlertIngestEnvelope {
     merchantReferenceCents: number | null;
     verificationCount: number;
     observedAt: string;
-    verifiedAt: string;
+    verifiedAt: string | null;
     expiresAt: string;
     notify: boolean;
     rawHash: string;
@@ -159,6 +159,9 @@ export function ingestIdempotencyKey(observation: VerifiedObservation): string {
     observation.offer.cartProbe?.status ?? null,
     observation.offer.cartProbe?.totalCents ?? null,
     observation.verification.secondObservedAt,
+    observation.verification.status,
+    observation.verification.matchingIdentity,
+    observation.verification.matchingPrice,
   ]);
 }
 
@@ -234,7 +237,9 @@ export function toAlertIngestEnvelope(
       merchantReferenceCents: observation.offer.referencePrice?.amountMinor ?? null,
       verificationCount: observation.verification.status === "confirmed" ? 2 : 1,
       observedAt: safeObservedAt,
-      verifiedAt: observation.verification.secondObservedAt,
+      verifiedAt: observation.verification.status === "confirmed"
+        ? observation.verification.secondObservedAt
+        : null,
       expiresAt,
       notify: requestNotification && notificationEligible(observation),
       rawHash,
@@ -362,6 +367,22 @@ export async function postObservation(
   return postEnvelope<IngestResponse>(
     toAlertIngestEnvelope(observation, config.requestNotification ?? true),
     config,
+    fetchImpl,
+  );
+}
+
+export async function postSignalObservation(
+  observation: VerifiedObservation,
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<IngestResponse> {
+  if (observation.offer.fixture) throw new SinkRequestError("Une fixture ne peut jamais être ingérée.", null);
+  if (observation.verification.status === "confirmed") {
+    throw new SinkRequestError("Une observation confirmée doit suivre le circuit des alertes.", null);
+  }
+  return postEnvelope<IngestResponse>(
+    toAlertIngestEnvelope(observation, false),
+    { ...config, requestNotification: false },
     fetchImpl,
   );
 }

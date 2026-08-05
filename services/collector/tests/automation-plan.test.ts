@@ -19,7 +19,7 @@ test("calibre Amazon EU5 pour le forfait Keepa API 20", () => {
   assert.equal(input.liveVerificationLimit, 0);
   assert.equal(input.verifyAmazonPage, false);
   assert.equal(input.useRemoteCoverage, false);
-  assert.equal(input.useRemoteDiscovery, false);
+  assert.equal(input.useRemoteDiscovery, true);
 });
 
 test("récupère la couverture distante et teste les connecteurs chaque jour", () => {

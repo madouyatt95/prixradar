@@ -98,15 +98,17 @@ test("rejette une variante rendue différente même si productKey et prix resten
   assert.equal(result.verification.status, "rejected");
 });
 
-test("conserve une observation rejetée dans le rapport sans interrompre l'ingestion suivante", async () => {
+test("publie une observation rejetée comme signal 1/2 sans interrompre l'ingestion suivante", async () => {
   const second = verifiedOffer();
   second.price = { amountMinor: 98_900, currency: "EUR" };
   const result = await twoReads(verifiedOffer(), second);
   let networkCalled = false;
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
+  let payload: Record<string, unknown> | null = null;
+  globalThis.fetch = async (_input, init) => {
     networkCalled = true;
-    throw new Error("Le réseau ne doit pas être appelé.");
+    payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({ ok: true, accepted: true, alert: { id: "amazon:fr:B012345678", score: 50, notificationEligible: false } });
   };
   try {
     await deliverObservation(result, loadConfig({
@@ -117,7 +119,11 @@ test("conserve une observation rejetée dans le rapport sans interrompre l'inges
     globalThis.fetch = originalFetch;
   }
   assert.equal(result.verification.status, "rejected");
-  assert.equal(networkCalled, false);
+  assert.equal(networkCalled, true);
+  const body = payload?.payload as Record<string, unknown>;
+  assert.equal(body.verificationCount, 1);
+  assert.equal(body.verifiedAt, null);
+  assert.equal(body.notify, false);
 });
 
 test("rejette tout changement de vendeur, livraison, total ou panier à la seconde lecture", async () => {
