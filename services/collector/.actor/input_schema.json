@@ -7,15 +7,16 @@
     "source": {
       "title": "Source",
       "type": "string",
-      "description": "Source attendue. Les six sources partenaires restent bloquées en direct tant qu'elles ne sont pas autorisées côté serveur via AUTHORIZED_PARTNER_SOURCES.",
+      "description": "Source attendue. Castorama, Conforama et Rue du Commerce restent bloqués en direct tant qu'ils ne sont pas autorisés via AUTHORIZED_PARTNER_SOURCES.",
       "editor": "select",
       "default": "all",
       "enum": ["all", "boulanger", "darty", "cdiscount", "amazon", "fnac", "carrefour", "leroy_merlin", "castorama", "conforama", "rueducommerce"],
-      "enumTitles": ["Toutes les sources autorisées", "Boulanger", "Darty", "Cdiscount", "Amazon Europe", "Fnac (partenaire)", "Carrefour (partenaire)", "Leroy Merlin (partenaire)", "Castorama (partenaire)", "Conforama (partenaire)", "Rue du Commerce (partenaire)"]
+      "enumTitles": ["Toutes les sources autorisées", "Boulanger", "Darty", "Cdiscount", "Amazon Europe", "Fnac (web public)", "Carrefour (web public)", "Leroy Merlin (web public)", "Castorama (accès requis)", "Conforama (accès requis)", "Rue du Commerce (accès requis)"]
     },
     "market": {
       "title": "Marché Amazon",
       "type": "string",
+      "description": "Marché utilisé lors d'une exécution Amazon ciblée sur un seul pays.",
       "editor": "select",
       "default": "FR",
       "enum": ["FR", "DE", "IT", "ES", "GB"],
@@ -46,6 +47,7 @@
     "mode": {
       "title": "Mode",
       "type": "string",
+      "description": "Choisit entre découverte, vérification, parcours complet ou test local sans ingestion.",
       "editor": "select",
       "default": "full",
       "enum": ["discover", "verify", "full", "fixture"],
