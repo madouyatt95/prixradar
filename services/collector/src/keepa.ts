@@ -276,43 +276,49 @@ export class KeepaClient {
     await this.#waitForQuota();
     const url = new URL(path, "https://api.keepa.com");
     url.search = new URLSearchParams({ key: this.#apiKey, ...params }).toString();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
-    try {
-      const response = await this.#fetch(url, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-      if (response.status === 401 || response.status === 403) {
-        throw new KeepaApiError("Authentification Keepa refusée.", "authentication");
-      }
-      if (response.status === 429) {
-        const retrySeconds = Number(response.headers.get("retry-after"));
-        throw new KeepaApiError(
-          "Quota Keepa temporairement épuisé.",
-          "quota",
-          Number.isFinite(retrySeconds) ? retrySeconds * 1_000 : null,
-        );
-      }
-      if (!response.ok) throw new KeepaApiError(`Keepa indisponible (HTTP ${response.status}).`, "upstream");
+    for (let quotaAttempt = 0; quotaAttempt < 2; quotaAttempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
+      try {
+        const response = await this.#fetch(url, {
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (response.status === 401 || response.status === 403) {
+          throw new KeepaApiError("Authentification Keepa refusée.", "authentication");
+        }
+        if (response.status === 429) {
+          const retrySeconds = Number(response.headers.get("retry-after"));
+          const retryAfterMs = Number.isFinite(retrySeconds) && retrySeconds > 0
+            ? retrySeconds * 1_000
+            : 60_000;
+          if (quotaAttempt === 0 && retryAfterMs <= this.#maxQuotaWaitMs) {
+            await this.#sleep(retryAfterMs + 25);
+            continue;
+          }
+          throw new KeepaApiError("Quota Keepa temporairement épuisé.", "quota", retryAfterMs);
+        }
+        if (!response.ok) throw new KeepaApiError(`Keepa indisponible (HTTP ${response.status}).`, "upstream");
 
-      const payload: unknown = await response.json();
-      if (!isRecord(payload)) throw new KeepaApiError("Réponse Keepa invalide.", "upstream");
-      this.#quota = quotaFromPayload(payload);
-      this.#quotaObservedAt = Date.now();
-      if (isRecord(payload.error)) {
-        throw new KeepaApiError("Keepa a refusé la requête.", "upstream");
+        const payload: unknown = await response.json();
+        if (!isRecord(payload)) throw new KeepaApiError("Réponse Keepa invalide.", "upstream");
+        this.#quota = quotaFromPayload(payload);
+        this.#quotaObservedAt = Date.now();
+        if (isRecord(payload.error)) {
+          throw new KeepaApiError("Keepa a refusé la requête.", "upstream");
+        }
+        return payload;
+      } catch (error) {
+        if (error instanceof KeepaApiError) throw error;
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new KeepaApiError("Délai Keepa dépassé.", "timeout");
+        }
+        throw new KeepaApiError("Échec réseau Keepa.", "upstream");
+      } finally {
+        clearTimeout(timeout);
       }
-      return payload;
-    } catch (error) {
-      if (error instanceof KeepaApiError) throw error;
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new KeepaApiError("Délai Keepa dépassé.", "timeout");
-      }
-      throw new KeepaApiError("Échec réseau Keepa.", "upstream");
-    } finally {
-      clearTimeout(timeout);
     }
+    throw new KeepaApiError("Quota Keepa temporairement épuisé.", "quota");
   }
 
   async deals(market: Market, options: {
