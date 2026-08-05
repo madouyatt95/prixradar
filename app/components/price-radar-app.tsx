@@ -957,7 +957,7 @@ function mapEanDetection(value: unknown, fallbackGtin: string): EanDetection | n
     bestOffer: mapOffer(payload.bestOffer),
     offers,
     coverage: {
-      amazonMarkets: Array.isArray(coverage?.amazonMarkets) ? coverage.amazonMarkets.filter((entry): entry is string => typeof entry === "string") : ["FR", "DE", "IT", "ES", "GB"],
+      amazonMarkets: Array.isArray(coverage?.amazonMarkets) ? coverage.amazonMarkets.filter((entry): entry is string => typeof entry === "string") : ["FR"],
       merchantMatches: finite(coverage?.merchantMatches),
       offersCompared: finite(coverage?.offersCompared),
     },
@@ -1684,7 +1684,7 @@ export function PriceRadarApp() {
       product: null,
       bestOffer: null,
       offers: [],
-      coverage: { amazonMarkets: ["FR", "DE", "IT", "ES", "GB"], merchantMatches: 0, offersCompared: 0 },
+      coverage: { amazonMarkets: ["FR"], merchantMatches: 0, offersCompared: 0 },
     });
     try {
       const response = await fetch("/api/ean", {
@@ -1726,7 +1726,7 @@ export function PriceRadarApp() {
         product: null,
         bestOffer: null,
         offers: [],
-        coverage: { amazonMarkets: ["FR", "DE", "IT", "ES", "GB"], merchantMatches: 0, offersCompared: 0 },
+        coverage: { amazonMarkets: ["FR"], merchantMatches: 0, offersCompared: 0 },
       });
     }
   }

@@ -156,7 +156,7 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
       if (!/^ean:[0-9a-f-]{36}$/u.test(id) || !/^\d{8,14}$/u.test(gtin)) return [];
       const markets = Array.isArray(value.markets)
         ? [...new Set(value.markets.map(String).filter((market): market is Market => ["FR", "DE", "IT", "ES", "GB"].includes(market)))]
-        : ["FR", "DE", "IT", "ES", "GB"] as Market[];
+        : ["FR"] as Market[];
       const knownProducts = Array.isArray(value.knownProducts) ? value.knownProducts.flatMap((candidateProduct): RemoteEanScan["knownProducts"] => {
         if (!candidateProduct || typeof candidateProduct !== "object") return [];
         const product = candidateProduct as Record<string, unknown>;

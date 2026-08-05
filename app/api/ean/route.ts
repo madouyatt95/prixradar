@@ -280,7 +280,7 @@ export async function POST(request: Request) {
           gtin,
           status: "queued",
           radarRuleId,
-          resultJson: JSON.stringify({ trigger: "camera_or_manual", amazonMarkets: ["FR", "DE", "IT", "ES", "GB"] }),
+          resultJson: JSON.stringify({ trigger: "camera_or_manual", amazonMarkets: ["FR"] }),
           requestedAt: now,
           nextCheckAt: now,
           updatedAt: now,

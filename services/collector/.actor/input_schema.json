@@ -10,8 +10,8 @@
       "description": "Source attendue. Castorama, Conforama et Rue du Commerce restent bloqués en direct tant qu'ils ne sont pas autorisés via AUTHORIZED_PARTNER_SOURCES.",
       "editor": "select",
       "default": "all",
-      "enum": ["all", "boulanger", "darty", "cdiscount", "amazon", "fnac", "carrefour", "leroy_merlin", "castorama", "conforama", "rueducommerce"],
-      "enumTitles": ["Toutes les sources autorisées", "Boulanger", "Darty", "Cdiscount", "Amazon Europe", "Fnac (web public)", "Carrefour (web public)", "Leroy Merlin (web public)", "Castorama (accès requis)", "Conforama (accès requis)", "Rue du Commerce (accès requis)"]
+      "enum": ["all", "boulanger", "darty", "cdiscount", "amazon", "fnac", "carrefour", "leroy_merlin", "jd_sports", "castorama", "conforama", "rueducommerce"],
+      "enumTitles": ["Toutes les sources autorisées", "Boulanger", "Darty", "Cdiscount", "Amazon France", "Fnac (web public)", "Carrefour (web public)", "Leroy Merlin (web public)", "JD Sports (web public)", "Castorama (accès requis)", "Conforama (accès requis)", "Rue du Commerce (accès requis)"]
     },
     "market": {
       "title": "Marché Amazon",
@@ -25,9 +25,9 @@
     "markets": {
       "title": "Marchés Amazon automatisés",
       "type": "array",
-      "description": "Permet de scanner EU5 dans une seule exécution, moins coûteuse que cinq démarrages Actor.",
+      "description": "L'automatisation utilise la France pour concentrer les jetons Keepa. Les autres pays restent disponibles pour une recherche manuelle.",
       "editor": "select",
-      "default": ["FR", "DE", "IT", "ES", "GB"],
+      "default": ["FR"],
       "items": {
         "type": "string",
         "enum": ["FR", "DE", "IT", "ES", "GB"],
