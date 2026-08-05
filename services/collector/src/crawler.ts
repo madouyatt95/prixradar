@@ -331,7 +331,10 @@ async function scanHttp(url: string, options: ScanOptions): Promise<ScanResult> 
       failureMessage = error instanceof Error ? error.message : "Échec HTTP du collecteur.";
     },
   });
-  await crawler.run([url]);
+  await crawler.run([{
+    url,
+    uniqueKey: `http:${Date.now()}:${Math.random()}:${url}`,
+  }]);
   if (result) return result;
   throw new CollectorNavigationError(failureMessage ?? "La collecte HTTP n’a produit aucune réponse.");
 }
@@ -370,7 +373,10 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
       failureMessage = error instanceof Error ? error.message : "Échec navigateur du collecteur.";
     },
   });
-  await crawler.run([url]);
+  await crawler.run([{
+    url,
+    uniqueKey: `browser:${Date.now()}:${Math.random()}:${url}`,
+  }]);
   if (result) return result;
   throw new CollectorNavigationError(failureMessage ?? "Le navigateur n’a produit aucune réponse.");
 }
