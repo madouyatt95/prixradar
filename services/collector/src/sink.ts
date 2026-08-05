@@ -183,6 +183,8 @@ export function toAlertIngestEnvelope(
     observation.offer.seller,
     safeObservedAt,
   ]);
+  // Keepa's Buy Box price type already includes shipping. The normalized
+  // observation therefore has no residual shipping to add.
   const historicalPrices = product.source === "amazon" && observation.offer.shipping?.amountMinor === 0
     ? observation.historicalPrices?.slice(0, 60).map((point) => ({
         provider: point.provider,
