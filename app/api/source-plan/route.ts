@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { alerts, collectionRuns, discoverySegments, inspectionRequests, purchases, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
-import { ACTIVE_SOURCE_IDS, isPartnerSourceAuthorized } from "@/lib/source-registry";
+import { ACTIVE_SOURCE_IDS, isPartnerSourceAuthorized, isPublicWebSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -39,10 +39,11 @@ function authorizedPartnerSources() {
   return typeof value === "string" ? value : undefined;
 }
 
-function effectiveCadence(cadenceMinutes: number, volatilityScore: number) {
-  if (volatilityScore >= 70) return Math.max(15, Math.floor(cadenceMinutes / 2));
-  if (volatilityScore <= 20) return Math.min(1_440, cadenceMinutes * 2);
-  return cadenceMinutes;
+function effectiveCadence(source: string, cadenceMinutes: number, volatilityScore: number) {
+  const adjusted = volatilityScore >= 70
+    ? Math.max(15, Math.floor(cadenceMinutes / 2))
+    : volatilityScore <= 20 ? Math.min(1_440, cadenceMinutes * 2) : cadenceMinutes;
+  return isPublicWebSource(source) ? Math.max(60, adjusted) : adjusted;
 }
 
 function categoryIds(value: string) {
@@ -137,7 +138,7 @@ export async function GET(request: Request) {
     const now = Date.now();
     const seen = new Set<string>();
     const items = rows.flatMap((row) => {
-      const cadenceMinutes = effectiveCadence(row.cadenceMinutes, row.volatilityScore);
+      const cadenceMinutes = effectiveCadence(row.source, row.cadenceMinutes, row.volatilityScore);
       const due = row.lastRunAt === null || now - Date.parse(row.lastRunAt) >= cadenceMinutes * 60_000;
       const probeOnly = row.circuitState === "open";
       const cooldownElapsed = row.cooldownUntil === null || Date.parse(row.cooldownUntil) <= now;

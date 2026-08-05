@@ -37,7 +37,7 @@ Ajouter aux variables serveur du Site :
 - `CF_ACCESS_TEAM_DOMAIN`, par exemple `votre-equipe.cloudflareaccess.com`
 - `CF_ACCESS_AUD`, l'audience de l'application Cloudflare Access
 - `ALERT_DELIVERY_MODE=shadow` pendant la recette
-- `AUTHORIZED_PARTNER_SOURCES` vide tant qu’aucun accord ou flux n’est validé
+- `AUTHORIZED_PARTNER_SOURCES` vide tant qu’aucun accès explicite n’est validé pour Castorama, Conforama ou Rue du Commerce
 
 Après redéploiement, `/api/health` doit répondre sans révéler les valeurs et
 afficher les capacités correspondantes à `true`.
@@ -76,17 +76,23 @@ depuis un poste d’administration.
 
 Les pages se gèrent désormais dans l’onglet **Pilotage**. `PRIXRADAR_RETAIL_URLS`
 reste un amorçage facultatif pour le premier déploiement. Utiliser des pages
-catégorie/recherche stables de Boulanger, Darty et Cdiscount, jamais des domaines
-non autorisés. Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du
-Commerce peuvent aussi être préparés dans le pilotage, mais restent bloqués tant
-que l’accord de collecte ou le flux partenaire n’est pas confirmé. Le collecteur
-récupère automatiquement le plan dû, découvre les fiches produit, puis effectue
-deux lectures avant ingestion.
+catégorie stables de Boulanger, Darty et Cdiscount, jamais des domaines non
+autorisés. Fnac, Carrefour et Leroy Merlin peuvent être amorcés avec leurs index
+ou catégories publics : le collecteur respecte `robots.txt`, refuse les parcours
+privés et transactionnels, puis effectue deux lectures avant ingestion.
+Castorama, Conforama et Rue du Commerce restent bloqués tant qu’un accès explicite
+ou un flux officiel n’est pas confirmé.
 
-Après validation explicite d’une enseigne partenaire seulement, ajouter son
+Pages d’amorçage publiques recommandées :
+
+- Fnac : `https://www.fnac.com/index/p/`
+- Carrefour : `https://www.carrefour.fr/edito/plan-du-site`
+- Leroy Merlin : `https://www.leroymerlin.fr/plan-de-site-produits.html`
+
+Après validation explicite d’une enseigne restreinte seulement, ajouter son
 identifiant à `AUTHORIZED_PARTNER_SOURCES` côté PWA et collecteur. Valeurs
-possibles : `fnac`, `carrefour`, `leroy_merlin`, `castorama`, `conforama` et
-`rueducommerce`. Une liste vide est le réglage sûr par défaut.
+possibles : `castorama`, `conforama` et `rueducommerce`. Une liste vide est le
+réglage sûr par défaut. Fnac, Carrefour et Leroy Merlin ne doivent pas y figurer.
 
 Commencer avec une page par enseigne. Élargir ensuite selon la consommation
 réelle et la stabilité des connecteurs ; plus d’URL ne signifie pas
@@ -113,7 +119,8 @@ Le plan doit montrer :
 - les segments Keepa EU5 récupérés depuis le pilotage, chacun avec un budget ;
 - 5 contrôles de page Amazon maximum par marché ;
 - les enseignes françaises regroupées toutes les 30 minutes ;
-- aucune des six sources partenaires dans le plan tant qu’elle n’est pas dans `AUTHORIZED_PARTNER_SOURCES` ;
+- aucune des trois sources restreintes dans le plan tant qu’elle n’est pas dans `AUTHORIZED_PARTNER_SOURCES` ;
+- Fnac, Carrefour et Leroy Merlin présents seulement avec une page publique approuvée et une cadence d’au moins 60 minutes ;
 - 1 024 Mo et 15 minutes maximum par exécution ;
 - notification e-mail activée en cas d’échec de planning.
 - le test quotidien des connecteurs à 6 h 17 ;

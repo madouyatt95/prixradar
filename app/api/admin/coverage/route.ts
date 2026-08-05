@@ -80,6 +80,7 @@ export async function GET(request: Request) {
         market,
         status: definition.status,
         registryStatus: definition.status,
+        accessMode: definition.accessMode,
         effectiveStatus,
         partnerAuthorized,
         liveStatus: liveStatus?.status ?? null,

@@ -29,17 +29,23 @@ Copier `.env.example` vers `.env`, puis charger les variables avec le mécanisme
 du déploiement ou `node --env-file=.env ...`. Ne jamais exposer ces variables à
 la PWA.
 
-### Autorisation des sources partenaires
+### Voies publiques et sources restreintes
 
-Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce disposent
-d'adaptateurs testés sur des fragments HTML locaux, mais tout accès réseau réel
-vers ces six sources est refusé par défaut, avant même la création d'une requête
-Crawlee ou Playwright. Le drapeau `--fixture` marque une sortie ; il n’autorise
-jamais le réseau partenaire. Une autorisation commerciale, contractuelle ou technique
-explicite doit d'abord être obtenue, puis déclarée uniquement côté serveur :
+Fnac, Carrefour et Leroy Merlin utilisent sans partenariat leurs fiches,
+catégories et pages d’index publiques approuvées. Crawlee applique `robots.txt` à
+chaque lecture. Ces trois voies refusent les proxys, les comptes, le panier, la
+commande et tout chemin non approuvé ; Playwright sert seulement à rendre une
+page publique JavaScript.
+
+Castorama, Conforama et Rue du Commerce disposent d'adaptateurs testés sur des
+fragments HTML locaux, mais tout accès réseau réel est refusé par défaut, avant
+même la création d'une requête Crawlee ou Playwright. Le drapeau `--fixture`
+marque une sortie ; il n’autorise jamais le réseau restreint. Une autorisation
+commerciale, contractuelle ou technique explicite doit d'abord être obtenue,
+puis déclarée uniquement côté serveur :
 
 ```text
-AUTHORIZED_PARTNER_SOURCES=fnac,carrefour,leroy_merlin,castorama,conforama,rueducommerce
+AUTHORIZED_PARTNER_SOURCES=castorama,conforama,rueducommerce
 ```
 
 La variable accepte seulement ces identifiants précis, sans joker. Elle ne vaut
@@ -88,14 +94,16 @@ est cohérente.
 ## Connecteurs et couverture
 
 Le registre `RETAIL_CONNECTORS` expose un `connectorId` et une `version` pour
-Boulanger, Darty, Cdiscount, les six enseignes partenaires et chacun des cinq
+Boulanger, Darty, Cdiscount, les trois voies publiques, les trois enseignes
+restreintes et chacun des cinq
 marchés Amazon. L'identifiant de variante attendu provient exclusivement de
 l'URL demandée; l'identifiant observé provient du DOM marchand ou du lien
 canonical rendu. Un snapshot ancien sans ces deux preuves reste non certifié au
 lieu de recevoir deux valeurs de repli artificiellement égales. La présence
-d'un connecteur partenaire dans ce registre ne l'active jamais en production :
-le garde-fou `AUTHORIZED_PARTNER_SOURCES` reste appliqué par la CLI, le worker
-et l'Actor.
+d'un connecteur restreint dans ce registre ne l'active jamais en production : le
+garde-fou `AUTHORIZED_PARTNER_SOURCES` reste appliqué par la CLI, le worker et
+l'Actor. Les voies publiques restent soumises à leur allowlist de chemins et au
+`robots.txt` courant.
 
 La découverte renvoie séparément `discoveredUrls` et `nextPageUrl`. Une page
 suivante doit rester sur le même connecteur, utiliser un paramètre de pagination
@@ -134,10 +142,10 @@ Le packaging `.actor/` accepte `source`, `market`, `markets`, `urls`, `mode`, le
 seuils Keepa et la limite de contrôles directs. Depuis ce
 dossier, `apify push` utilise le Dockerfile du collecteur. Le mode `fixture`
 marque chaque résultat et refuse explicitement `notify=true`; les deux couches
-sink et push refusent aussi toute fixture. Le sélecteur Actor affiche les six
-sources partenaires, mais leur sélection ne remplace pas l'autorisation serveur
-`AUTHORIZED_PARTNER_SOURCES` et une exécution directe non autorisée échoue avant
-toute requête marchande.
+sink et push refusent aussi toute fixture. Le sélecteur Actor affiche toutes les
+sources, mais Castorama, Conforama et Rue du Commerce exigent toujours
+`AUTHORIZED_PARTNER_SOURCES` ; Fnac, Carrefour et Leroy Merlin restent limités
+aux pages publiques approuvées et à `robots.txt`.
 
 Le plan d’automatisation est lisible sans compte ni clé :
 

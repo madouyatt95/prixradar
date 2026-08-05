@@ -10,7 +10,11 @@ test("the public coverage registry matches the deployed collector contract", () 
   const collectorVersion = collectorRegistry.match(/CONNECTOR_REGISTRY_VERSION = "([^"]+)"/)?.[1];
   assert.equal(applicationVersion, collectorVersion);
   assert.match(applicationRegistry, /id: "amazon"[\s\S]*?markets: \["FR", "DE", "IT", "ES", "GB"\]/);
-  for (const source of ["fnac", "carrefour", "leroy_merlin", "castorama", "conforama", "rueducommerce"]) {
+  for (const source of ["fnac", "carrefour", "leroy_merlin"]) {
+    assert.match(applicationRegistry, new RegExp(`id: "${source}"[^\\n]*status: "active"[^\\n]*accessMode: "public_web"`));
+    assert.match(collectorRegistry, new RegExp(`source: "${source}"`));
+  }
+  for (const source of ["castorama", "conforama", "rueducommerce"]) {
     assert.match(applicationRegistry, new RegExp(`id: "${source}"[^\\n]*status: "partner_required"`));
     assert.match(collectorRegistry, new RegExp(`source: "${source}"`));
   }

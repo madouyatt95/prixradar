@@ -24,18 +24,23 @@ export const RETAIL_SOURCES = [
 ] as const satisfies readonly RetailSource[];
 
 export const PARTNER_RETAIL_SOURCES = [
-  "fnac",
-  "carrefour",
-  "leroy_merlin",
   "castorama",
   "conforama",
   "rueducommerce",
 ] as const satisfies readonly RetailSource[];
 
+export const PUBLIC_WEB_RETAIL_SOURCES = [
+  "fnac",
+  "carrefour",
+  "leroy_merlin",
+] as const satisfies readonly RetailSource[];
+
 export type PartnerRetailSource = (typeof PARTNER_RETAIL_SOURCES)[number];
+export type PublicWebRetailSource = (typeof PUBLIC_WEB_RETAIL_SOURCES)[number];
 
 const RETAIL_SOURCE_IDS = new Set<string>(RETAIL_SOURCES);
 const PARTNER_RETAIL_SOURCE_IDS = new Set<string>(PARTNER_RETAIL_SOURCES);
+const PUBLIC_WEB_RETAIL_SOURCE_IDS = new Set<string>(PUBLIC_WEB_RETAIL_SOURCES);
 
 export function isRetailSource(value: unknown): value is RetailSource {
   return typeof value === "string" && RETAIL_SOURCE_IDS.has(value);
@@ -43,6 +48,10 @@ export function isRetailSource(value: unknown): value is RetailSource {
 
 export function isPartnerRetailSource(value: unknown): value is PartnerRetailSource {
   return typeof value === "string" && PARTNER_RETAIL_SOURCE_IDS.has(value);
+}
+
+export function isPublicWebRetailSource(value: unknown): value is PublicWebRetailSource {
+  return typeof value === "string" && PUBLIC_WEB_RETAIL_SOURCE_IDS.has(value);
 }
 
 export type Market = "FR" | "DE" | "IT" | "ES" | "GB";

@@ -553,12 +553,12 @@ const FRENCH_SOURCE_COVERAGE = [
   { id: "boulanger", mark: "B", name: "Boulanger", detail: "France · catalogue + contrôle page", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Flux partenaire prioritaire, navigateur uniquement en repli" },
   { id: "darty", mark: "D", name: "Darty", detail: "France · catalogue + contrôle page", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Référence exacte, vendeur et frais de livraison normalisés" },
   { id: "cdiscount", mark: "C", name: "Cdiscount", detail: "France · marketplace", fallbackStatus: "En attente d’activation", fallbackTone: "prepared", method: "Vendeurs tiers séparés, score de fiabilité renforcé" },
-  { id: "fnac", mark: "FN", name: "Fnac", detail: "France · marketplace et offres adhérents", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation de collecte ou flux partenaire requis ; prix public séparé des avantages adhérents" },
-  { id: "carrefour", mark: "CF", name: "Carrefour", detail: "France · prix et stock selon le magasin", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; carte fidélité et disponibilité locale restent séparées" },
-  { id: "leroy_merlin", mark: "LM", name: "Leroy Merlin", detail: "France · livraison et retrait localisés", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; prix, stock et retrait sont revérifiés pour la zone choisie" },
-  { id: "castorama", mark: "CA", name: "Castorama", detail: "France · livraison et retrait localisés", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; aucun prix local n’est généralisé à toute la France" },
-  { id: "conforama", mark: "CO", name: "Conforama", detail: "France · stock magasin et livraison", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; disponibilité et coût de livraison sont contrôlés séparément" },
-  { id: "rueducommerce", mark: "RDC", name: "Rue du Commerce", detail: "France · marketplace", fallbackStatus: "Accès partenaire requis", fallbackTone: "pending", method: "Autorisation ou flux partenaire requis ; vendeur tiers, état et total livré restent explicites" },
+  { id: "fnac", mark: "FN", name: "Fnac", detail: "France · marketplace et offres adhérents", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Index et fiches publics avec robots.txt respecté ; prix public séparé des avantages adhérents" },
+  { id: "carrefour", mark: "CF", name: "Carrefour", detail: "France · prix et stock selon le magasin", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Catégories et fiches publiques ; aucune alerte tant que prix, fidélité et zone ne sont pas distingués" },
+  { id: "leroy_merlin", mark: "LM", name: "Leroy Merlin", detail: "France · livraison et retrait localisés", fallbackStatus: "Collecte publique prête", fallbackTone: "prepared", method: "Index et fiches publics ; prix, stock et retrait restent soumis à la zone choisie" },
+  { id: "castorama", mark: "CA", name: "Castorama", detail: "France · livraison et retrait localisés", fallbackStatus: "Accès explicite requis", fallbackTone: "pending", method: "La politique robots vise les outils de veille de prix : aucun contournement automatique" },
+  { id: "conforama", mark: "CO", name: "Conforama", detail: "France · stock magasin et livraison", fallbackStatus: "Accès explicite requis", fallbackTone: "pending", method: "Le robots.txt public bloque les robots génériques : collecte directe désactivée" },
+  { id: "rueducommerce", mark: "RDC", name: "Rue du Commerce", detail: "France · marketplace", fallbackStatus: "Accès explicite requis", fallbackTone: "pending", method: "Les fiches produit signalent une restriction robots : collecte directe désactivée" },
 ] as const;
 
 function money(value: number, currency: "EUR" | "GBP" = "EUR") {
@@ -2522,8 +2522,9 @@ function SourcesView({
           <h2>9 enseignes prises en charge</h2>
           <p>
             Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
-            rejoignent Boulanger, Darty et Cdiscount. Une source devient active uniquement
-            après autorisation, raccordement du flux et premier contrôle réussi.
+            rejoignent Boulanger, Darty et Cdiscount. Fnac, Carrefour et Leroy Merlin
+            utilisent leurs pages publiques ; les trois autres restent restreintes.
+            Une source devient active uniquement après un premier contrôle réussi.
           </p>
         </div>
         <div className="market-badges" aria-label="Enseignes françaises prises en charge">

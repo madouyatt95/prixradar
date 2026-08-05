@@ -42,10 +42,11 @@ test("shows the six additional French retailers without claiming they are live",
     assert.match(application, new RegExp(merchant));
     assert.match(admin, new RegExp(merchant));
   }
-  assert.match(application, /Accès partenaire requis/);
+  assert.match(application, /Collecte publique prête/);
+  assert.match(application, /Accès explicite requis/);
   assert.match(application, /premier contrôle réussi/);
   assert.match(application, /sources: preferredSources/);
-  assert.match(admin, /l’activation exige ensuite un contrôle récent réussi/);
+  assert.match(admin, /Toute activation exige ensuite un contrôle récent réussi/);
   assert.doesNotMatch(`${application}${admin}`, /pilotage à finaliser|prêt côté code|\bbientôt\b|\brecette\b/i);
   assert.doesNotMatch(application, /sur 4 enseignes \+ Amazon/);
 });

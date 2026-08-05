@@ -53,7 +53,7 @@ export interface RetailConnector {
   };
 }
 
-export const CONNECTOR_REGISTRY_VERSION = "2026.07.2";
+export const CONNECTOR_REGISTRY_VERSION = "2026.08.1";
 
 const BOULANGER: RetailConnector = {
   connectorId: "boulanger-fr",

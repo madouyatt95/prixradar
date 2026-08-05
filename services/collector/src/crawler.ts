@@ -17,8 +17,10 @@ import {
 import { verifyWithSecondRead } from "./verify.js";
 import {
   isPartnerRetailSource,
+  isPublicWebRetailSource,
   type OfferSnapshot,
   type PartnerRetailSource,
+  type PublicWebRetailSource,
   type VerifiedObservation,
 } from "./types.js";
 import { parseMoneyMinor } from "./normalize.js";
@@ -212,17 +214,55 @@ export class PartnerSourceAuthorizationError extends Error {
   }
 }
 
+export class PublicWebPolicyError extends Error {
+  override name = "PublicWebPolicyError";
+
+  constructor(readonly source: PublicWebRetailSource, message: string) {
+    super(`Collecte web publique ${source} refusée: ${message}`);
+  }
+}
+
+const PRIVATE_OR_TRANSACTION_PATH = /\/(?:account|auth|basket|cart|checkout|commande|compte|connexion|login|order|paiement|payment|panier|wishlist)(?:\/|$)/iu;
+
+function publicWebPathAllowed(source: PublicWebRetailSource, url: URL): boolean {
+  if (PRIVATE_OR_TRANSACTION_PATH.test(url.pathname)) return false;
+  if (source === "fnac") {
+    return /(?:^\/index\/p(?:\/|$)|^\/navigation\/plan\.aspx$|\/a\d+(?:\/|$)|\/(?:s|sh)\d+(?:\/|$)|\/w-\d+(?:\/|$))/iu.test(url.pathname);
+  }
+  if (source === "carrefour") {
+    if (/^\/(?:b|g)(?:\/|$)/iu.test(url.pathname)) return false;
+    return /^\/(?:p|r)(?:\/|$)/iu.test(url.pathname) || /^\/edito\/plan-du-site\/?$/iu.test(url.pathname);
+  }
+  return /^\/produits(?:\/|$)/iu.test(url.pathname) || /^\/plan-de-site-produits\.html$/iu.test(url.pathname);
+}
+
+export function assertPublicWebScanAllowed(url: string, options: ScanOptions = {}): void {
+  const connector = connectorForUrl(url);
+  if (!isPublicWebRetailSource(connector.source)) return;
+  if (options.proxyUrls?.some((entry) => entry.trim())) {
+    throw new PublicWebPolicyError(connector.source, "les proxys de contournement sont désactivés pour cette voie");
+  }
+  if (options.shadowCart) {
+    throw new PublicWebPolicyError(connector.source, "le panier et les parcours transactionnels ne sont pas utilisés sans accord");
+  }
+  if (!publicWebPathAllowed(connector.source, new URL(url))) {
+    throw new PublicWebPolicyError(connector.source, "seules les fiches, catégories et pages d’index publiques approuvées sont admises");
+  }
+}
+
 /**
- * Refuses partner traffic before Crawlee or Playwright can create a request.
- * The `fixture` flag only labels results and therefore never grants network
- * access. Deterministic merchant fixtures must be injected into extractor
- * tests without calling this network scanner.
+ * Applies the source access policy before Crawlee or Playwright can create a
+ * request. The `fixture` flag only labels results and therefore never grants
+ * network access. Deterministic merchant fixtures must be injected into
+ * extractor tests without calling this network scanner.
  */
 export function assertSourceScanAuthorized(url: string, options: ScanOptions = {}): void {
   const connector = connectorForUrl(url);
-  if (!isPartnerRetailSource(connector.source)) return;
-  if (options.authorizedPartnerSources?.includes(connector.source)) return;
-  throw new PartnerSourceAuthorizationError(connector.source);
+  if (isPartnerRetailSource(connector.source)) {
+    if (options.authorizedPartnerSources?.includes(connector.source)) return;
+    throw new PartnerSourceAuthorizationError(connector.source);
+  }
+  assertPublicWebScanAllowed(url, options);
 }
 
 log.setLevel(LogLevel.ERROR);
@@ -278,7 +318,11 @@ async function scanHttp(url: string, options: ScanOptions): Promise<ScanResult> 
     navigationTimeoutSecs: Math.ceil((options.timeoutMs ?? 15_000) / 1_000),
     useSessionPool: true,
     persistCookiesPerSession: true,
+    respectRobotsTxtFile: true,
     ...(proxies ? { proxyConfiguration: proxies } : {}),
+    onSkippedRequest: async ({ reason }) => {
+      if (reason === "robotsTxt") failureMessage = "ROBOTS_TXT_DISALLOWED: URL refusée par la politique publique de l’enseigne.";
+    },
     requestHandler: async ({ $, request, response }) => {
       const loadedUrl = request.loadedUrl ?? request.url;
       result = analyzeHtml($.html(), url, loadedUrl, "http", response?.statusCode ?? null, options);
@@ -308,7 +352,11 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
     navigationTimeoutSecs: Math.ceil((options.timeoutMs ?? 30_000) / 1_000),
     useSessionPool: true,
     persistCookiesPerSession: true,
+    respectRobotsTxtFile: true,
     ...(proxies ? { proxyConfiguration: proxies } : {}),
+    onSkippedRequest: async ({ reason }) => {
+      if (reason === "robotsTxt") failureMessage = "ROBOTS_TXT_DISALLOWED: URL refusée par la politique publique de l’enseigne.";
+    },
     requestHandler: async ({ page, request, response }) => {
       await page.waitForLoadState("domcontentloaded");
       const loadedUrl = request.loadedUrl ?? page.url() ?? request.url;

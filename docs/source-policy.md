@@ -11,18 +11,21 @@ source depuis le centre de pilotage.
 - Boulanger : `boulanger.com`
 - Darty : `darty.com`
 - Cdiscount : `cdiscount.com`
-- Fnac : `fnac.com` — connecteur prêt, autorisation ou flux partenaire requis
-- Carrefour : `carrefour.fr` — connecteur prêt, autorisation ou flux partenaire requis
-- Leroy Merlin : `leroymerlin.fr` — connecteur prêt, autorisation ou flux partenaire requis
-- Castorama : `castorama.fr` — connecteur prêt, autorisation ou flux partenaire requis
-- Conforama : `conforama.fr` — connecteur prêt, autorisation ou flux partenaire requis
-- Rue du Commerce : `rueducommerce.fr` — connecteur prêt, autorisation ou flux partenaire requis
+- Fnac : `fnac.com` — index, catégories et fiches publiques ; cadence limitée
+- Carrefour : `carrefour.fr` — plan, catégories et fiches publiques ; prix localisés
+- Leroy Merlin : `leroymerlin.fr` — index, catégories et fiches publiques ; prix localisés
+- Castorama : `castorama.fr` — accès explicite requis : `robots.txt` vise les outils de veille de prix
+- Conforama : `conforama.fr` — accès explicite requis : le robot générique est interdit
+- Rue du Commerce : `rueducommerce.fr` — accès explicite requis : les fiches automatiques rencontrent une restriction `robots.txt`
 
 La présence d’un domaine dans cette liste autorise uniquement sa validation
-technique. Fnac, Carrefour, Leroy Merlin, Castorama, Conforama et Rue du Commerce
-restent verrouillés tant qu’une autorisation de collecte ou un flux partenaire
-n’est pas enregistré côté serveur. Aucun de ces connecteurs ne peut être déclaré
-LIVE sur la seule réussite d’un build ou d’un test sur fixture.
+technique. Fnac, Carrefour et Leroy Merlin peuvent fonctionner sans partenariat,
+mais seulement sur les chemins publics approuvés. Le collecteur respecte
+`robots.txt`, refuse les proxys de contournement et ne visite ni compte, ni panier,
+ni commande. Castorama, Conforama et Rue du Commerce restent verrouillés tant
+qu’une autorisation explicite ou un flux officiel n’est pas enregistré côté
+serveur. Aucun connecteur ne peut être déclaré LIVE sur la seule réussite d’un
+build ou d’un test sur fixture.
 
 ## Indice interne et panier fantôme
 
@@ -45,10 +48,12 @@ Les liens découverts alimentent une frontière persistante : priorité plus for
 après une anomalie, plus faible après des doublons ou un blocage, et coupe-circuit
 immédiat si une protection anti-bot se déclenche.
 
-Pour les enseignes à accès partenaire requis, la page ne peut être activée
-qu’après validation de l’autorisation ou du flux. Le premier passage reste en
-recette sans notification ; seul un rapport `live` sain et récent permet ensuite
-l’affichage « Actif ».
+Pour les trois voies publiques, seules les fiches, catégories et pages d’index
+approuvées sont acceptées. La cadence ne peut pas descendre sous 60 minutes, et
+le panier fantôme est désactivé sans accord. Le premier passage reste en recette
+sans notification ; seul un rapport `live` sain et récent permet ensuite
+l’affichage « Actif ». Pour les enseignes à accès explicite requis, la page ne
+peut être activée qu’après validation de l’autorisation ou du flux.
 
 ## Données et preuve
 

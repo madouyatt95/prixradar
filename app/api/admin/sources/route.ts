@@ -5,9 +5,11 @@ import { sourceConfigurations } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
 import { runtimeEnv as env } from "@/lib/runtime-env";
 import {
+  isApprovedPublicWebUrl,
   isActiveSource,
   isPartnerRequiredSource,
   isPartnerSourceAuthorized,
+  isPublicWebSource,
   sourceDefinition,
 } from "@/lib/source-registry";
 
@@ -50,8 +52,15 @@ function discoveryUrl(source: string, value: unknown) {
   if (url.protocol !== "https:" || url.username || url.password || !definition?.hosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
     throw new Error("L’URL ne correspond pas à la source déclarée.");
   }
+  if (!isApprovedPublicWebUrl(source, url)) {
+    throw new Error("Cette voie publique accepte uniquement une fiche produit, une catégorie ou l’index officiel de l’enseigne.");
+  }
   url.hash = "";
   return url.toString();
+}
+
+function cadence(source: string, value: unknown, fallback: number) {
+  return integer(value, "cadenceMinutes", isPublicWebSource(source) ? 60 : 15, 1_440, fallback);
 }
 
 function integer(value: unknown, field: string, min: number, max: number, fallback: number) {
@@ -120,7 +129,7 @@ export async function POST(request: Request) {
       discoveryStrategy: discoveryStrategy(body.discoveryStrategy),
       estimatedProductCount: optionalPositiveInteger(body.estimatedProductCount, "estimatedProductCount"),
       enabled,
-      cadenceMinutes: integer(body.cadenceMinutes, "cadenceMinutes", 15, 1_440, 60),
+      cadenceMinutes: cadence(source, body.cadenceMinutes, isPublicWebSource(source) ? 240 : 60),
       volatilityScore: integer(body.volatilityScore, "volatilityScore", 0, 100, 50),
       dailyProductBudget: integer(body.dailyProductBudget, "dailyProductBudget", 1, 100_000, 500),
       pausedReason: enabled
@@ -174,7 +183,7 @@ export async function PATCH(request: Request) {
       patch.enabled = body.enabled;
       patch.pausedReason = body.enabled ? null : text(body.pausedReason ?? "Suspendue depuis le centre de pilotage", "pausedReason", 240);
     }
-    if (body.cadenceMinutes !== undefined) patch.cadenceMinutes = integer(body.cadenceMinutes, "cadenceMinutes", 15, 1_440, 60);
+    if (body.cadenceMinutes !== undefined) patch.cadenceMinutes = cadence(existing.source, body.cadenceMinutes, isPublicWebSource(existing.source) ? 240 : 60);
     if (body.volatilityScore !== undefined) patch.volatilityScore = integer(body.volatilityScore, "volatilityScore", 0, 100, 50);
     if (body.dailyProductBudget !== undefined) patch.dailyProductBudget = integer(body.dailyProductBudget, "dailyProductBudget", 1, 100_000, 500);
     if (body.category !== undefined) patch.category = text(body.category, "category", 80);

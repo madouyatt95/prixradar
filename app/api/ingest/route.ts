@@ -50,7 +50,7 @@ import {
 } from "@/lib/delivery";
 import { resolveCanonicalProduct } from "@/lib/product-identity";
 import { parseCoverageProductUrl, parseMerchantUrl } from "@/lib/merchant-url";
-import { isActiveSource, isPartnerSourceAuthorized, type ActiveSourceId } from "@/lib/source-registry";
+import { isActiveSource, isPartnerSourceAuthorized, isPublicWebSource, type ActiveSourceId } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -1120,11 +1120,14 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
   }).where(matchingInspectionIds.length > 0
     ? inArray(inspectionRequests.id, matchingInspectionIds)
     : eq(inspectionRequests.url, parsed.url));
+  const nextScanMinutes = isPublicWebSource(envelope.source)
+    ? origin.actionable ? 60 : 240
+    : origin.actionable ? 15 : 180;
   const updateFrontier = database.update(sentinelFrontier).set({
     status: shadowCart.status === "blocked" ? "blocked" : "active",
     lastSeenAt: now,
     lastScannedAt: now,
-    nextScanAt: new Date(Date.parse(now) + (origin.actionable ? 15 : 180) * 60_000).toISOString(),
+    nextScanAt: new Date(Date.parse(now) + nextScanMinutes * 60_000).toISOString(),
     priority: sentinelPriority({ depth: 0, anomalyHits: origin.actionable ? 1 : 0, duplicates: 0, blocked: shadowCart.status === "blocked", ageMinutes: 0 }),
     hits: sql`${sentinelFrontier.hits} + ${origin.actionable ? 1 : 0}`,
     updatedAt: now,
