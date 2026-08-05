@@ -39,12 +39,19 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
           brand: "Fixture",
           buyBoxIsAmazon: true,
           stats: {
-            current: [5000, -1, -1, -1, 9000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-            avg90: [10000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+            current: [5000, -1, -1, -1, 9000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 5000],
+            avg90: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10000],
           },
-          csv: [
-            [8_000_000, 10_000, 8_030_000, 10_500, 8_060_000, 9_900, 8_090_000, 10_200, 8_120_000, 9_800, 8_150_000, 10_100],
-          ],
+          csv: Array.from({ length: 19 }, (_, index) => index === 18
+            ? [
+                8_000_000, 9_500, 500,
+                8_030_000, 10_000, 500,
+                8_060_000, 9_400, 500,
+                8_090_000, 9_700, 500,
+                8_120_000, 9_300, 500,
+                8_150_000, 9_600, 500,
+              ]
+            : null),
         }],
       });
     },
@@ -58,11 +65,16 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   });
   assert.deepEqual(paths, ["/deal", "/product"]);
   assert.equal(observations[0]?.offer.price.amountMinor, 5_000);
-  assert.equal(observations[0]?.offer.total, null);
+  assert.equal(observations[0]?.offer.shipping?.amountMinor, 0);
+  assert.equal(observations[0]?.offer.total?.amountMinor, 5_000);
   assert.equal(observations[0]?.offer.sellerTrusted, true);
   assert.equal(observations[0]?.offer.referencePrice?.amountMinor, 10_000);
   assert.equal(observations[0]?.offer.fixture, true);
   assert.equal(observations[0]?.historicalPrices?.length, 6);
+  assert.deepEqual(
+    observations[0]?.historicalPrices?.map((point) => point.priceMinor),
+    [10_100, 9_800, 10_200, 9_900, 10_500, 10_000],
+  );
   assert.equal(client.quota.tokensLeft, 10);
   assert.deepEqual(dealSelection.includeCategories, [172282]);
   assert.deepEqual(dealSelection.priceTypes, [18]);
