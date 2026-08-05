@@ -3,7 +3,7 @@
   "name": "prixradar-collector",
   "title": "PrixRadar Collector",
   "description": "Discovery et vérification de prix sur Amazon Europe, les enseignes directes et les sources partenaires explicitement autorisées.",
-  "version": "0.7.0",
+  "version": "0.9.0",
   "buildTag": "latest",
   "dockerfile": "../Dockerfile",
   "readme": "../README.md",
