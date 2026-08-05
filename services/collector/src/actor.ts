@@ -250,40 +250,69 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const seenProductUrls = new Set<string>();
     for (const task of plan.priorityTasks) {
       if (seenProductUrls.has(task.url)) continue;
-      const observation = await verifySourceUrl(task.url, {
-        ...scanOptions,
-        shadowCart: task.shadowCart,
-        verifyDelayMs: config.verifyDelayMs,
-      });
-      if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
-      seenProductUrls.add(task.url);
-      let protectionPush: unknown = null;
-      if (task.kind === "purchase" && !fixture && config.priceRadarBaseUrl && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
-        try {
-          protectionPush = await sendProtectionPush(task.id, {
-            baseUrl: config.priceRadarBaseUrl,
-            deliverySecret: config.pushDeliverySecret,
-            ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
-            vapidSubject: config.vapidSubject,
-            vapidPublicKey: config.vapidPublicKey,
-            vapidPrivateKey: config.vapidPrivateKey,
-            timeoutMs: config.httpTimeoutMs,
-          });
-        } catch (error) {
-          protectionPush = { error: error instanceof Error ? error.message : "PUSH_PROTECTION_FAILED" };
+      try {
+        const observation = await verifySourceUrl(task.url, {
+          ...scanOptions,
+          shadowCart: task.shadowCart,
+          verifyDelayMs: config.verifyDelayMs,
+        });
+        if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
+        seenProductUrls.add(task.url);
+        let protectionPush: unknown = null;
+        if (task.kind === "purchase" && !fixture && config.priceRadarBaseUrl && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
+          try {
+            protectionPush = await sendProtectionPush(task.id, {
+              baseUrl: config.priceRadarBaseUrl,
+              deliverySecret: config.pushDeliverySecret,
+              ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+              vapidSubject: config.vapidSubject,
+              vapidPublicKey: config.vapidPublicKey,
+              vapidPrivateKey: config.vapidPrivateKey,
+              timeoutMs: config.httpTimeoutMs,
+            });
+          } catch (error) {
+            protectionPush = { error: error instanceof Error ? error.message : "PUSH_PROTECTION_FAILED" };
+          }
         }
+        await Actor.pushData({ dataKind: `autonomous-${task.kind}`, requestId: task.id, protectionPush, ...observation });
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        await Actor.pushData({
+          dataKind: `autonomous-${task.kind}-failure`,
+          requestId: task.id,
+          source: task.source,
+          market: task.market,
+          url: task.url,
+          errorCode: /(?:403|429|captcha|blocked|access denied|robot)/u.test(message)
+            ? "ANTI_BOT_BLOCKED"
+            : "PRODUCT_VERIFICATION_FAILED",
+        });
       }
-      await Actor.pushData({ dataKind: `autonomous-${task.kind}`, requestId: task.id, protectionPush, ...observation });
     }
     for (const recheck of plan.rechecks) {
-      const observation = await verifySourceUrl(recheck.url, {
-        ...scanOptions,
-        verifyDelayMs: config.verifyDelayMs,
-        shadowCart: input.shadowCart ?? true,
-      });
-      if (!fixture) await deliverObservation(observation, config, { allowPush: false });
-      seenProductUrls.add(recheck.url);
-      await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
+      try {
+        const observation = await verifySourceUrl(recheck.url, {
+          ...scanOptions,
+          verifyDelayMs: config.verifyDelayMs,
+          shadowCart: input.shadowCart ?? true,
+        });
+        if (!fixture) await deliverObservation(observation, config, { allowPush: false });
+        seenProductUrls.add(recheck.url);
+        await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        await Actor.pushData({
+          dataKind: "on-demand-recheck-failure",
+          requestId: recheck.id,
+          alertId: recheck.alertId,
+          source: recheck.source,
+          market: recheck.market,
+          url: recheck.url,
+          errorCode: /(?:403|429|captcha|blocked|access denied|robot)/u.test(message)
+            ? "ANTI_BOT_BLOCKED"
+            : "PRODUCT_VERIFICATION_FAILED",
+        });
+      }
     }
     for (const scan of plan.eanScans) {
       const found = new Set<string>();
