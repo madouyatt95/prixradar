@@ -357,7 +357,7 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
     requestHandlerTimeoutSecs: Math.ceil((options.timeoutMs ?? 30_000) / 1_000),
     navigationTimeoutSecs: Math.ceil((options.timeoutMs ?? 30_000) / 1_000),
     preNavigationHooks: [async (_context, gotoOptions) => {
-      gotoOptions.waitUntil = "domcontentloaded";
+      gotoOptions.waitUntil = "commit";
     }],
     useSessionPool: true,
     persistCookiesPerSession: true,
@@ -367,7 +367,7 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
       if (reason === "robotsTxt") failureMessage = "ROBOTS_TXT_DISALLOWED: URL refusée par la politique publique de l’enseigne.";
     },
     requestHandler: async ({ page, request, response }) => {
-      await page.waitForLoadState("domcontentloaded");
+      await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined);
       const loadedUrl = request.loadedUrl ?? page.url() ?? request.url;
       const analyzed = analyzeHtml(await page.content(), url, loadedUrl, "browser", response?.status() ?? null, options);
       if (options.shadowCart && analyzed.offers[0]) {
