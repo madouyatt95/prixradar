@@ -180,7 +180,7 @@ export interface VerifiedObservation {
   offer: OfferSnapshot;
   verification: VerificationEvidence;
   anomaly: AnomalyScore;
-  /** Bounded, provider-authenticated history. It is only ingested when shipping is explicitly free. */
+  /** Bounded, provider-authenticated history expressed as landed totals. */
   historicalPrices?: TrustedHistoricalPrice[];
 }
 
