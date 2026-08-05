@@ -141,3 +141,24 @@ test("les erreurs Keepa n’exposent jamais la clé", async () => {
     return true;
   });
 });
+
+test("attend puis retente une fois lorsque Keepa renvoie un quota 429", async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const client = new KeepaClient({
+    apiKey: "KEEPA_SECRET_TEST",
+    maxQuotaWaitMs: 2_000,
+    sleep: async (milliseconds) => { waits.push(milliseconds); },
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(null, { status: 429, headers: { "retry-after": "1" } });
+      }
+      return Response.json({ tokensLeft: 10, refillIn: 1_000, refillRate: 5, deals: { dr: [] } });
+    },
+  });
+
+  assert.deepEqual(await client.deals("FR"), []);
+  assert.equal(calls, 2);
+  assert.deepEqual(waits, [1_025]);
+});
