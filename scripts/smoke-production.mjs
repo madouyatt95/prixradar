@@ -16,7 +16,10 @@ const checks = [
     validate: async (response) => {
       if (!response.ok) return false;
       const manifest = await response.json();
-      return manifest.name === "PrixRadar" && manifest.display === "standalone";
+      return manifest.short_name === "PrixRadar"
+        && typeof manifest.name === "string"
+        && manifest.name.startsWith("PrixRadar")
+        && manifest.display === "standalone";
     },
     label: "manifeste PWA",
   },
