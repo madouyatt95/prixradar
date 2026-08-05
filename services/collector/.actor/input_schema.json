@@ -39,20 +39,7 @@
       "type": "array",
       "description": "Pages produit, catégorie ou recherche d'un connecteur déclaré. Une URL partenaire en mode direct exige aussi son autorisation serveur.",
       "editor": "requestListSources",
-      "default": [],
-      "items": {
-        "type": "object",
-        "required": ["url"],
-        "properties": {
-          "url": {
-            "title": "URL",
-            "type": "string",
-            "description": "Page produit, catégorie ou recherche à analyser.",
-            "editor": "textfield",
-            "format": "uri"
-          }
-        }
-      }
+      "default": []
     },
     "mode": {
       "title": "Mode",
