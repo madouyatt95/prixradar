@@ -166,25 +166,31 @@ function normalizeDeals(payload: JsonRecord): KeepaDeal[] {
   return deals;
 }
 
-function historyLast(value: unknown): number | null {
+function buyBoxHistoryLast(value: unknown): number | null {
   if (!Array.isArray(value)) return null;
-  for (let index = value.length - 1; index >= 1; index -= 2) {
-    const price = keepaPrice(value[index]);
-    if (price !== null) return price;
+  for (let index = value.length - 3; index >= 0; index -= 3) {
+    const price = keepaPrice(value[index + 1]);
+    const shipping = nonNegative(value[index + 2]);
+    if (price !== null && shipping !== null) return Math.round(price + shipping);
   }
   return null;
 }
 
-function normalizeHistory(value: unknown, asin: string, observedAt: string): TrustedHistoricalPrice[] {
+function normalizeBuyBoxHistory(value: unknown, asin: string, observedAt: string): TrustedHistoricalPrice[] {
   if (!Array.isArray(value)) return [];
   const currentTimestamp = Date.parse(observedAt);
   const minimumTimestamp = currentTimestamp - 180 * 86_400_000;
   const history: TrustedHistoricalPrice[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index + 1 < value.length; index += 2) {
+  // Keepa CSV index 18 is encoded as [time, item price, shipping]. The
+  // application stores the landed total so the current value and its history
+  // remain comparable across Amazon Europe.
+  for (let index = 0; index + 2 < value.length; index += 3) {
     const pointObservedAt = keepaTime(value[index]);
-    const priceMinor = keepaPrice(value[index + 1]);
-    if (!pointObservedAt || priceMinor === null) continue;
+    const itemMinor = keepaPrice(value[index + 1]);
+    const shippingMinor = nonNegative(value[index + 2]);
+    if (!pointObservedAt || itemMinor === null || shippingMinor === null) continue;
+    const priceMinor = Math.round(itemMinor + shippingMinor);
     const timestamp = Date.parse(pointObservedAt);
     if (timestamp >= currentTimestamp || timestamp < minimumTimestamp) continue;
     const rawHash = stableHash(["keepa", asin, pointObservedAt, priceMinor]);
@@ -204,22 +210,17 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
   const stats = isRecord(raw.stats) ? raw.stats : null;
   const csv = Array.isArray(raw.csv) ? raw.csv : [];
   const current = stats?.current;
+  // stats.current[18] is Keepa's Buy Box price including shipping. Do not
+  // fall back to price types whose shipping component is unknown.
   const currentMinor = arrayPrice(current, PRICE_INDEXES.buyBox)
-    ?? arrayPrice(current, PRICE_INDEXES.amazon)
-    ?? arrayPrice(current, PRICE_INDEXES.new)
-    ?? historyLast(csv[PRICE_INDEXES.buyBox])
-    ?? historyLast(csv[PRICE_INDEXES.amazon])
-    ?? historyLast(csv[PRICE_INDEXES.new]);
+    ?? buyBoxHistoryLast(csv[PRICE_INDEXES.buyBox]);
   if (currentMinor === null) return null;
 
   const avg90 = stats?.avg90;
   const referenceMinor = arrayPrice(avg90, PRICE_INDEXES.buyBox)
-    ?? arrayPrice(avg90, PRICE_INDEXES.amazon)
-    ?? arrayPrice(avg90, PRICE_INDEXES.new)
     ?? arrayPrice(current, PRICE_INDEXES.list);
   const imageName = text(raw.imagesCSV ?? raw.imageCSV)?.split(",")[0]?.trim() ?? null;
-  const historySeries = [csv[PRICE_INDEXES.buyBox], csv[PRICE_INDEXES.amazon], csv[PRICE_INDEXES.new]]
-    .find((series) => Array.isArray(series) && series.length >= 2);
+  const historySeries = csv[PRICE_INDEXES.buyBox];
 
   return {
     asin,
@@ -235,7 +236,7 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
     market,
     observedAt,
     buyBoxIsAmazon: raw.buyBoxIsAmazon === true,
-    history: normalizeHistory(historySeries, asin, observedAt),
+    history: normalizeBuyBoxHistory(historySeries, asin, observedAt),
   };
 }
 
@@ -399,9 +400,12 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
       url: `https://${market.host}/dp/${product.asin}`,
       imageUrl: product.imageUrl,
     },
+    // Keepa index 18 is already a landed Buy Box price. It is normalized as
+    // the public price plus zero residual shipping; no claim is made that the
+    // merchant itself labels delivery as free.
     price: { amountMinor: product.currentMinor, currency: market.currency },
-    shipping: null,
-    total: null,
+    shipping: { amountMinor: 0, currency: market.currency },
+    total: { amountMinor: product.currentMinor, currency: market.currency },
     referencePrice: product.referenceMinor === null
       ? null
       : { amountMinor: product.referenceMinor, currency: market.currency },
