@@ -44,11 +44,11 @@
     "mode": {
       "title": "Mode",
       "type": "string",
-      "description": "Choisit entre découverte, vérification, parcours complet ou test local sans ingestion.",
+      "description": "Choisit entre découverte, vérification, parcours complet, résumé personnel ou test local sans ingestion.",
       "editor": "select",
       "default": "full",
-      "enum": ["discover", "verify", "full", "fixture"],
-      "enumTitles": ["Discovery seule", "Vérification", "Complet", "Fixture sans notification"]
+      "enum": ["discover", "verify", "full", "digest", "fixture"],
+      "enumTitles": ["Discovery seule", "Vérification", "Complet", "Résumé quotidien", "Fixture sans notification"]
     },
     "notify": {
       "title": "Autoriser les notifications",
@@ -105,6 +105,18 @@
       "default": 5,
       "minimum": 0,
       "maximum": 20
+    },
+    "useRemoteCoverage": {
+      "title": "Utiliser la couverture de l’application",
+      "type": "boolean",
+      "description": "Récupère les pages catégories, cadences et limites configurées dans PrixRadar.",
+      "default": true
+    },
+    "useRemoteDiscovery": {
+      "title": "Utiliser les budgets de découverte",
+      "type": "boolean",
+      "description": "Répartit les jetons Keepa selon les segments et budgets configurés dans PrixRadar.",
+      "default": false
     }
   }
 }

@@ -5,10 +5,11 @@ import test from "node:test";
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("sépare les signaux 1/2 des alertes confirmées et conserve le lien marchand", async () => {
-  const [route, interfaceSource, sink] = await Promise.all([
+  const [route, interfaceSource, sink, actorSchema] = await Promise.all([
     source("../app/api/alerts/route.ts"),
     source("../app/components/price-radar-app.tsx"),
     source("../services/collector/src/sink.ts"),
+    source("../services/collector/.actor/input_schema.json"),
   ]);
   assert.match(route, /view !== "confirmed" && view !== "single_check"/u);
   assert.match(route, /analysis\.checks\.secondVerification/u);
@@ -18,4 +19,7 @@ test("sépare les signaux 1/2 des alertes confirmées et conserve le lien marcha
   assert.match(interfaceSource, /0 jeton Keepa/u);
   assert.match(sink, /verificationCount: observation\.verification\.status === "confirmed" \? 2 : 1/u);
   assert.match(sink, /toAlertIngestEnvelope\(observation, false\)/u);
+  const schema = JSON.parse(actorSchema);
+  assert.equal(schema.properties.mode.enum.includes("digest"), true);
+  assert.equal(schema.properties.useRemoteDiscovery.type, "boolean");
 });
