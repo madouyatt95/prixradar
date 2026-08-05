@@ -266,7 +266,7 @@ const CARREFOUR = frenchConnector({
 const JD_SPORTS = frenchConnector({
   connectorId: "jd-sports-fr",
   source: "jd_sports",
-  allowedHosts: new Set(["jdsports.fr", "www.jdsports.fr"]),
+  allowedHosts: new Set(["jdsports.fr", "www.jdsports.fr", "m.jdsports.fr"]),
   productPathPatterns: [/^\/product\/[^/]+\/[A-Za-z0-9_-]+\/?$/iu],
   selectors: {
     title: ["h1[data-e2e='product-name']", "h1[itemprop='name']", "h1"],

@@ -103,4 +103,5 @@ test("le registre est versionné et la pagination avance d'une seule page sous u
     discoverNextPageUrl(`<link rel="next" href="/c/accessoires/?from=216">`, "https://www.jdsports.fr/c/accessoires/?from=72"),
     null,
   );
+  assert.equal(connectorForUrl("https://m.jdsports.fr/c/accessoires/").source, "jd_sports");
 });
