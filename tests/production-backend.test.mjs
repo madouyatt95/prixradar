@@ -19,6 +19,9 @@ test("publishes only live, fully verified anomalies", async () => {
   assert.match(alertsRoute, /notificationEligible/);
   assert.match(ingestRoute, /INGEST_SECRET/);
   assert.match(ingestRoute, /IDEMPOTENCY_CONFLICT/);
+  assert.match(ingestRoute, /providerVerifiedLandingPrice/);
+  assert.match(ingestRoute, /envelope\.source === "amazon"/);
+  assert.match(ingestRoute, /shadowCart\.consistent \|\| providerVerifiedLandingPrice/);
   assert.match(
     ingestRoute,
     /totalCents:\s*shadowCart\.finalTotalCents/,
