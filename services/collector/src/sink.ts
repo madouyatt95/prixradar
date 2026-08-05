@@ -2,6 +2,7 @@ import { stableHash } from "./normalize.js";
 import { notificationEligible } from "./verify.js";
 import type {
   IngestResponse,
+  Market,
   RetailSource,
   SourceStatusEvent,
   VerifiedObservation,
@@ -389,4 +390,23 @@ export async function postFrontierItems(
   });
   if (!response.ok) throw new SinkRequestError(`Frontière refusée par PrixRadar (HTTP ${response.status}).`, response.status);
   return response.json() as Promise<{ ok: boolean; accepted: number }>;
+}
+
+export async function postEanScanResult(
+  result: { id: string; productsFound: number; marketsChecked: Market[]; errorCode: string | null },
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean }> {
+  const endpoint = new URL("api/ean/result", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    body: JSON.stringify(result),
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Résultat EAN refusé par PrixRadar (HTTP ${response.status}).`, response.status);
+  return response.json() as Promise<{ ok: boolean }>;
 }

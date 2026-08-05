@@ -8,6 +8,7 @@ export type RadarIntent = {
   condition: "new" | "used" | "refurbished" | null;
   accessibleToAll: boolean;
   deliveryCountry: string | null;
+  gtins?: string[];
 };
 
 export type RadarCandidate = {
@@ -20,6 +21,7 @@ export type RadarCandidate = {
   condition?: string | null;
   accessibleToAll: boolean;
   deliveryCountry?: string | null;
+  gtin?: string | null;
 };
 
 const CATEGORY_ALIASES: Record<string, string[]> = {
@@ -43,6 +45,7 @@ const STOP_WORDS = new Set([
   "max", "budget", "neuf", "neuve", "occasion", "reconditionne", "reconditionnee", "livre",
   "livraison", "france", "allemagne", "italie", "espagne", "royaume", "uni", "amazon",
   "remise", "reduction", "minimum", "moins", "prix", "public", "coupon", "carte", "de",
+  "produit", "ean", "gtin", "code", "barres",
   "du", "des", "la", "le", "les", "un", "une", "et", "ou", "a", "au", "aux", "en",
 ]);
 
@@ -64,6 +67,7 @@ function moneyLimit(text: string) {
 
 export function parseRadarIntent(query: string): RadarIntent {
   const clean = normalized(query).replace(/[’']/gu, " ");
+  const gtins = distinct((clean.match(/\b\d{8,14}\b/gu) ?? []).map((value) => value.replace(/\D/gu, "")));
   const markets: string[] = [];
   if (/\b(france|amazon fr|amazon\.fr)\b/u.test(clean)) markets.push("FR");
   if (/\b(allemagne|amazon de|amazon\.de)\b/u.test(clean)) markets.push("DE");
@@ -88,7 +92,7 @@ export function parseRadarIntent(query: string): RadarIntent {
     .replace(/\d+(?:[.,]\d+)?\s*(?:€|euros?|%)/gu, " ")
     .replace(/[^a-z0-9-]+/gu, " ")
     .split(/\s+/u)
-    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token) && !BRANDS.includes(token))
+    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token) && !BRANDS.includes(token) && !gtins.includes(token))
     .slice(0, 12));
 
   return {
@@ -101,11 +105,13 @@ export function parseRadarIntent(query: string): RadarIntent {
     condition,
     accessibleToAll: /\b(sans coupon|sans carte|prix public|accessible a tous|pour tous)\b/u.test(clean),
     deliveryCountry: /\b(livre|livraison)\b.{0,20}\bfrance\b/u.test(clean) ? "FR" : null,
+    gtins,
   };
 }
 
 export function radarIntentMatches(intent: RadarIntent, candidate: RadarCandidate) {
   const haystack = normalized(`${candidate.title} ${candidate.brand ?? ""} ${candidate.category ?? ""}`);
+  if ((intent.gtins?.length ?? 0) > 0 && !intent.gtins?.includes(candidate.gtin ?? "")) return false;
   if (intent.keywords.length > 0 && !intent.keywords.every((keyword) => haystack.includes(keyword))) return false;
   if (intent.brands.length > 0 && !intent.brands.some((brand) => haystack.includes(brand))) return false;
   if (intent.categories.length > 0 && !intent.categories.includes(candidate.category ?? "")) return false;
@@ -120,6 +126,7 @@ export function radarIntentMatches(intent: RadarIntent, candidate: RadarCandidat
 
 export function radarIntentSummary(intent: RadarIntent) {
   const parts: string[] = [];
+  if (intent.gtins?.length) parts.push(`EAN ${intent.gtins.join(", ")}`);
   if (intent.brands.length) parts.push(intent.brands.join(", "));
   if (intent.keywords.length) parts.push(intent.keywords.join(" "));
   if (intent.categories.length) parts.push(intent.categories.join(", "));

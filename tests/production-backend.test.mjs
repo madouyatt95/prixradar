@@ -121,7 +121,8 @@ test("ships durable game-changer radars, proof, rechecks and three notification 
   assert.match(migration, /CREATE TABLE `recheck_requests`/);
   assert.match(migration, /SELECT[\s\S]*0, '\{\}', "confidence"/);
   assert.doesNotMatch(migration, /SELECT[^;]*"score", "buy_now_score"/);
-  assert.match(app, /Scanner un EAN/);
+  assert.match(app, /Scanner un code-barres/);
+  assert.match(app, /Détecteur autonome/);
   assert.match(app, /Passeport de preuve/);
   assert.match(app, /Contrôle autonome/);
   assert.match(app, /Panier fantôme/);

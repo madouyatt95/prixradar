@@ -80,6 +80,38 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(merged.historicalPrices?.length, 6);
 });
 
+test("résout un EAN en ASIN avec le paramètre Keepa code et conserve le GTIN", async () => {
+  const client = new KeepaClient({
+    apiKey: "KEEPA_SECRET_TEST",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      assert.equal(url.pathname, "/product");
+      assert.equal(url.searchParams.get("domain"), "4");
+      assert.equal(url.searchParams.get("code"), "4006381333931");
+      assert.equal(url.searchParams.get("asin"), null);
+      return Response.json({
+        tokensLeft: 8,
+        products: [{
+          asin: "B012345678",
+          title: "Produit trouvé par EAN",
+          eanList: ["4006381333931"],
+          brand: "Fixture",
+          buyBoxIsAmazon: true,
+          stats: {
+            current: [4_990, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 4_990],
+            avg90: [7_990],
+          },
+          csv: [[8_000_000, 7_990]],
+        }],
+      });
+    },
+  });
+  const products = await client.productsByCodes("FR", ["4006381333931"]);
+  assert.equal(products.length, 1);
+  assert.equal(products[0]?.asin, "B012345678");
+  assert.equal(products[0]?.gtin, "4006381333931");
+});
+
 test("les erreurs Keepa n’exposent jamais la clé", async () => {
   const apiKey = "ULTRA_SECRET_KEEPA_KEY";
   const client = new KeepaClient({

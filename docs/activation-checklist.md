@@ -156,7 +156,7 @@ Le parcours de recette est :
 9. lancer le contrôle public :
 
 Avant la recette fonctionnelle, appliquer toutes les migrations D1 dans l’ordre,
-jusqu’à `0010`. La migration `0008` élargit les contraintes aux six nouvelles
+jusqu’à `0011`. La migration `0008` élargit les contraintes aux six nouvelles
 enseignes en recopiant chaque ligne existante ; elle ne les active pas. Tester
 ensuite : création d'un radar en langage naturel, scan/saisie EAN, bouton
 « Vérifier maintenant », verdict d'achat et réception du résumé quotidien. La
@@ -164,6 +164,8 @@ migration `0009` ajoute les missions, paniers-projets et achats protégés ; tes
 aussi un achat LIVE, son contrôle planifié et une baisse après achat.
 La migration `0010` journalise le Push du bouclier ; confirmer qu’une même baisse
 n’est envoyée qu’une fois par appareil et qu’elle attend la fin des heures calmes.
+La migration `0011` ajoute la file autonome EAN ; confirmer qu’un scan crée un
+radar exact, lance une recherche prioritaire et reste surveillé après fermeture.
 
 ```bash
 PRIXRADAR_SMOKE_URL=https://votre-url npm run smoke:production

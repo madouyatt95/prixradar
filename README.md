@@ -1,4 +1,4 @@
-# PrixRadar v0.8.1
+# PrixRadar v0.9.0
 
 PWA mobile-first pour détecter, vérifier et suivre des anomalies de prix sans
 présenter une remise comme une « erreur certaine ».
@@ -30,7 +30,7 @@ présenter une remise comme une « erreur certaine ».
 | Statut « achetable » | actif | total panier, variante, vendeur, fraîcheur, durée restante et retours communauté réunis dans un seul verdict |
 | Bouclier après achat | actif | contrôle du même produit toutes les 6 h pendant 1 à 60 jours, seuil prudent `max(5 €, 3 %)`, Push privé et dédupliqué |
 | Portefeuille d’économies | actif | prix réellement payé, référence, économie suivie, montant potentiellement récupérable et journal d’événements |
-| Scan EAN | actif | Barcode Detector, puis ZXing 0.2.1 épinglé sur iPhone, avec saisie manuelle de repli |
+| Détecteur EAN autonome | actif côté application | Caméra Barcode Detector/ZXing, radar exact et file D1 ; recherche Amazon EU5 lorsque Keepa et le collecteur planifié sont activés |
 | Vérification immédiate | actif | file prioritaire durable consommée par l'Actor, résultat conservé |
 | Score « Acheter maintenant » | actif | décision séparée du score d'anomalie, cinq facteurs explicables |
 | Intelligence autonome | actif | panier fantôme, empreinte variante, indice interne, origine, vendeur et durée probable |

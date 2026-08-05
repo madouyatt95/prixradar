@@ -36,6 +36,7 @@ export interface KeepaDeal {
 
 export interface KeepaProduct {
   asin: string;
+  gtin: string | null;
   title: string;
   brand: string | null;
   model: string | null;
@@ -103,6 +104,25 @@ function keepaTime(value: unknown): string | null {
 function normalizedAsin(value: unknown): string | null {
   const asin = text(value)?.toUpperCase() ?? "";
   return /^[A-Z0-9]{10}$/u.test(asin) ? asin : null;
+}
+
+function normalizedGtin(value: unknown): string | null {
+  const digits = text(value)?.replace(/\D/gu, "") ?? "";
+  if (![8, 12, 13, 14].includes(digits.length)) return null;
+  const body = digits.slice(0, -1);
+  let sum = 0;
+  for (let index = body.length - 1, position = 0; index >= 0; index -= 1, position += 1) {
+    sum += Number(body[index]) * (position % 2 === 0 ? 3 : 1);
+  }
+  return (10 - (sum % 10)) % 10 === Number(digits.at(-1)) ? digits : null;
+}
+
+function productGtin(raw: JsonRecord, requestedCode: string | null) {
+  const requested = normalizedGtin(requestedCode);
+  if (requested) return requested;
+  const candidates = [raw.eanList, raw.gtinList, raw.upcList]
+    .flatMap((value) => Array.isArray(value) ? value : []);
+  return candidates.map(normalizedGtin).find((value): value is string => value !== null) ?? null;
 }
 
 function quotaFromPayload(payload: JsonRecord): KeepaQuota {
@@ -177,7 +197,7 @@ function normalizeHistory(value: unknown, asin: string, observedAt: string): Tru
     .slice(0, 60);
 }
 
-function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string): KeepaProduct | null {
+function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, requestedCode: string | null = null): KeepaProduct | null {
   const asin = normalizedAsin(raw.asin);
   const title = text(raw.title);
   if (!asin || !title) return null;
@@ -203,6 +223,7 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string): 
 
   return {
     asin,
+    gtin: productGtin(raw, requestedCode),
     title,
     brand: text(raw.brand),
     model: text(raw.model ?? raw.mpn),
@@ -339,6 +360,26 @@ export class KeepaClient {
       .map((row) => isRecord(row) ? normalizeProduct(row, market, observedAt) : null)
       .filter((product): product is KeepaProduct => product !== null);
   }
+
+  async productsByCodes(market: Market, codes: readonly string[]): Promise<KeepaProduct[]> {
+    const unique = [...new Set(codes.map(normalizedGtin).filter((code): code is string => code !== null))];
+    if (unique.length === 0) return [];
+    if (unique.length > 100) throw new KeepaApiError("Keepa accepte au maximum 100 codes produit par lot.", "configuration");
+    const observedAt = new Date().toISOString();
+    const payload = await this.#request("/product", {
+      domain: String(KEEPA_MARKETS[market].domainId),
+      code: unique.join(","),
+      history: "1",
+      days: "90",
+      stats: "90",
+      buybox: "1",
+      update: "1",
+    });
+    const rows = Array.isArray(payload.products) ? payload.products : [];
+    return rows
+      .map((row) => isRecord(row) ? normalizeProduct(row, market, observedAt, unique.length === 1 ? unique[0] ?? null : null) : null)
+      .filter((product): product is KeepaProduct => product !== null);
+  }
 }
 
 export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapshot {
@@ -352,7 +393,7 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
       title: product.title,
       brand: product.brand,
       model: product.model,
-      gtin: null,
+      gtin: product.gtin,
       url: `https://${market.host}/dp/${product.asin}`,
       imageUrl: product.imageUrl,
     },
@@ -382,7 +423,7 @@ export function verifyKeepaDeal(deal: KeepaDeal, product: KeepaProduct, fixture 
       expectedSource: "keepa_deal",
       observedSource: "keepa_product",
       merchantProductId: product.asin.toLowerCase(),
-      gtin: null,
+      gtin: product.gtin,
       selectedOptions: {},
     },
   };
@@ -405,6 +446,15 @@ export function verifyKeepaDeal(deal: KeepaDeal, product: KeepaProduct, fixture 
   };
 }
 
+export function verifyKeepaCodeProduct(product: KeepaProduct, fixture = false): VerifiedObservation {
+  return verifyKeepaDeal({
+    asin: product.asin,
+    currentMinor: product.currentMinor,
+    lastUpdate: product.observedAt,
+    rawDeltaPercent: null,
+  }, product, fixture);
+}
+
 export function mergeKeepaWithLive(
   keepaObservation: VerifiedObservation,
   liveObservation: VerifiedObservation,
@@ -422,6 +472,7 @@ export function mergeKeepaWithLive(
       title: liveOffer.product.title || keepaOfferSnapshot.product.title,
       brand: liveOffer.product.brand ?? keepaOfferSnapshot.product.brand,
       model: liveOffer.product.model ?? keepaOfferSnapshot.product.model,
+      gtin: liveOffer.product.gtin ?? keepaOfferSnapshot.product.gtin,
       imageUrl: liveOffer.product.imageUrl ?? keepaOfferSnapshot.product.imageUrl,
     },
     referencePrice: keepaOfferSnapshot.referencePrice ?? liveOffer.referencePrice,

@@ -2,7 +2,7 @@ import { runtimeEnv as env } from "@/lib/runtime-env";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { alerts, collectionRuns, discoverySegments, inspectionRequests, purchases, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
+import { alerts, collectionRuns, discoverySegments, eanScanRequests, inspectionRequests, merchantProducts, purchases, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 import { ACTIVE_SOURCE_IDS, isPartnerSourceAuthorized, isPublicWebSource } from "@/lib/source-registry";
 
@@ -72,11 +72,13 @@ export async function GET(request: Request) {
       .where(and(eq(recheckRequests.status, "processing"), sql`${recheckRequests.claimedAt} < ${staleClaim}`));
     await database.update(inspectionRequests).set({ status: "pending", claimedAt: null, updatedAt: new Date().toISOString() })
       .where(and(eq(inspectionRequests.status, "processing"), sql`${inspectionRequests.claimedAt} < ${staleClaim}`));
+    await database.update(eanScanRequests).set({ status: "queued", claimedAt: null, updatedAt: new Date().toISOString() })
+      .where(and(eq(eanScanRequests.status, "processing"), sql`${eanScanRequests.claimedAt} < ${staleClaim}`));
     await database.update(sentinelFrontier).set({ status: "queued", updatedAt: new Date().toISOString() })
       .where(and(eq(sentinelFrontier.status, "processing"), sql`${sentinelFrontier.updatedAt} < ${staleClaim}`));
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const planNow = new Date().toISOString();
-    const [rows, segments, pendingRechecks, pendingInspections, dueFrontier, duePurchaseChecks, runMetrics, alertMetrics] = await Promise.all([
+    const [rows, segments, pendingRechecks, pendingInspections, pendingEanScans, dueFrontier, duePurchaseChecks, runMetrics, alertMetrics] = await Promise.all([
       database
         .select()
         .from(sourceConfigurations)
@@ -93,6 +95,12 @@ export async function GET(request: Request) {
       database.select().from(inspectionRequests)
         .where(and(eq(inspectionRequests.status, "pending"), inArray(inspectionRequests.source, authorizedSourceIds)))
         .orderBy(asc(inspectionRequests.requestedAt)).limit(25),
+      database.select().from(eanScanRequests)
+        .where(and(
+          inArray(eanScanRequests.status, ["queued", "monitoring", "matched", "failed"]),
+          sql`${eanScanRequests.nextCheckAt} <= ${planNow}`,
+        ))
+        .orderBy(asc(eanScanRequests.nextCheckAt), desc(eanScanRequests.requestedAt)).limit(3),
       database.select().from(sentinelFrontier)
         .where(and(
           inArray(sentinelFrontier.status, ["queued", "active"]),
@@ -225,6 +233,34 @@ export async function GET(request: Request) {
           eq(inspectionRequests.status, "pending"),
         ));
     }
+    const eanGtins = pendingEanScans.map((row) => row.gtin);
+    const knownEanProducts = eanGtins.length === 0 ? [] : await database.select({
+      gtin: merchantProducts.gtin,
+      source: merchantProducts.source,
+      market: merchantProducts.market,
+      url: merchantProducts.url,
+    }).from(merchantProducts).where(and(
+      inArray(merchantProducts.gtin, eanGtins),
+      inArray(merchantProducts.source, authorizedSourceIds),
+    )).orderBy(desc(merchantProducts.lastSeenAt)).limit(100);
+    const eanItems = pendingEanScans.map((row) => ({
+      id: row.id,
+      gtin: row.gtin,
+      markets: ["FR", "DE", "IT", "ES", "GB"],
+      knownProducts: knownEanProducts.filter((product) => product.gtin === row.gtin).slice(0, 20).map((product) => ({
+        source: product.source,
+        market: product.market,
+        url: product.url,
+      })),
+    }));
+    if (eanItems.length > 0) {
+      const claimedAt = new Date(now).toISOString();
+      await database.update(eanScanRequests).set({ status: "processing", claimedAt, updatedAt: claimedAt })
+        .where(and(
+          inArray(eanScanRequests.id, eanItems.map((item) => item.id)),
+          inArray(eanScanRequests.status, ["queued", "monitoring", "matched", "failed"]),
+        ));
+    }
     const frontierItems = dueFrontier.map((row) => ({
       id: row.id,
       source: row.source,
@@ -265,6 +301,8 @@ export async function GET(request: Request) {
       rechecks: recheckItems,
       inspectionCount: inspectionItems.length,
       inspections: inspectionItems,
+      eanScanCount: eanItems.length,
+      eanScans: eanItems,
       frontierCount: frontierItems.length,
       frontier: frontierItems,
       protectionCount: protectionItems.length,

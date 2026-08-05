@@ -40,6 +40,7 @@ export async function GET(request: Request) {
   const locationVerified = search.get("locationVerified") === "true";
   const title = search.get("title")?.trim().slice(0, 300) ?? "";
   const brand = search.get("brand")?.trim().slice(0, 100) ?? "";
+  const gtin = search.get("gtin")?.replace(/\D/gu, "").slice(0, 14) ?? "";
   const condition = search.get("condition")?.trim().toLowerCase().slice(0, 30) ?? "";
   const accessibleToAll = search.get("accessibleToAll") !== "false";
   const sellerScore = positiveInteger(search.get("sellerScore"), 0, 100);
@@ -193,6 +194,7 @@ export async function GET(request: Request) {
           condition,
           accessibleToAll,
           deliveryCountry,
+          gtin,
         }));
         const speedMismatch = tier === "personal" && (
           row.notificationSpeed === "digest" ||

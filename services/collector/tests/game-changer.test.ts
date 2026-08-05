@@ -22,6 +22,22 @@ test("transforme une demande naturelle en règle de notification exploitable", (
   }), false);
 });
 
+test("un radar EAN ne cible que la référence exacte scannée", () => {
+  const intent = parseRadarIntent("Produit EAN 4006381333931");
+  assert.deepEqual(intent.gtins, ["4006381333931"]);
+  const candidate = {
+    title: "Produit identique",
+    brand: "Marque",
+    category: "Maison",
+    market: "FR",
+    priceCents: 1_990,
+    discountPercent: 40,
+    accessibleToAll: true,
+  };
+  assert.equal(radarIntentMatches(intent, { ...candidate, gtin: "4006381333931" }), true);
+  assert.equal(radarIntentMatches(intent, { ...candidate, gtin: "4006381333948" }), false);
+});
+
 test("sépare la confiance de détection de la décision d’achat", () => {
   const decision = evaluateBuyNow({
     anomalyScore: 94, discountPercent: 46, robustZ: 6, marketDiscountPercent: 31,

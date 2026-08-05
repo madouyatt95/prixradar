@@ -4,7 +4,7 @@ import { connectorForUrl } from "./connectors/index.js";
 import { parseCoverageTargets, type CoverageTarget } from "./coverage-plan.js";
 import { assertSourceScanAuthorized, scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import type { CollectorConfig } from "./config.js";
-import { KeepaClient, scanKeepaMarket } from "./keepa.js";
+import { KeepaClient, scanKeepaMarket, verifyKeepaCodeProduct } from "./keepa.js";
 import {
   runReportedSourceAttempt,
   sourceAttempt,
@@ -12,8 +12,8 @@ import {
 } from "./source-status.js";
 import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
 import { sendDailyDigests, sendProtectionPush } from "./push.js";
-import { postFrontierItems, privateApiHeaders } from "./sink.js";
-import { isRetailSource, type Market, type RetailSource } from "./types.js";
+import { postEanScanResult, postFrontierItems, privateApiHeaders } from "./sink.js";
+import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
 
 interface ActorInput {
   source?: RetailSource | "all";
@@ -48,8 +48,14 @@ type RemoteDiscoverySegment = {
 
 type RemoteRecheck = { id: string; alertId: string; source: RetailSource; market: Market; url: string };
 type RemotePriority = { id: string; source: RetailSource; market: Market; url: string; kind: "inspection" | "frontier" | "purchase"; shadowCart: boolean };
+type RemoteEanScan = {
+  id: string;
+  gtin: string;
+  markets: Market[];
+  knownProducts: Array<{ source: RetailSource; market: Market; url: string }>;
+};
 type ActorCoverageTarget = Omit<CoverageTarget, "sourceConfigurationId"> & { sourceConfigurationId: string | null };
-type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[] };
+type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[]; eanScans: RemoteEanScan[] };
 
 function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePriority[] {
   if (!Array.isArray(value)) return [];
@@ -71,7 +77,7 @@ function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePrio
 }
 
 async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
-  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
+  if (!config.priceRadarBaseUrl || !config.ingestSecret) return { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
@@ -92,6 +98,7 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
     discoverySegments?: unknown;
     rechecks?: unknown;
     inspections?: unknown;
+    eanScans?: unknown;
     frontier?: unknown;
     protectionChecks?: unknown;
   };
@@ -141,6 +148,29 @@ async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
       ...priorityItems(payload.frontier, "frontier"),
       ...priorityItems(payload.protectionChecks, "purchase"),
     ],
+    eanScans: Array.isArray(payload.eanScans) ? payload.eanScans.flatMap((candidate): RemoteEanScan[] => {
+      if (!candidate || typeof candidate !== "object") return [];
+      const value = candidate as Record<string, unknown>;
+      const gtin = String(value.gtin ?? "");
+      const id = String(value.id ?? "");
+      if (!/^ean:[0-9a-f-]{36}$/u.test(id) || !/^\d{8,14}$/u.test(gtin)) return [];
+      const markets = Array.isArray(value.markets)
+        ? [...new Set(value.markets.map(String).filter((market): market is Market => ["FR", "DE", "IT", "ES", "GB"].includes(market)))]
+        : ["FR", "DE", "IT", "ES", "GB"] as Market[];
+      const knownProducts = Array.isArray(value.knownProducts) ? value.knownProducts.flatMap((candidateProduct): RemoteEanScan["knownProducts"] => {
+        if (!candidateProduct || typeof candidateProduct !== "object") return [];
+        const product = candidateProduct as Record<string, unknown>;
+        const sourceValue = String(product.source ?? "");
+        const market = String(product.market ?? "") as Market;
+        const url = String(product.url ?? "");
+        if (!isRetailSource(sourceValue) || !["FR", "DE", "IT", "ES", "GB"].includes(market)) return [];
+        try {
+          if (connectorForUrl(url).source !== sourceValue) return [];
+        } catch { return []; }
+        return [{ source: sourceValue, market, url }];
+      }) : [];
+      return [{ id, gtin, markets, knownProducts }];
+    }) : [],
   };
 }
 
@@ -210,7 +240,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const shouldUseRemoteCoverage = configuredUrls.length === 0 && input.useRemoteCoverage !== false;
     const usesRemotePlan = shouldUseRemoteCoverage
       || input.useRemoteDiscovery === true;
-    const plan = usesRemotePlan ? await remotePlan(config) : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [] };
+    const plan = usesRemotePlan ? await remotePlan(config) : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
     const rawCoverageTargets: ActorCoverageTarget[] = configuredUrls.length > 0
       ? configuredUrls.map((url) => ({ url, sourceConfigurationId: null, productLimit: null }))
       : shouldUseRemoteCoverage ? plan.coverageTargets : [];
@@ -255,6 +285,80 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       if (!fixture) await deliverObservation(observation, config, { allowPush: false });
       seenProductUrls.add(recheck.url);
       await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
+    }
+    for (const scan of plan.eanScans) {
+      const found = new Set<string>();
+      const marketsChecked = new Set<Market>();
+      let errorCode: string | null = null;
+      for (const product of scan.knownProducts) {
+        if (seenProductUrls.has(product.url)) continue;
+        try {
+          const observation = await verifySourceUrl(product.url, {
+            ...scanOptions,
+            shadowCart: !isPublicWebRetailSource(product.source),
+            verifyDelayMs: config.verifyDelayMs,
+          });
+          if (!fixture) await deliverObservation(observation, config, { allowPush: input.notify === true });
+          seenProductUrls.add(product.url);
+          found.add(`${product.source}:${product.market}:${product.url}`);
+          await Actor.pushData({ dataKind: "ean-merchant-check", requestId: scan.id, gtin: scan.gtin, ...observation });
+        } catch (error) {
+          errorCode ??= /(?:403|429|captcha|blocked|access denied|robot)/iu.test(error instanceof Error ? error.message : "")
+            ? "EAN_MERCHANT_BLOCKED"
+            : "EAN_MERCHANT_CHECK_FAILED";
+        }
+      }
+      if (config.keepaApiKey) {
+        const client = new KeepaClient({
+          apiKey: config.keepaApiKey,
+          timeoutMs: config.httpTimeoutMs,
+          maxQuotaWaitMs: config.keepaMaxQuotaWaitMs,
+        });
+        for (const market of scan.markets) {
+          try {
+            const products = await client.productsByCodes(market, [scan.gtin]);
+            marketsChecked.add(market);
+            for (const product of products.slice(0, 5)) {
+              const keepaObservation = verifyKeepaCodeProduct(product, fixture);
+              const live = input.verifyAmazonPage !== false
+                ? await liveVerifyKeepaObservation(keepaObservation, config, {
+                    browserFallback: input.browserFallback ?? config.browserFallback,
+                  })
+                : { observation: keepaObservation, liveVerified: false, errorCode: "AMAZON_LIVE_SKIPPED" };
+              if (!fixture) await deliverObservation(live.observation, config, { allowPush: input.notify === true });
+              found.add(`amazon:${market}:${product.asin}`);
+              await Actor.pushData({
+                dataKind: "ean-amazon-check",
+                requestId: scan.id,
+                gtin: scan.gtin,
+                liveVerified: live.liveVerified,
+                liveVerificationErrorCode: live.errorCode,
+                ...live.observation,
+              });
+            }
+          } catch (error) {
+            errorCode = error instanceof Error && "code" in error && error.code === "quota"
+              ? "KEEPA_QUOTA_DEFERRED"
+              : "KEEPA_EAN_LOOKUP_FAILED";
+            if (errorCode === "KEEPA_QUOTA_DEFERRED") break;
+          }
+        }
+      } else {
+        errorCode ??= "KEEPA_NOT_CONFIGURED";
+      }
+      if (!fixture && config.priceRadarBaseUrl && config.ingestSecret) {
+        await postEanScanResult({
+          id: scan.id,
+          productsFound: found.size,
+          marketsChecked: [...marketsChecked],
+          errorCode: found.size > 0 ? null : errorCode,
+        }, {
+          baseUrl: config.priceRadarBaseUrl,
+          ingestSecret: config.ingestSecret,
+          ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+          timeoutMs: config.httpTimeoutMs,
+        });
+      }
     }
     for (const coverageTarget of coverageTargets) {
       const { url, sourceConfigurationId, productLimit } = coverageTarget;

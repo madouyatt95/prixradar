@@ -129,6 +129,7 @@ export async function fetchPushTargets(
     locationVerified?: boolean;
     title: string;
     brand?: string | null;
+    gtin?: string | null;
     condition?: string | null;
     accessibleToAll: boolean;
     sellerScore: number;
@@ -159,6 +160,7 @@ export async function fetchPushTargets(
         locationVerified: String(filters.locationVerified === true),
         title: filters.title,
         brand: filters.brand ?? "",
+        gtin: filters.gtin ?? "",
         condition: filters.condition ?? "",
         accessibleToAll: String(filters.accessibleToAll),
         sellerScore: String(Math.max(0, Math.min(100, Math.round(filters.sellerScore)))),
@@ -236,6 +238,7 @@ export async function sendPushForObservation(
     locationVerified: observation.offer.deliveryContext?.verified === true,
     title: observation.offer.product.title,
     brand: observation.offer.product.brand,
+    gtin: observation.offer.product.gtin,
     condition: observation.offer.condition,
     accessibleToAll: observation.offer.promotion?.accessibleToAll !== false,
     sellerScore: observation.offer.sellerTrusted ? 100 : 0,

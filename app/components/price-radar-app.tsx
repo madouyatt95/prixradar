@@ -84,6 +84,36 @@ type AlertItem = {
 
 type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
 
+type EanOffer = {
+  alertId: string;
+  source: string;
+  merchant: string;
+  market: string;
+  title: string;
+  url: string;
+  currency: "EUR" | "GBP";
+  priceCents: number;
+  shippingCents: number | null;
+  totalCents: number | null;
+  usualPriceCents: number;
+  discountPercent: number;
+  score: number;
+  actionable: boolean;
+  observedAt: string;
+  verifiedAt: string | null;
+};
+
+type EanDetection = {
+  phase: "submitting" | "ready" | "error";
+  verdict: "anomaly" | "normal" | "monitoring";
+  message: string;
+  item: { id: string; gtin: string; status: string; monitoring: boolean; lastCheckedAt: string | null } | null;
+  product: { title: string; brand: string | null; model: string | null; merchantCount: number; sources: string[] } | null;
+  bestOffer: EanOffer | null;
+  offers: EanOffer[];
+  coverage: { amazonMarkets: string[]; merchantMatches: number; offersCompared: number };
+};
+
 type RadarRule = {
   id: string;
   name: string;
@@ -856,6 +886,65 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   };
 }
 
+function mapEanDetection(value: unknown, fallbackGtin: string): EanDetection | null {
+  const payload = record(value);
+  if (!payload || !["anomaly", "normal", "monitoring"].includes(String(payload.verdict))) return null;
+  const item = record(payload.item);
+  const product = record(payload.product);
+  const coverage = record(payload.coverage);
+  const mapOffer = (candidate: unknown): EanOffer | null => {
+    const entry = record(candidate);
+    if (!entry || typeof entry.alertId !== "string" || typeof entry.url !== "string") return null;
+    return {
+      alertId: entry.alertId,
+      source: typeof entry.source === "string" ? entry.source : "",
+      merchant: typeof entry.merchant === "string" ? entry.merchant : "Enseigne",
+      market: typeof entry.market === "string" ? entry.market : "FR",
+      title: typeof entry.title === "string" ? entry.title : `Produit EAN ${fallbackGtin}`,
+      url: entry.url,
+      currency: entry.currency === "GBP" ? "GBP" : "EUR",
+      priceCents: finite(entry.priceCents),
+      shippingCents: typeof entry.shippingCents === "number" ? entry.shippingCents : null,
+      totalCents: typeof entry.totalCents === "number" ? entry.totalCents : null,
+      usualPriceCents: finite(entry.usualPriceCents),
+      discountPercent: finite(entry.discountPercent),
+      score: finite(entry.score),
+      actionable: entry.actionable === true,
+      observedAt: typeof entry.observedAt === "string" ? entry.observedAt : "",
+      verifiedAt: typeof entry.verifiedAt === "string" ? entry.verifiedAt : null,
+    };
+  };
+  const offers = Array.isArray(payload.offers)
+    ? payload.offers.map(mapOffer).filter((entry): entry is EanOffer => entry !== null)
+    : [];
+  return {
+    phase: "ready",
+    verdict: payload.verdict as EanDetection["verdict"],
+    message: typeof payload.message === "string" ? payload.message : "Surveillance EAN active.",
+    item: item && typeof item.id === "string" ? {
+      id: item.id,
+      gtin: typeof item.gtin === "string" ? item.gtin : fallbackGtin,
+      status: typeof item.status === "string" ? item.status : "monitoring",
+      monitoring: item.monitoring !== false,
+      lastCheckedAt: typeof item.lastCheckedAt === "string" ? item.lastCheckedAt : null,
+    } : null,
+    product: product && typeof product.title === "string" ? {
+      title: product.title,
+      brand: typeof product.brand === "string" ? product.brand : null,
+      model: typeof product.model === "string" ? product.model : null,
+      merchantCount: finite(product.merchantCount),
+      sources: Array.isArray(product.sources) ? product.sources.filter((entry): entry is string => typeof entry === "string") : [],
+    } : null,
+    bestOffer: mapOffer(payload.bestOffer),
+    offers,
+    coverage: {
+      amazonMarkets: Array.isArray(coverage?.amazonMarkets) ? coverage.amazonMarkets.filter((entry): entry is string => typeof entry === "string") : ["FR", "DE", "IT", "ES", "GB"],
+      merchantMatches: finite(coverage?.merchantMatches),
+      offersCompared: finite(coverage?.offersCompared),
+    },
+  };
+}
+
 function urlBase64ToBytes(value: string) {
   const padding = "=".repeat((4 - (value.length % 4)) % 4);
   const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -931,10 +1020,12 @@ export function PriceRadarApp() {
   const [savings, setSavings] = useState<SavingsSummary>({ purchaseCount: 0, realizedSavingsCents: 0, potentialRecoveryCents: 0, protectedCount: 0, actionCount: 0 });
   const [missionCenterLoading, setMissionCenterLoading] = useState(true);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [eanDetection, setEanDetection] = useState<EanDetection | null>(null);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [preferencesSaveState, setPreferencesSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const preferencesSaveStarted = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const eanScanRun = useRef(0);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -1550,6 +1641,67 @@ export function PriceRadarApp() {
     }
   }
 
+  async function detectEan(code: string) {
+    const runId = ++eanScanRun.current;
+    setScannerOpen(false);
+    setSearch(code);
+    setFilter("Tout");
+    setTab("radar");
+    setEanDetection({
+      phase: "submitting",
+      verdict: "monitoring",
+      message: "PrixRadar identifie le produit et lance les contrôles de prix…",
+      item: { id: "", gtin: code, status: "queued", monitoring: true, lastCheckedAt: null },
+      product: null,
+      bestOffer: null,
+      offers: [],
+      coverage: { amazonMarkets: ["FR", "DE", "IT", "ES", "GB"], merchantMatches: 0, offersCompared: 0 },
+    });
+    try {
+      const response = await fetch("/api/ean", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const payload = await response.json() as Record<string, unknown>;
+      if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Ce code-barres ne peut pas être analysé.");
+      let result = mapEanDetection(payload, code);
+      if (!result) throw new Error("Réponse EAN invalide.");
+      if (eanScanRun.current !== runId) return;
+      setEanDetection(result);
+      void refreshMissionCenter();
+      if (result.verdict === "anomaly") {
+        setToast("Erreur de prix détectée et surveillance EAN activée");
+        return;
+      }
+      const scanId = result.item?.id;
+      if (!scanId) return;
+      for (let attempt = 0; attempt < 12 && result.verdict === "monitoring"; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+        if (eanScanRun.current !== runId) return;
+        const statusResponse = await fetch(`/api/ean?id=${encodeURIComponent(scanId)}`, { headers: { accept: "application/json" } });
+        if (!statusResponse.ok) continue;
+        const next = mapEanDetection(await statusResponse.json(), code);
+        if (!next) continue;
+        result = next;
+        setEanDetection(next);
+        if (next.verdict === "anomaly") setToast("Erreur de prix détectée sur le produit scanné");
+      }
+    } catch (error) {
+      if (eanScanRun.current !== runId) return;
+      setEanDetection({
+        phase: "error",
+        verdict: "monitoring",
+        message: error instanceof Error ? error.message : "Le détecteur EAN est indisponible.",
+        item: { id: "", gtin: code, status: "failed", monitoring: false, lastCheckedAt: null },
+        product: null,
+        bestOffer: null,
+        offers: [],
+        coverage: { amazonMarkets: ["FR", "DE", "IT", "ES", "GB"], merchantMatches: 0, offersCompared: 0 },
+      });
+    }
+  }
+
   async function requestNotifications() {
     if (!("Notification" in window)) {
       setToast("Les notifications ne sont pas prises en charge ici");
@@ -1883,13 +2035,23 @@ export function PriceRadarApp() {
         />
       ) : null}
 
-      {scannerOpen ? <BarcodeScanner onClose={() => setScannerOpen(false)} onDetected={(code) => {
-        setSearch(code);
-        setFilter("Tout");
-        setTab("radar");
-        setScannerOpen(false);
-        setToast(`EAN ${code} recherché dans les alertes`);
-      }} /> : null}
+      {scannerOpen ? <BarcodeScanner onClose={() => setScannerOpen(false)} onDetected={(code) => void detectEan(code)} /> : null}
+
+      {eanDetection ? <EanDetectionPanel
+        detection={eanDetection}
+        keepaAvailable={health?.keepa === true}
+        notificationState={notificationState}
+        onEnableNotifications={() => void requestNotifications()}
+        onClose={() => {
+          eanScanRun.current += 1;
+          setEanDetection(null);
+        }}
+        onRescan={() => {
+          eanScanRun.current += 1;
+          setEanDetection(null);
+          setScannerOpen(true);
+        }}
+      /> : null}
 
       {toast ? (
         <div className="toast" role="status">
@@ -3235,6 +3397,73 @@ function AlertDetail({
   );
 }
 
+function EanDetectionPanel({
+  detection,
+  keepaAvailable,
+  notificationState,
+  onEnableNotifications,
+  onClose,
+  onRescan,
+}: {
+  detection: EanDetection;
+  keepaAvailable: boolean;
+  notificationState: string;
+  onEnableNotifications: () => void;
+  onClose: () => void;
+  onRescan: () => void;
+}) {
+  const gtin = detection.item?.gtin ?? "";
+  const offer = detection.bestOffer;
+  const notificationsActive = /active|autoris/iu.test(notificationState);
+  const title = detection.phase === "submitting"
+    ? "Analyse du produit en cours"
+    : detection.phase === "error"
+      ? "Analyse impossible"
+      : detection.verdict === "anomaly"
+        ? "Erreur de prix détectée"
+        : detection.verdict === "normal"
+          ? "Prix cohérent pour le moment"
+          : "Surveillance automatique lancée";
+  return (
+    <div className="ean-result-backdrop" onMouseDown={onClose}>
+      <section className={`ean-result-panel is-${detection.phase === "error" ? "error" : detection.verdict}`} role="dialog" aria-modal="true" aria-labelledby="ean-result-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div><span className="eyebrow">Détecteur autonome · EAN {gtin}</span><h2 id="ean-result-title">{title}</h2></div>
+          <button type="button" onClick={onClose} aria-label="Fermer">×</button>
+        </header>
+        {detection.phase === "submitting" ? (
+          <div className="ean-analysis-progress" role="status"><span aria-hidden="true" /><p>{detection.message}</p><small>Base PrixRadar → Amazon Europe → enseignes françaises</small></div>
+        ) : (
+          <>
+            <div className="ean-verdict">
+              <span className="ean-verdict-icon" aria-hidden="true">{detection.phase === "error" ? "!" : detection.verdict === "anomaly" ? "↓" : detection.verdict === "normal" ? "✓" : "◎"}</span>
+              <div><strong>{detection.product?.title ?? `Produit EAN ${gtin}`}</strong><p>{detection.message}</p>{detection.product?.brand || detection.product?.model ? <small>{[detection.product.brand, detection.product.model].filter(Boolean).join(" · ")}</small> : null}</div>
+            </div>
+            {detection.verdict === "anomaly" && offer ? (
+              <div className="ean-price-proof">
+                <div><span>Prix vérifié</span><strong>{money((offer.totalCents ?? offer.priceCents) / 100, offer.currency)}</strong><small>{offer.merchant} · {offer.market}</small></div>
+                <div><span>Écart détecté</span><strong>−{offer.discountPercent} %</strong><small>score {offer.score}/100</small></div>
+                <a className="primary-button" href={offer.url} target="_blank" rel="noreferrer">Vérifier le prix ↗</a>
+              </div>
+            ) : null}
+            <div className="ean-coverage" aria-label="Couverture du détecteur">
+              <div><strong>{keepaAvailable ? detection.coverage.amazonMarkets.length : "—"}</strong><span>{keepaAvailable ? "Amazon Europe" : "Keepa à activer"}</span></div>
+              <div><strong>{detection.coverage.merchantMatches}</strong><span>fiches rapprochées</span></div>
+              <div><strong>{detection.coverage.offersCompared}</strong><span>prix comparés</span></div>
+            </div>
+            {detection.offers.length > 1 ? <div className="ean-offer-list"><span>Prix retrouvés</span>{detection.offers.slice(0, 4).map((item) => <a key={`${item.source}:${item.market}`} href={item.url} target="_blank" rel="noreferrer"><span>{item.merchant} · {item.market}</span><strong>{money((item.totalCents ?? item.priceCents) / 100, item.currency)}</strong></a>)}</div> : null}
+            {detection.phase !== "error" ? <div className="ean-monitoring-note"><i aria-hidden="true" /><p><strong>Le suivi EAN est enregistré.</strong> {keepaAvailable ? "PrixRadar continuera la recherche sur Amazon Europe et les enseignes actives, puis vous préviendra seulement après confirmation d’une anomalie." : "Les enseignes actives continueront la recherche. Amazon Europe sera ajouté automatiquement dès que Keepa sera activé."}</p></div> : null}
+          </>
+        )}
+        <footer>
+          <button type="button" className="secondary-button" onClick={onRescan}>Scanner un autre produit</button>
+          {!notificationsActive && detection.phase !== "error" ? <button type="button" className="dark-button" onClick={onEnableNotifications}>Activer les alertes</button> : <button type="button" className="dark-button" onClick={onClose}>{detection.verdict === "anomaly" ? "Conserver la surveillance" : "Continuer en arrière-plan"}</button>}
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 let zxingLoader: Promise<void> | null = null;
 function loadZxingFallback() {
   if ((window as unknown as { ZXingBrowser?: unknown }).ZXingBrowser) return Promise.resolve();
@@ -3330,5 +3559,5 @@ function BarcodeScanner({ onClose, onDetected }: { onClose: () => void; onDetect
     };
   }, [onDetected]);
 
-  return <div className="scanner-backdrop" onMouseDown={onClose}><section className="scanner-panel" role="dialog" aria-modal="true" aria-labelledby="scanner-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="eyebrow">Recherche instantanée</span><h2 id="scanner-title">Scanner un EAN</h2></div><button onClick={onClose} aria-label="Fermer">×</button></header><div className="camera-frame"><video ref={videoRef} playsInline muted /><span aria-hidden="true" /></div><p role="status">{status}</p><form onSubmit={(event) => { event.preventDefault(); const code = manual.replace(/\D/gu, ""); if (/^\d{8,14}$/u.test(code)) onDetected(code); else setStatus("Un EAN contient 8 à 14 chiffres."); }}><label>Ou saisir le numéro<input value={manual} onChange={(event) => setManual(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="3701234567890" maxLength={18} /></label><button className="primary-button">Rechercher</button></form></section></div>;
+  return <div className="scanner-backdrop" onMouseDown={onClose}><section className="scanner-panel" role="dialog" aria-modal="true" aria-labelledby="scanner-title" onMouseDown={(event) => event.stopPropagation()}><header><div><span className="eyebrow">Détecteur autonome</span><h2 id="scanner-title">Scanner un code-barres</h2></div><button onClick={onClose} aria-label="Fermer">×</button></header><div className="camera-frame"><video ref={videoRef} playsInline muted /><span aria-hidden="true" /></div><p role="status">{status}</p><form onSubmit={(event) => { event.preventDefault(); const code = manual.replace(/\D/gu, ""); if (/^\d{8,14}$/u.test(code)) onDetected(code); else setStatus("Un EAN contient 8 à 14 chiffres."); }}><label>Ou saisir le numéro<input value={manual} onChange={(event) => setManual(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="3701234567890" maxLength={18} /></label><button className="primary-button">Détecter les prix</button></form><small className="scanner-promise">Le scan active automatiquement la recherche multi-enseignes et la surveillance de cet EAN.</small></section></div>;
 }

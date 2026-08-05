@@ -321,6 +321,40 @@ export const inspectionRequests = sqliteTable(
   ]
 );
 
+export const eanScanRequests = sqliteTable(
+  "ean_scan_requests",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    gtin: text("gtin").notNull(),
+    status: text("status").notNull().default("queued"),
+    radarRuleId: text("radar_rule_id"),
+    canonicalProductId: text("canonical_product_id").references(
+      () => canonicalProducts.id,
+      { onDelete: "set null" }
+    ),
+    matchedAlertId: text("matched_alert_id").references(() => alerts.id, {
+      onDelete: "set null",
+    }),
+    resultJson: text("result_json").notNull().default("{}"),
+    requestedAt: text("requested_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    claimedAt: text("claimed_at"),
+    lastCheckedAt: text("last_checked_at"),
+    nextCheckAt: text("next_check_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("ean_scan_owner_gtin_unique").on(table.ownerId, table.gtin),
+    index("ean_scan_status_due_idx").on(table.status, table.nextCheckAt),
+    index("ean_scan_owner_updated_idx").on(table.ownerId, table.updatedAt),
+    index("ean_scan_gtin_idx").on(table.gtin),
+    check(
+      "ean_scan_status_allowed",
+      sql`${table.status} IN ('queued', 'processing', 'monitoring', 'matched', 'failed')`
+    ),
+  ]
+);
+
 export const sentinelFrontier = sqliteTable(
   "sentinel_frontier",
   {
