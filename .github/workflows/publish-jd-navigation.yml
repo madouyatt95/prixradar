@@ -1,0 +1,41 @@
+name: Publish JD navigation fix
+
+on:
+  push:
+    branches:
+      - agent/cloudflare-production
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/cloudflare-production
+      - name: Apply navigation fix
+        shell: bash
+        run: |
+          set -eu
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("services/collector/src/crawler.ts")
+          text = path.read_text()
+          needle = '    navigationTimeoutSecs: Math.ceil((options.timeoutMs ?? 30_000) / 1_000),\n'
+          addition = '''    preNavigationHooks: [async (_context, gotoOptions) => {
+                gotoOptions.waitUntil = "domcontentloaded";
+              }],
+          '''
+          if 'gotoOptions.waitUntil = "domcontentloaded"' not in text:
+              if needle not in text:
+                  raise SystemExit("Playwright navigation marker missing")
+              path.write_text(text.replace(needle, needle + addition, 1))
+          PY
+          rm ".github/workflows/publish-jd-navigation.yml"
+          git config user.name "prixradar-release"
+          git config user.email "actions@users.noreply.github.com"
+          git add "services/collector/src/crawler.ts" ".github/workflows/publish-jd-navigation.yml"
+          git commit -m "fix: load JD Sports product pages reliably"
+          git push origin HEAD:agent/cloudflare-production
