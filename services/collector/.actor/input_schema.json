@@ -26,9 +26,13 @@
       "title": "Marchés Amazon automatisés",
       "type": "array",
       "description": "Permet de scanner EU5 dans une seule exécution, moins coûteuse que cinq démarrages Actor.",
-      "editor": "stringList",
+      "editor": "select",
       "default": ["FR", "DE", "IT", "ES", "GB"],
-      "items": { "type": "string" }
+      "items": {
+        "type": "string",
+        "enum": ["FR", "DE", "IT", "ES", "GB"],
+        "enumTitles": ["France", "Allemagne", "Italie", "Espagne", "Royaume-Uni"]
+      }
     },
     "urls": {
       "title": "URLs autorisées",
@@ -40,7 +44,13 @@
         "type": "object",
         "required": ["url"],
         "properties": {
-          "url": { "type": "string", "format": "uri" }
+          "url": {
+            "title": "URL",
+            "type": "string",
+            "description": "Page produit, catégorie ou recherche à analyser.",
+            "editor": "textfield",
+            "format": "uri"
+          }
         }
       }
     },
