@@ -750,6 +750,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     verificationCount: parsed.verificationCount,
     verifiedAt: parsed.verifiedAt,
     merchantReferenceCents: parsed.merchantReferenceCents,
+    trustedReferenceSource: envelope.source === "amazon" && parsed.historicalPrices.length > 0 ? "keepa" : null,
     priceAccessibleToAll: parsed.priceAccessibleToAll,
     crossMerchantPricesCents: [...comparableBySource.values()],
   };
@@ -855,8 +856,32 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     && evaluation.score >= adaptiveMinimumScore
     && autonomyEligible
     && publicDealPolicyEligible;
+  const identifiedSeller = parsed.seller !== null
+    && parsed.seller.trim().length > 0
+    && (envelope.source !== "amazon"
+      || parsed.seller === "Amazon"
+      || parsed.seller.includes(" · "));
+  const watchNotificationEligible = !notificationEligible
+    && publicDealPolicyEligible
+    && identifiedSeller
+    && evaluation.score >= 45
+    && evaluation.checks.liveSource
+    && evaluation.checks.historicalBaseline
+    && evaluation.checks.enoughHistory
+    && evaluation.checks.materialDiscount
+    && evaluation.checks.robustDeviation
+    && evaluation.checks.freshObservation
+    && evaluation.checks.exactVariant
+    && evaluation.checks.shippingIncluded
+    && evaluation.checks.newCondition
+    && evaluation.checks.available
+    && evaluation.checks.secondVerification
+    && evaluation.checks.notExpired
+    && evaluation.checks.publicPriceAccessible
+    && evaluation.checks.marketComparisonCoherent;
+  const alertLevel = notificationEligible ? "reliable" as const : watchNotificationEligible ? "watch" as const : "none" as const;
   const deliveryMode = alertDeliveryMode();
-  const deliveryEligible = notificationEligible && deliveryMode === "live";
+  const deliveryEligible = alertLevel !== "none" && deliveryMode === "live";
   const buyNow = evaluateBuyNow({
     anomalyScore: evaluation.score,
     discountPercent: evaluation.discountPercent,
@@ -873,6 +898,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
   const now = new Date().toISOString();
   const alertStatus = notificationEligible
     ? "active"
+    : watchNotificationEligible
+      ? "review"
     : existingAlert?.status === "active" && (!evaluation.checks.materialDiscount || !parsed.available)
       ? "expired"
       : publicDealPolicyEligible && evaluation.score >= 40 ? "review" : "monitoring";
@@ -901,6 +928,8 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     provider: envelope.source === "amazon" ? "keepa" : envelope.source,
     notificationRequested: parsed.notify,
     notificationEligible,
+    watchNotificationEligible,
+    alertLevel,
     publicDealPolicyEligible,
     deliveryEligible,
     deliveryMode,
@@ -1018,6 +1047,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         currency: parsed.currency,
         priceCents: parsed.priceCents,
         usualPriceCents: evaluation.usualPriceCents ?? parsed.priceCents,
+        discountPercent: Math.max(0, Math.round(evaluation.discountPercent)),
         score: evaluation.score,
         buyNowScore: buyNow.score,
         buyNowJson: JSON.stringify(buyNow),
@@ -1204,6 +1234,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
         confidence: evaluation.confidence,
         notificationRequested: parsed.notify,
         notificationEligible: deliveryEligible,
+        alertLevel,
         deliveryMode,
         autonomyEligible,
         anomalyKind: origin.kind,
