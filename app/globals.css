@@ -869,6 +869,16 @@ a {
   background: #dff3e9;
 }
 
+.signal-mode.is-watch {
+  color: #7a4b00;
+  border-color: rgba(185, 118, 0, 0.24);
+  background: #fff3cf;
+}
+
+.quality-level-tabs {
+  margin-bottom: 10px;
+}
+
 .card-meta > span:last-child {
   flex: 0 0 auto;
   color: var(--muted);
