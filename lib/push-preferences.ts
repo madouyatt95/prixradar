@@ -91,7 +91,9 @@ export function alertMatchesPushPreferences(input: {
       : true;
 
   const minimumScore = watch ? Math.min(preferences.minScore, 45) : preferences.minScore;
-  const minimumSellerScore = watch ? Math.min(preferences.minSellerScore, 30) : preferences.minSellerScore;
+  // Le niveau « à vérifier » sert précisément à exposer les vendeurs tiers
+  // inconnus sans les confondre avec une alerte fiable.
+  const minimumSellerScore = watch ? 0 : preferences.minSellerScore;
 
   return alert.score >= minimumScore
     && alert.discountPercent >= preferences.minDiscount

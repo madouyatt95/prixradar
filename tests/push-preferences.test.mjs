@@ -40,7 +40,7 @@ test("digest and personal tiers respect the selected notification speed", () => 
 });
 
 test("a watch alert is reserved only for instant users and keeps the product safeguards", () => {
-  const watchAlert = { ...alert, score: 49, sellerScore: 34, cartConfirmed: false };
+  const watchAlert = { ...alert, score: 49, sellerScore: 0, cartConfirmed: false };
   assert.equal(matcher.alertMatchesPushPreferences({
     preferences: { ...preferences, notificationSpeed: "instant" },
     alert: watchAlert,
