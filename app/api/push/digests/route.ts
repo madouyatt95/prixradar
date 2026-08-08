@@ -65,7 +65,6 @@ export async function GET(request: Request) {
     const intelligenceRows = candidates.length === 0 ? [] : await database.select({
       alertId: alertIntelligence.alertId,
       sellerScore: alertIntelligence.sellerScore,
-      variantConfidence: alertIntelligence.variantConfidence,
       shadowCartStatus: alertIntelligence.shadowCartStatus,
       shadowCartJson: alertIntelligence.shadowCartJson,
     }).from(alertIntelligence).where(inArray(alertIntelligence.alertId, candidates.map((candidate) => candidate.id)));
@@ -100,7 +99,7 @@ export async function GET(request: Request) {
             score: alert.score,
             sellerScore: Number(intelligence?.sellerScore ?? 0),
             historyPoints: evidenceNumber(alert.evidenceJson, "historyPoints") ?? 0,
-            exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true && Number(intelligence?.variantConfidence ?? 0) >= 90,
+            exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true,
             cartConfirmed: intelligence?.shadowCartStatus === "confirmed" && verifiedCartEvidence(intelligence?.shadowCartJson ?? "{}"),
             verifiedAt: alert.verifiedAt,
             discountPercent: alert.discountPercent,

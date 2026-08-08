@@ -128,7 +128,6 @@ async function reserve(body: UnknownRecord) {
         expiresAt: alerts.expiresAt,
         evidenceJson: alerts.evidenceJson,
         sellerScore: alertIntelligence.sellerScore,
-        variantConfidence: alertIntelligence.variantConfidence,
         shadowCartStatus: alertIntelligence.shadowCartStatus,
         shadowCartJson: alertIntelligence.shadowCartJson,
       })
@@ -180,7 +179,7 @@ async function reserve(body: UnknownRecord) {
       score: alert.score,
       sellerScore: Number(alert.sellerScore ?? 0),
       historyPoints,
-      exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true && Number(alert.variantConfidence ?? 0) >= 90,
+      exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true,
       cartConfirmed: alert.shadowCartStatus === "confirmed" && verifiedCartEvidence(alert.shadowCartJson ?? "{}"),
       verifiedAt: alert.verifiedAt,
       discountPercent: alert.discountPercent,

@@ -36,11 +36,12 @@ test("publishes only live, fully verified anomalies", async () => {
 });
 
 test("keeps push preferences durable and private APIs out of caches", async () => {
-  const [pushRoute, targetRoute, serverAuth, deliveriesRoute, preferencesRoute, serviceWorker] = await Promise.all([
+  const [pushRoute, targetRoute, serverAuth, deliveriesRoute, digestsRoute, preferencesRoute, serviceWorker] = await Promise.all([
     source("../app/api/push/route.ts"),
     source("../app/api/push/targets/route.ts"),
     source("../app/api/push/server-auth.ts"),
     source("../app/api/push/deliveries/route.ts"),
+    source("../app/api/push/digests/route.ts"),
     source("../app/api/preferences/route.ts"),
     source("../public/sw.js"),
   ]);
@@ -52,6 +53,9 @@ test("keeps push preferences durable and private APIs out of caches", async () =
   assert.match(targetRoute, /lte\(userPreferences\.minScore, score\)/);
   assert.doesNotMatch(targetRoute, /ownerId:/);
   assert.match(deliveriesRoute, /dedupeKey/);
+  assert.match(deliveriesRoute, /exactVariantConfirmed: evidenceBoolean\(alert\.evidenceJson, "exactVariant"\) === true/);
+  assert.doesNotMatch(deliveriesRoute, /exactVariantConfirmed:[^\n]+variantConfidence/);
+  assert.doesNotMatch(digestsRoute, /exactVariantConfirmed:[^\n]+variantConfidence/);
   assert.match(preferencesRoute, /userPreferences/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /addEventListener\("push"/);
