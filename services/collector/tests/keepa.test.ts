@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { KEEPA_MARKETS, KeepaApiError, KeepaClient, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
+import { KEEPA_MARKETS, KeepaApiError, KeepaClient, keepaOffer, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
 
 test("déclare exactement les cinq marchés Amazon Europe couverts", () => {
   assert.deepEqual(Object.fromEntries(Object.entries(KEEPA_MARKETS).map(([market, config]) => [market, config.domainId])), {
     GB: 2, DE: 3, FR: 4, IT: 8, ES: 9,
   });
+});
+
+test("conserve une Buy Box tierce en la distinguant d'Amazon", () => {
+  const snapshot = keepaOffer({
+    asin: "B012345678", market: "FR", title: "Produit marketplace", brand: null, model: null, gtin: null,
+    currentMinor: 5_000, referenceMinor: 10_000, observedAt: "2026-08-08T20:00:00.000Z", imageUrl: null,
+    buyBoxIsAmazon: false, history: [],
+  });
+  assert.equal(snapshot.seller, "Vendeur tiers Amazon");
+  assert.equal(snapshot.sellerTrusted, false);
+  assert.equal(snapshot.sellerSignals?.fulfillment, "merchant");
 });
 
 test("enchaîne /deal puis /product, normalise les centimes et expose le quota", async () => {
