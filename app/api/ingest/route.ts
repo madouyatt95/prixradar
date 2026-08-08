@@ -34,6 +34,7 @@ import {
   type SellerSignalsInput,
 } from "@/lib/autonomy";
 import { evaluateBuyNow } from "@/lib/buy-now";
+import { meetsPublicDealPolicy } from "@/lib/deal-policy";
 import {
   AnomalyInputError,
   evaluatePriceAnomaly,
@@ -842,9 +843,18 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     && sellerAssessment.score >= 55
     && shadowCart.usable
     && (shadowCart.consistent || providerVerifiedLandingPrice);
+  const publicDealPolicyEligible = meetsPublicDealPolicy({
+    source: envelope.source,
+    discountPercent: evaluation.discountPercent,
+    currentPriceCents: evaluation.currentTotalCents ?? parsed.priceCents,
+    usualPriceCents: evaluation.usualPriceCents,
+    title: parsed.title,
+    category: parsed.category,
+  });
   const notificationEligible = evaluation.notificationEligible
     && evaluation.score >= adaptiveMinimumScore
-    && autonomyEligible;
+    && autonomyEligible
+    && publicDealPolicyEligible;
   const deliveryMode = alertDeliveryMode();
   const deliveryEligible = notificationEligible && deliveryMode === "live";
   const buyNow = evaluateBuyNow({
@@ -865,7 +875,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     ? "active"
     : existingAlert?.status === "active" && (!evaluation.checks.materialDiscount || !parsed.available)
       ? "expired"
-      : evaluation.score >= 40 ? "review" : "monitoring";
+      : publicDealPolicyEligible && evaluation.score >= 40 ? "review" : "monitoring";
   const pendingInspectionRows = await database.select({ id: inspectionRequests.id, url: inspectionRequests.url })
     .from(inspectionRequests)
     .where(and(
@@ -891,6 +901,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     provider: envelope.source === "amazon" ? "keepa" : envelope.source,
     notificationRequested: parsed.notify,
     notificationEligible,
+    publicDealPolicyEligible,
     deliveryEligible,
     deliveryMode,
     adaptiveMinimumScore,
