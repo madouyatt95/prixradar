@@ -2595,7 +2595,8 @@ function SourcesView({
   ) as "EUR" | "GBP";
 
   function runtimeFor(...sources: string[]) {
-    return statuses.find((item) => sources.includes(item.source.toLowerCase()));
+    const matches = statuses.filter((item) => sources.includes(item.source.toLowerCase()));
+    return matches.find((item) => item.market?.toUpperCase() === "FR") ?? matches[0];
   }
 
   function presentation(
