@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "../../../../db";
-import { evidenceBoolean, evidenceEligible, evidenceNumber } from "../../../../lib/alert-evidence";
+import { evidenceBoolean, evidenceEligible, evidenceNumber, evidenceWatchEligible } from "../../../../lib/alert-evidence";
 import { verifiedCartEvidence } from "../../../../lib/cart-proof.js";
 import { alertMatchesPushPreferences } from "../../../../lib/push-preferences";
 import { radarIntentMatches, type RadarIntent } from "../../../../lib/radar-intent";
@@ -64,6 +64,10 @@ async function reserve(body: UnknownRecord) {
   if (tier !== "urgent" && tier !== "personal" && tier !== "digest") {
     throw new Error("tier doit être urgent, personal ou digest.");
   }
+  if (body.alertLevel !== undefined && body.alertLevel !== "reliable" && body.alertLevel !== "watch") {
+    throw new Error("alertLevel doit être reliable ou watch.");
+  }
+  const alertLevel = body.alertLevel === "watch" ? "watch" as const : "reliable" as const;
   const database = getDb();
   const [[subscription], [alert]] = await Promise.all([
     database
@@ -191,20 +195,24 @@ async function reserve(body: UnknownRecord) {
       locationVerified: alert.locationVerified,
     },
     tier,
+    alertLevel,
     radarMatches,
     nowMs: now,
   });
+  const reliableEvidence = alert?.status === "active" && evidenceEligible(alert.evidenceJson);
+  const watchEvidence = alertLevel === "watch"
+    && alert?.status === "review"
+    && evidenceWatchEligible(alert.evidenceJson);
   const alertEligible =
     alert?.sourceMode === "live" &&
-    alert.status === "active" &&
-    alert.score >= 65 &&
+    (reliableEvidence || watchEvidence) &&
+    alert.score >= (alertLevel === "watch" ? 45 : 65) &&
     alert.shippingCents !== null &&
     alert.verifiedAt !== null &&
     alert.expiresAt !== null &&
     Date.parse(alert.observedAt) >= freshAfter &&
     Date.parse(alert.verifiedAt) >= freshAfter &&
     Date.parse(alert.expiresAt) > now &&
-    evidenceEligible(alert.evidenceJson) &&
     preferenceEligible;
   if (!alert || !alertEligible) {
     return serverJson(
@@ -214,8 +222,8 @@ async function reserve(body: UnknownRecord) {
   }
 
   const digestDay = tier === "digest" ? `:${new Date().toISOString().slice(0, 10)}` : "";
-  const dedupeKey = `${alertId}:${subscriptionId}:web_push:${tier}${digestDay}`;
-  if (alert.score < subscription.minScore) {
+  const dedupeKey = `${alertId}:${subscriptionId}:web_push:${tier}:${alertLevel}${digestDay}`;
+  if (alertLevel !== "watch" && alert.score < subscription.minScore) {
     const [suppressed] = await database
       .insert(notificationDeliveries)
       .values({
