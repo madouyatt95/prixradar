@@ -206,7 +206,7 @@ export async function GET(request: Request) {
               (row.notificationSpeed === "balanced" && score < Math.min(100, row.minScore + 8))
             );
         const requiredScore = alertLevel === "watch" ? Math.min(row.minScore, 45) : row.minScore;
-        const requiredSellerScore = alertLevel === "watch" ? Math.min(row.minSellerScore, 30) : row.minSellerScore;
+        const requiredSellerScore = alertLevel === "watch" ? 0 : row.minSellerScore;
         const filtered =
           score < requiredScore ||
           discount < row.minDiscount ||
