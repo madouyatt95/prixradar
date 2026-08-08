@@ -198,6 +198,7 @@ export interface IngestResponse {
     confidence: string;
     notificationRequested: boolean;
     notificationEligible: boolean;
+    alertLevel?: "reliable" | "watch" | "none";
     blockingReasons: string[];
   };
 }
