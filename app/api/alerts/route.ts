@@ -41,12 +41,16 @@ function parseEvidence(value: string) {
   try {
     const parsed = JSON.parse(value) as {
       notificationEligible?: unknown;
+      watchNotificationEligible?: unknown;
+      alertLevel?: unknown;
       analysis?: Partial<AnomalyEvaluation>;
     };
     if (!parsed || typeof parsed !== "object") return null;
     const analysis = parsed.analysis;
     return {
       notificationEligible: parsed.notificationEligible === true,
+      watchNotificationEligible: parsed.watchNotificationEligible === true,
+      alertLevel: parsed.alertLevel === "reliable" || parsed.alertLevel === "watch" ? parsed.alertLevel : "none",
       secondVerification: analysis?.checks?.secondVerification === true,
       historyPoints: typeof analysis?.historyPoints === "number" ? analysis.historyPoints : null,
       madCents: typeof analysis?.madCents === "number" ? analysis.madCents : null,
@@ -127,6 +131,11 @@ function serializeAlert(
     row.status === "active" &&
     row.verifiedAt !== null &&
     evidence?.notificationEligible === true;
+  const watchEligible =
+    row.sourceMode === "live" &&
+    row.status === "review" &&
+    row.verifiedAt !== null &&
+    evidence?.watchNotificationEligible === true;
   let affiliateUrl: string | null = null;
   const tag = (env as unknown as { AMAZON_ASSOCIATE_TAG?: unknown }).AMAZON_ASSOCIATE_TAG ?? process.env.AMAZON_ASSOCIATE_TAG;
   if (row.source === "amazon" && typeof tag === "string" && /^[A-Za-z0-9-]{3,40}$/.test(tag)) {
@@ -184,7 +193,9 @@ function serializeAlert(
     buyNow,
     confidence: row.confidence,
     status: row.status,
+    alertLevel: liveEligible ? "reliable" : watchEligible ? "watch" : evidence?.alertLevel ?? "none",
     notificationEligible: liveEligible,
+    watchNotificationEligible: watchEligible,
     verification: {
       level: evidence?.secondVerification === true ? "double" : "single",
       count: evidence?.secondVerification === true ? 2 : 1,
@@ -277,7 +288,7 @@ export async function GET(request: Request) {
     minScore = boundedInteger(
       url.searchParams.get("minScore"),
       "minScore",
-      view === "single_check" ? 0 : ANOMALY_LIMITS.minNotificationScore,
+      view === "single_check" ? 0 : 45,
       0,
       100,
     );
@@ -361,6 +372,7 @@ export async function GET(request: Request) {
     gte(alerts.observedAt, freshAfter),
     gte(alerts.verifiedAt, freshAfter),
     sql`json_extract(${alerts.evidenceJson}, '$.analysis.checks.secondVerification') = 1`,
+    sql`json_extract(${alerts.evidenceJson}, '$.watchNotificationEligible') = 1`,
     or(
       and(eq(alerts.source, "amazon"), gte(alerts.discountPercent, ANOMALY_LIMITS.minDiscountPercent), gte(alerts.score, 35)),
       and(gte(alerts.discountPercent, NON_AMAZON_EXTREME_DISCOUNT_PERCENT), gt(alerts.usualPriceCents, alerts.priceCents)),
