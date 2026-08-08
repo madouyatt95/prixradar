@@ -93,6 +93,23 @@ export async function deliverObservation(
   logger.info("push_delivery_completed", { alertId: ingested.alert.id, ...result });
 }
 
+export async function deliverObservationSafely(
+  observation: VerifiedObservation,
+  config: CollectorConfig,
+  options: { allowPush?: boolean } = {},
+): Promise<{ delivered: boolean; errorCode: "INGESTION_FAILED" | null }> {
+  try {
+    await deliverObservation(observation, config, options);
+    return { delivered: true, errorCode: null };
+  } catch (error) {
+    logger.error("observation_ingest_failed", {
+      productKey: observation.offer.product.productKey,
+      errorType: error instanceof Error ? error.name : "UnknownError",
+    });
+    return { delivered: false, errorCode: "INGESTION_FAILED" };
+  }
+}
+
 export async function liveVerifyKeepaObservation(
   observation: VerifiedObservation,
   config: CollectorConfig,

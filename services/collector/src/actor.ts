@@ -10,7 +10,7 @@ import {
   sourceAttempt,
   SourceStatusReporter,
 } from "./source-status.js";
-import { deliverObservation, liveVerifyKeepaObservation } from "./worker.js";
+import { deliverObservation, deliverObservationSafely, liveVerifyKeepaObservation } from "./worker.js";
 import { sendDailyDigests, sendProtectionPush } from "./push.js";
 import { postEanScanResult, postFrontierItems, privateApiHeaders } from "./sink.js";
 import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
@@ -562,6 +562,8 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               seenAmazonProducts.add(observation.alertCandidateId);
               return true;
             });
+            let deliveredProducts = 0;
+            let deliveryFailures = 0;
             for (const observation of uniqueObservations) {
               const alreadyVerified = verifiedByMarket.get(market) ?? 0;
               const live = input.verifyAmazonPage !== false && alreadyVerified < liveVerificationLimit
@@ -570,8 +572,27 @@ export async function runActor(config: CollectorConfig): Promise<void> {
                   })
                 : { observation, liveVerified: false, errorCode: "AMAZON_LIVE_SKIPPED" };
               if (live.liveVerified) verifiedByMarket.set(market, alreadyVerified + 1);
+              let ingestionAccepted: boolean | null = null;
               if (!fixture) {
-                await deliverObservation(live.observation, config, { allowPush: input.notify === true });
+                const delivery = await deliverObservationSafely(live.observation, config, {
+                  allowPush: input.notify === true,
+                });
+                ingestionAccepted = delivery.delivered;
+                if (delivery.delivered) {
+                  deliveredProducts += 1;
+                } else {
+                  deliveryFailures += 1;
+                  await Actor.pushData({
+                    dataKind: "observation-delivery-failure",
+                    discoverySegmentId: segment.id,
+                    discoverySegmentLabel: segment.label,
+                    alertCandidateId: live.observation.alertCandidateId,
+                    productKey: live.observation.offer.product.productKey,
+                    source: live.observation.offer.product.source,
+                    market: live.observation.offer.product.market,
+                    errorCode: delivery.errorCode,
+                  });
+                }
               }
               await Actor.pushData({
                 dataKind: "verified-observation",
@@ -579,16 +600,25 @@ export async function runActor(config: CollectorConfig): Promise<void> {
                 discoverySegmentLabel: segment.label,
                 liveVerified: live.liveVerified,
                 liveVerificationErrorCode: live.errorCode,
+                ingestionAccepted,
                 ...live.observation,
               });
             }
-            return uniqueObservations.length;
+            if (!fixture && uniqueObservations.length > 0 && deliveredProducts === 0) {
+              throw new Error("Toutes les observations Amazon ont été refusées par l'ingestion.");
+            }
+            return {
+              productsSeen: fixture ? uniqueObservations.length : deliveredProducts,
+              discoveryYieldCount: uniqueObservations.length,
+              deliveryFailures,
+            };
           },
-          productsSeen: (count) => count,
-          metrics: (count) => ({
+          productsSeen: (result) => result.productsSeen,
+          metrics: (result) => ({
             keepaRequests: 2,
             discoverySegmentId: segment.id,
-            discoveryYieldCount: count,
+            discoveryYieldCount: result.discoveryYieldCount,
+            extractionFailures: result.deliveryFailures,
           }),
           queueLag: () => 0,
         });

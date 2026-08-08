@@ -5,7 +5,7 @@ import { loadConfig } from "../src/config.js";
 import { cartTextMatchesOffer } from "../src/crawler.js";
 import type { OfferSnapshot } from "../src/types.js";
 import { hasExactVariantEvidence, verifyWithSecondRead } from "../src/verify.js";
-import { deliverObservation } from "../src/worker.js";
+import { deliverObservation, deliverObservationSafely } from "../src/worker.js";
 
 function verifiedOffer(overrides: Partial<OfferSnapshot> = {}): OfferSnapshot {
   return {
@@ -124,6 +124,36 @@ test("publie une observation rejetée comme signal 1/2 sans interrompre l'ingest
   assert.equal(body.verificationCount, 1);
   assert.equal(body.verifiedAt, null);
   assert.equal(body.notify, false);
+});
+
+test("isole une erreur d'ingestion confirmée et laisse passer le produit suivant", async () => {
+  const result = await twoReads(verifiedOffer(), verifiedOffer());
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response("Erreur serveur", { status: 500 });
+    return Response.json({
+      ok: true,
+      accepted: true,
+      alert: { id: "amazon:fr:B012345678", score: 49, notificationEligible: false },
+    });
+  };
+  try {
+    const first = await deliverObservationSafely(result, loadConfig({
+      PRICE_RADAR_BASE_URL: "https://prixradar.example",
+      INGEST_SECRET: "ingest-secret-test",
+    }));
+    const second = await deliverObservationSafely(result, loadConfig({
+      PRICE_RADAR_BASE_URL: "https://prixradar.example",
+      INGEST_SECRET: "ingest-secret-test",
+    }));
+    assert.deepEqual(first, { delivered: false, errorCode: "INGESTION_FAILED" });
+    assert.deepEqual(second, { delivered: true, errorCode: null });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls, 2);
 });
 
 test("rejette tout changement de vendeur, livraison, total ou panier à la seconde lecture", async () => {
