@@ -13,8 +13,12 @@ test("sépare les signaux 1/2 des alertes confirmées et conserve le lien marcha
   ]);
   assert.match(route, /view !== "confirmed" && view !== "single_check"/u);
   assert.match(route, /analysis\.checks\.secondVerification/u);
+  assert.match(route, /NON_AMAZON_EXTREME_DISCOUNT_PERCENT/u);
+  assert.match(route, /sellerChannel/u);
   assert.match(route, /certificateUrl: liveEligible/u);
   assert.match(interfaceSource, /Signaux à confirmer/u);
+  assert.match(interfaceSource, /Vendeurs tiers/u);
+  assert.match(interfaceSource, /PRÊTE À NOTIFIER/u);
   assert.match(interfaceSource, /Voir le produit ↗/u);
   assert.match(interfaceSource, /0 jeton Keepa/u);
   assert.match(sink, /verificationCount: observation\.verification\.status === "confirmed" \? 2 : 1/u);
