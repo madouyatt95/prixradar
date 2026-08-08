@@ -1,6 +1,7 @@
 import webPush from "web-push";
 
 import { privateApiHeaders, SinkConfigurationError, SinkRequestError } from "./sink.js";
+import { logger } from "./logger.js";
 import { hasExactVariantEvidence, notificationEligible } from "./verify.js";
 import type {
   PushReservation,
@@ -316,11 +317,22 @@ export async function sendPushForObservation(
       }, config, fetchImpl);
       summary.sent += 1;
     } catch (error) {
+      const errorCode = deliveryErrorCode(error);
+      logger.warn("push_send_failed", {
+        alertId,
+        subscriptionId: target.id,
+        errorCode,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message.slice(0, 240) : "Erreur push inconnue",
+        statusCode: typeof error === "object" && error !== null && "statusCode" in error
+          ? Number((error as { statusCode?: unknown }).statusCode)
+          : null,
+      });
       await deliveryAction({
         action: "complete",
         reservationId: reservation.reservationId,
         status: "failed",
-        errorCode: deliveryErrorCode(error),
+        errorCode,
       }, config, fetchImpl);
       summary.failed += 1;
     }
