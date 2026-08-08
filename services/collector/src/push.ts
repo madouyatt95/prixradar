@@ -48,7 +48,7 @@ interface ProtectionTarget extends PushSubscriptionTarget {
 }
 
 type DeliveryAction =
-  | { action: "reserve"; alertId: string; subscriptionId: number; tier?: "urgent" | "personal" | "digest" }
+  | { action: "reserve"; alertId: string; subscriptionId: number; tier?: "urgent" | "personal" | "digest"; alertLevel?: "reliable" | "watch" }
   | { action: "complete"; reservationId: number; status: "sent" | "failed"; errorCode?: string };
 
 function apiEndpoint(baseUrl: string, path: string): URL {
@@ -138,6 +138,7 @@ export async function fetchPushTargets(
     historyPoints: number;
     verifiedAgeMinutes: number;
     tier: "urgent" | "personal";
+    alertLevel: "reliable" | "watch";
   },
 ): Promise<PushSubscriptionTarget[]> {
   const targets: PushSubscriptionTarget[] = [];
@@ -169,6 +170,7 @@ export async function fetchPushTargets(
         historyPoints: String(Math.max(0, Math.min(1_000, Math.round(filters.historyPoints)))),
         verifiedAgeMinutes: String(Math.max(0, Math.min(10_080, Math.round(filters.verifiedAgeMinutes)))),
         tier: filters.tier,
+        alertLevel: filters.alertLevel,
       } : {}),
     }).toString();
     const payload = await protectedJson<TargetResponse>(config, endpoint, { method: "GET" }, fetchImpl);
@@ -214,8 +216,23 @@ export async function sendPushForObservation(
     fetchImpl?: typeof fetch;
     sendNotification?: typeof webPush.sendNotification;
   } = {},
+  options: { alertLevel?: "reliable" | "watch" } = {},
 ): Promise<PushDeliverySummary> {
-  if (!notificationEligible(observation)) {
+  const alertLevel = options.alertLevel === "watch" ? "watch" as const : "reliable" as const;
+  const watchEligible = observation.offer.fixture === false
+    && observation.verification.status === "confirmed"
+    && observation.verification.matchingIdentity
+    && observation.verification.matchingPrice
+    && hasExactVariantEvidence(observation.offer)
+    && observation.offer.availability === "in_stock"
+    && observation.offer.shipping !== null
+    && observation.offer.total !== null
+    && observation.offer.total.amountMinor > 0
+    && observation.offer.promotion?.accessibleToAll !== false
+    && observation.offer.seller !== null
+    && (observation.anomaly.discountPercent ?? 0) >= 20
+    && ["watch", "probable", "strong"].includes(observation.anomaly.classification);
+  if ((alertLevel === "reliable" && !notificationEligible(observation)) || (alertLevel === "watch" && !watchEligible)) {
     return { eligible: false, targets: 0, reserved: 0, sent: 0, failed: 0 };
   }
   if (!config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
@@ -252,18 +269,20 @@ export async function sendPushForObservation(
     historyPoints: observation.historicalPrices?.length ?? 0,
     verifiedAgeMinutes: Math.max(0, (Date.now() - Date.parse(observation.verification.secondObservedAt)) / 60_000),
     tier: backendScore >= 88 && (observation.anomaly.discountPercent ?? 0) >= 35 ? "urgent" : "personal",
+    alertLevel,
   });
   const summary: PushDeliverySummary = { eligible: true, targets: targets.length, reserved: 0, sent: 0, failed: 0 };
   const total = observation.offer.total;
   if (total === null) return { eligible: false, targets: 0, reserved: 0, sent: 0, failed: 0 };
   const payload = JSON.stringify({
     alertId,
-    title: `PrixRadar · ${observation.offer.product.title}`,
-    body: `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · score ${backendScore}/100`,
+    title: `${alertLevel === "watch" ? "Prix à vérifier" : "PrixRadar"} · ${observation.offer.product.title}`,
+    body: `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · ${alertLevel === "watch" ? "baisse inhabituelle, vendeur à contrôler" : `score ${backendScore}/100`}`,
     url: observation.offer.product.url,
     source: observation.offer.product.source,
     market: observation.offer.product.market,
     tier: backendScore >= 88 && (observation.anomaly.discountPercent ?? 0) >= 35 ? "urgent" : "personal",
+    alertLevel,
     badgeCount: 1,
   });
 
@@ -273,6 +292,7 @@ export async function sendPushForObservation(
       alertId,
       subscriptionId: target.id,
       tier: target.tier ?? "personal",
+      alertLevel,
     }, config, fetchImpl);
     if (!reservation.ok || !reservation.reserved || !reservation.reservationId) continue;
     summary.reserved += 1;
