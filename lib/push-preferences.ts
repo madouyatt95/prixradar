@@ -58,10 +58,12 @@ export function alertMatchesPushPreferences(input: {
   preferences: PushPreferenceSnapshot;
   alert: PushAlertSnapshot;
   tier: "urgent" | "personal" | "digest";
+  alertLevel?: "reliable" | "watch";
   radarMatches: boolean;
   nowMs?: number;
 }) {
   const { preferences, alert, tier, radarMatches } = input;
+  const watch = input.alertLevel === "watch";
   const nowMs = input.nowMs ?? Date.now();
   const verifiedAt = alert.verifiedAt ? Date.parse(alert.verifiedAt) : Number.NaN;
   const priceCents = alert.publicPriceCents ?? alert.priceCents;
@@ -79,21 +81,26 @@ export function alertMatchesPushPreferences(input: {
     && compatibleDeliveryMode
     && (expectedPostalPrefix === "" || expectedPostalPrefix === actualPostalPrefix)
   );
-  const speedMatches = tier === "digest"
+  const speedMatches = watch
+    ? preferences.notificationSpeed === "instant"
+    : tier === "digest"
     ? preferences.notificationSpeed === "digest"
     : tier === "personal"
       ? preferences.notificationSpeed !== "digest"
         && (preferences.notificationSpeed !== "balanced" || alert.score >= Math.min(100, preferences.minScore + 8))
       : true;
 
-  return alert.score >= preferences.minScore
+  const minimumScore = watch ? Math.min(preferences.minScore, 45) : preferences.minScore;
+  const minimumSellerScore = watch ? Math.min(preferences.minSellerScore, 30) : preferences.minSellerScore;
+
+  return alert.score >= minimumScore
     && alert.discountPercent >= preferences.minDiscount
-    && alert.sellerScore >= preferences.minSellerScore
+    && alert.sellerScore >= minimumSellerScore
     && alert.historyPoints >= preferences.minimumHistoryPoints
     && Number.isFinite(verifiedAt)
     && verifiedAt >= nowMs - preferences.maxAlertAgeMinutes * 60_000
     && (!preferences.requireExactVariant || alert.exactVariantConfirmed)
-    && (!preferences.requireCartConfirmation || alert.cartConfirmed)
+    && (watch || !preferences.requireCartConfirmation || alert.cartConfirmed)
     && (preferences.maxPriceCents === null || priceCents <= preferences.maxPriceCents)
     && (markets.length === 0 || markets.includes(alert.market))
     && (categories.length === 0 || categories.includes(alert.category ?? ""))

@@ -38,6 +38,8 @@ type AlertItem = {
   sellerTrusted?: boolean;
   sellerFulfillment?: string | null;
   notificationEligible?: boolean;
+  watchNotificationEligible?: boolean;
+  alertLevel?: "reliable" | "watch" | "none";
   condition: string;
   shipping: string;
   sku: string;
@@ -824,6 +826,8 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     sellerTrusted: item.sellerTrusted === true,
     sellerFulfillment: typeof item.sellerFulfillment === "string" ? item.sellerFulfillment : null,
     notificationEligible: item.notificationEligible === true,
+    watchNotificationEligible: item.watchNotificationEligible === true,
+    alertLevel: item.alertLevel === "reliable" || item.alertLevel === "watch" ? item.alertLevel : "none",
     condition: typeof item.condition === "string" ? item.condition : "Neuf",
     shipping:
       item.shippingCents === null || item.shippingCents === undefined
@@ -2197,16 +2201,19 @@ function RadarView({
   closeExpiredMinutes: number;
 }) {
   const [sellerView, setSellerView] = useState<SellerChannel>("retailer");
+  const [qualityView, setQualityView] = useState<"all" | "reliable" | "watch">("all");
   const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
   const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon", "France", ...categories.map((category) => `Catégorie · ${category}`)];
-  const verifiedCount = alerts.filter((alert) => alert.score >= 75).length;
+  const reliableCount = alerts.filter((alert) => alert.alertLevel === "reliable").length;
+  const watchCount = alerts.filter((alert) => alert.alertLevel === "watch").length;
   const filtered = search.trim().length > 0 || filter !== "Tout";
   const medianDiscount = alerts.length
     ? [...alerts].sort((a, b) => a.discount - b.discount)[Math.floor(alerts.length / 2)]
         .discount
     : 0;
-  const retailerAlerts = alerts.filter((alert) => alert.sellerChannel !== "third_party");
-  const thirdPartyAlerts = alerts.filter((alert) => alert.sellerChannel === "third_party");
+  const qualityAlerts = qualityView === "all" ? alerts : alerts.filter((alert) => alert.alertLevel === qualityView);
+  const retailerAlerts = qualityAlerts.filter((alert) => alert.sellerChannel !== "third_party");
+  const thirdPartyAlerts = qualityAlerts.filter((alert) => alert.sellerChannel === "third_party");
   const retailerSignals = singleCheckSignals.filter((alert) => alert.sellerChannel !== "third_party");
   const thirdPartySignals = singleCheckSignals.filter((alert) => alert.sellerChannel === "third_party");
   return (
@@ -2245,9 +2252,9 @@ function RadarView({
           <small>après seconde vérification</small>
         </div>
         <div className="metric-card">
-          <span>Prêtes à notifier</span>
-          <strong>{loading ? "…" : verifiedCount}</strong>
-          <small>selon vos critères</small>
+          <span>Alertes fiables</span>
+          <strong>{loading ? "…" : reliableCount}</strong>
+          <small>preuves complètes</small>
         </div>
         <div className="metric-card">
           <span>Économie médiane</span>
@@ -2292,7 +2299,12 @@ function RadarView({
 
       <div className="section-label-row">
         <h2>Alertes en cours</h2>
-        <span>{alerts.length} résultat{alerts.length === 1 ? "" : "s"}</span>
+        <span>{qualityAlerts.length} résultat{qualityAlerts.length === 1 ? "" : "s"}</span>
+      </div>
+      <div className="seller-channel-tabs quality-level-tabs" role="tablist" aria-label="Niveau de confiance">
+        <button type="button" role="tab" aria-selected={qualityView === "all"} className={qualityView === "all" ? "is-active" : ""} onClick={() => setQualityView("all")}>Toutes <span>{alerts.length}</span></button>
+        <button type="button" role="tab" aria-selected={qualityView === "reliable"} className={qualityView === "reliable" ? "is-active" : ""} onClick={() => setQualityView("reliable")}>Fiables <span>{reliableCount}</span></button>
+        <button type="button" role="tab" aria-selected={qualityView === "watch"} className={qualityView === "watch" ? "is-active" : ""} onClick={() => setQualityView("watch")}>À vérifier <span>{watchCount}</span></button>
       </div>
       <SellerChannelTabs
         value={sellerView}
@@ -2300,7 +2312,7 @@ function RadarView({
         retailerCount={retailerAlerts.length}
         thirdPartyCount={thirdPartyAlerts.length}
       />
-      {alerts.length ? (
+      {qualityAlerts.length ? (
         <div className="seller-lanes">
           <AlertSellerLane
             channel="retailer"
@@ -2455,8 +2467,8 @@ function AlertCard({
           <div className="card-meta">
             <span className="card-meta-left">
               <span className="merchant-pill">{alert.merchant}</span>
-              <span className={`signal-mode ${alert.notificationEligible ? "is-live" : ""}`}>
-                {alert.sourceMode !== "live" ? "NON PUBLIÉE" : alert.notificationEligible ? "PRÊTE À NOTIFIER" : "PRIX VÉRIFIÉ"}
+              <span className={`signal-mode ${alert.alertLevel === "reliable" ? "is-live" : alert.alertLevel === "watch" ? "is-watch" : ""}`}>
+                {alert.sourceMode !== "live" ? "NON PUBLIÉE" : alert.alertLevel === "reliable" ? "ALERTE FIABLE" : alert.alertLevel === "watch" ? "À VÉRIFIER" : "PRIX VÉRIFIÉ"}
               </span>
             </span>
             <span className={freshnessState === "stale" ? "freshness-badge is-stale" : "freshness-badge"} title={freshnessState === "stale" ? "État d’affichage local calculé selon vos préférences" : undefined}>{freshnessState === "stale" ? `Fenêtre dépassée · ${alert.freshness}` : alert.freshness}</span>

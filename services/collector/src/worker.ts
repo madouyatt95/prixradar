@@ -89,7 +89,7 @@ export async function deliverObservation(
     vapidPublicKey: config.vapidPublicKey,
     vapidPrivateKey: config.vapidPrivateKey,
     timeoutMs: config.httpTimeoutMs,
-  });
+  }, {}, { alertLevel: ingested.alert.alertLevel === "watch" ? "watch" : "reliable" });
   logger.info("push_delivery_completed", { alertId: ingested.alert.id, ...result });
 }
 

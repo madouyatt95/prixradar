@@ -37,6 +37,7 @@ export type AnomalyCandidate = {
   verificationCount: number;
   verifiedAt: string | null;
   merchantReferenceCents?: number | null;
+  trustedReferenceSource?: "keepa" | null;
   priceAccessibleToAll?: boolean;
   crossMerchantPricesCents?: number[];
 };
@@ -47,7 +48,7 @@ export type AnomalyEvaluation = {
   notificationEligible: boolean;
   currentTotalCents: number | null;
   usualPriceCents: number | null;
-  baselineSource: "historical_median" | "merchant_reference" | "unavailable";
+  baselineSource: "historical_median" | "trusted_provider_average" | "merchant_reference" | "unavailable";
   historyPoints: number;
   madCents: number | null;
   robustZ: number | null;
@@ -238,13 +239,18 @@ export function evaluatePriceAnomaly(
     assertMoney(merchantReference, "merchantReferenceCents", false);
   }
 
+  const trustedProviderAverage = candidate.trustedReferenceSource === "keepa"
+    && merchantReference !== null
+    && merchantReference !== undefined;
   const baselineSource =
-    historicalMedian !== null
+    trustedProviderAverage
+      ? "trusted_provider_average"
+      : historicalMedian !== null
       ? "historical_median"
       : merchantReference !== null && merchantReference !== undefined
         ? "merchant_reference"
         : "unavailable";
-  const rawBaseline = historicalMedian ?? merchantReference ?? null;
+  const rawBaseline = trustedProviderAverage ? merchantReference : historicalMedian ?? merchantReference ?? null;
   const usualPriceCents = rawBaseline === null ? null : Math.round(rawBaseline);
   const rawMad =
     historicalMedian === null ? null : median(historicalTotals.map((total) => Math.abs(total - historicalMedian)));
@@ -283,7 +289,7 @@ export function evaluatePriceAnomaly(
 
   const checks: AnomalyEvaluation["checks"] = {
     liveSource: candidate.sourceMode === "live",
-    historicalBaseline: baselineSource === "historical_median",
+    historicalBaseline: baselineSource === "historical_median" || baselineSource === "trusted_provider_average",
     enoughHistory: normalizedHistory.length >= ANOMALY_LIMITS.minHistoricalPoints,
     materialDiscount: discountPercent >= ANOMALY_LIMITS.minDiscountPercent,
     robustDeviation: robustZ !== null && robustZ >= ANOMALY_LIMITS.minRobustZ,
@@ -318,7 +324,7 @@ export function evaluatePriceAnomaly(
     safeguardsComponent +
     crossMerchantComponent;
 
-  if (baselineSource !== "historical_median") score = Math.min(score, 49);
+  if (baselineSource !== "historical_median" && baselineSource !== "trusted_provider_average") score = Math.min(score, 49);
   if (!exactVariant || !trustedSeller) score = Math.min(score, 49);
   if (!shippingIncluded) score = Math.min(score, 59);
   if (!candidate.available || candidate.condition !== "new") score = Math.min(score, 39);

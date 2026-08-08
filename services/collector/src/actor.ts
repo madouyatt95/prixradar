@@ -26,6 +26,7 @@ interface ActorInput {
   browserFallback?: boolean;
   limit?: number;
   page?: number;
+  pageRotation?: number;
   minimumDropPercent?: number;
   verifyAmazonPage?: boolean;
   liveVerificationLimit?: number;
@@ -215,7 +216,9 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       throw new Error("notify=true est interdit en mode fixture.");
     }
     const limit = Math.max(1, Math.min(100, Number.isSafeInteger(input.limit) ? input.limit ?? 25 : 25));
-    const page = Math.max(0, Math.min(10, Number.isSafeInteger(input.page) ? input.page ?? 0 : 0));
+    const page = Math.max(0, Math.min(49, Number.isSafeInteger(input.page) ? input.page ?? 0 : 0));
+    const pageRotation = Math.max(1, Math.min(50 - page, Number.isSafeInteger(input.pageRotation) ? input.pageRotation ?? 1 : 1));
+    const rotatingPage = (basePage: number) => Math.min(49, basePage + (Math.floor(Date.now() / (30 * 60_000)) % pageRotation));
     const minimumDropPercent = Math.max(20, Math.min(90, Number.isFinite(input.minimumDropPercent)
       ? input.minimumDropPercent ?? 30
       : 30));
@@ -392,11 +395,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     for (const coverageTarget of coverageTargets) {
       const { url, sourceConfigurationId, productLimit } = coverageTarget;
       const connector = connectorForUrl(url);
-      assertSourceScanAuthorized(url, scanOptions);
       if (source !== "all" && source !== connector.source) {
-        throw new Error(`L’URL ne correspond pas à la source ${source}.`);
+        continue;
       }
       try {
+        assertSourceScanAuthorized(url, scanOptions);
         await runReportedSourceAttempt({
           reporter: statusReporter,
           attempt: sourceAttempt(connector.source, connector.market, fixture),
@@ -575,7 +578,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           run: async () => {
             const observations = await scanKeepaMarket(keepaClient, market, {
               limit: segment.limit,
-              page: segment.page,
+              page: rotatingPage(segment.page),
               minimumDropPercent: segment.minimumDropPercent,
               categoryIds: segment.categoryIds,
               minPriceCents: segment.minPriceCents,

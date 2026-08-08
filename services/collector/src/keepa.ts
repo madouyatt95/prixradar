@@ -46,6 +46,8 @@ export interface KeepaProduct {
   market: Market;
   observedAt: string;
   buyBoxIsAmazon: boolean;
+  buyBoxIsFba: boolean;
+  buyBoxSellerId: string | null;
   history: TrustedHistoricalPrice[];
 }
 
@@ -168,10 +170,11 @@ function normalizeDeals(payload: JsonRecord): KeepaDeal[] {
 
 function buyBoxHistoryLast(value: unknown): number | null {
   if (!Array.isArray(value)) return null;
-  for (let index = value.length - 3; index >= 0; index -= 3) {
+  // Like every Keepa price CSV, BUY_BOX_SHIPPING is a sequence of
+  // [Keepa minute, landed price]. The price already includes shipping.
+  for (let index = value.length - 2; index >= 0; index -= 2) {
     const price = keepaPrice(value[index + 1]);
-    const shipping = nonNegative(value[index + 2]);
-    if (price !== null && shipping !== null) return Math.round(price + shipping);
+    if (price !== null) return price;
   }
   return null;
 }
@@ -182,15 +185,13 @@ function normalizeBuyBoxHistory(value: unknown, asin: string, observedAt: string
   const minimumTimestamp = currentTimestamp - 180 * 86_400_000;
   const history: TrustedHistoricalPrice[] = [];
   const seen = new Set<string>();
-  // Keepa CSV index 18 is encoded as [time, item price, shipping]. The
-  // application stores the landed total so the current value and its history
-  // remain comparable across Amazon Europe.
-  for (let index = 0; index + 2 < value.length; index += 3) {
+  // Keepa CSV index 18 is encoded as [time, landed price]. Treating it as a
+  // three-value tuple would accidentally add the next timestamp to the price
+  // and create impossible historical baselines.
+  for (let index = 0; index + 1 < value.length; index += 2) {
     const pointObservedAt = keepaTime(value[index]);
-    const itemMinor = keepaPrice(value[index + 1]);
-    const shippingMinor = nonNegative(value[index + 2]);
-    if (!pointObservedAt || itemMinor === null || shippingMinor === null) continue;
-    const priceMinor = Math.round(itemMinor + shippingMinor);
+    const priceMinor = keepaPrice(value[index + 1]);
+    if (!pointObservedAt || priceMinor === null) continue;
     const timestamp = Date.parse(pointObservedAt);
     if (timestamp >= currentTimestamp || timestamp < minimumTimestamp) continue;
     const rawHash = stableHash(["keepa", asin, pointObservedAt, priceMinor]);
@@ -235,7 +236,9 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
     referenceMinor: referenceMinor !== null && referenceMinor > currentMinor ? referenceMinor : null,
     market,
     observedAt,
-    buyBoxIsAmazon: raw.buyBoxIsAmazon === true,
+    buyBoxIsAmazon: stats?.buyBoxIsAmazon === true || raw.buyBoxIsAmazon === true,
+    buyBoxIsFba: stats?.buyBoxIsFBA === true,
+    buyBoxSellerId: text(stats?.buyBoxSellerId),
     history: normalizeBuyBoxHistory(historySeries, asin, observedAt),
   };
 }
@@ -415,7 +418,11 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     referencePrice: product.referenceMinor === null
       ? null
       : { amountMinor: product.referenceMinor, currency: market.currency },
-    seller: product.buyBoxIsAmazon ? "Amazon" : "Vendeur tiers Amazon",
+    seller: product.buyBoxIsAmazon
+      ? "Amazon"
+      : product.buyBoxSellerId
+        ? `Vendeur tiers Amazon · ${product.buyBoxSellerId}`
+        : "Vendeur tiers Amazon",
     sellerTrusted: product.buyBoxIsAmazon,
     condition: "new",
     availability: "in_stock",
@@ -426,7 +433,7 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     sellerSignals: {
       ratingPercent: null,
       reviewCount: null,
-      fulfillment: product.buyBoxIsAmazon ? "direct" : "merchant",
+      fulfillment: product.buyBoxIsAmazon ? "direct" : product.buyBoxIsFba ? "platform" : "merchant",
       country: null,
       warranty: null,
       returns: null,
