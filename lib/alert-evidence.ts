@@ -30,6 +30,15 @@ export function evidenceEligible(value: string) {
   return parseAlertEvidence(value)?.notificationEligible === true;
 }
 
+export function evidenceWatchEligible(value: string) {
+  return parseAlertEvidence(value)?.watchNotificationEligible === true;
+}
+
+export function evidenceAlertLevel(value: string): "reliable" | "watch" | "none" {
+  const level = parseAlertEvidence(value)?.alertLevel;
+  return level === "reliable" || level === "watch" ? level : "none";
+}
+
 export function evidenceBoolean(value: string, field: string) {
   const evidence = parseAlertEvidence(value);
   if (!evidence) return null;
