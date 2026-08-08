@@ -13,11 +13,11 @@ test("conserve une Buy Box tierce en la distinguant d'Amazon", () => {
   const snapshot = keepaOffer({
     asin: "B012345678", market: "FR", title: "Produit marketplace", brand: null, model: null, gtin: null,
     currentMinor: 5_000, referenceMinor: 10_000, observedAt: "2026-08-08T20:00:00.000Z", imageUrl: null,
-    buyBoxIsAmazon: false, history: [],
+    buyBoxIsAmazon: false, buyBoxIsFba: true, buyBoxSellerId: "A1MARKETPLACE", history: [],
   });
-  assert.equal(snapshot.seller, "Vendeur tiers Amazon");
+  assert.equal(snapshot.seller, "Vendeur tiers Amazon · A1MARKETPLACE");
   assert.equal(snapshot.sellerTrusted, false);
-  assert.equal(snapshot.sellerSignals?.fulfillment, "merchant");
+  assert.equal(snapshot.sellerSignals?.fulfillment, "platform");
 });
 
 test("enchaîne /deal puis /product, normalise les centimes et expose le quota", async () => {
@@ -48,19 +48,21 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
           asin: "B012345678",
           title: "Produit Keepa Fixture",
           brand: "Fixture",
-          buyBoxIsAmazon: true,
           stats: {
             current: [5000, -1, -1, -1, 9000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 5000],
             avg90: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10000],
+            buyBoxIsAmazon: true,
+            buyBoxIsFBA: true,
+            buyBoxSellerId: "A13V1IB3VIYZZH",
           },
           csv: Array.from({ length: 19 }, (_, index) => index === 18
             ? [
-                8_000_000, 9_500, 500,
-                8_030_000, 10_000, 500,
-                8_060_000, 9_400, 500,
-                8_090_000, 9_700, 500,
-                8_120_000, 9_300, 500,
-                8_150_000, 9_600, 500,
+                8_000_000, 10_000,
+                8_030_000, 10_500,
+                8_060_000, 9_900,
+                8_090_000, 10_200,
+                8_120_000, 9_800,
+                8_150_000, 10_100,
               ]
             : null),
         }],
@@ -124,10 +126,12 @@ test("résout un EAN en ASIN avec le paramètre Keepa code et conserve le GTIN",
           title: "Produit trouvé par EAN",
           eanList: ["4006381333931"],
           brand: "Fixture",
-          buyBoxIsAmazon: true,
           stats: {
             current: [4_990, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 4_990],
             avg90: [7_990],
+            buyBoxIsAmazon: true,
+            buyBoxIsFBA: true,
+            buyBoxSellerId: "A13V1IB3VIYZZH",
           },
           csv: [[8_000_000, 7_990]],
         }],
