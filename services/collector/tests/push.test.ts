@@ -103,6 +103,7 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
       assert.equal(init?.method, "GET");
       assert.equal(url.searchParams.get("score"), "90");
       assert.equal(url.searchParams.get("tier"), "urgent");
+      assert.equal(url.searchParams.get("alertLevel"), "reliable");
       assert.equal(url.searchParams.get("sellerScore"), "100");
       assert.equal(url.searchParams.get("exactVariantConfirmed"), "true");
       assert.equal(url.searchParams.get("cartConfirmed"), "true");
@@ -126,7 +127,7 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
   });
   assert.deepEqual(summary, { eligible: true, targets: 1, reserved: 1, sent: 1, failed: 0 });
   assert.deepEqual(actions, [
-    { action: "reserve", alertId: "alert-1", subscriptionId: 1, tier: "urgent" },
+    { action: "reserve", alertId: "alert-1", subscriptionId: 1, tier: "urgent", alertLevel: "reliable" },
     { action: "complete", reservationId: 1, status: "sent" },
   ]);
   assert.ok(auth.every((value) => value === "Bearer PUSH_SECRET_TEST"));
