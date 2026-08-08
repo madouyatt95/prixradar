@@ -49,6 +49,7 @@ export async function GET(request: Request) {
   const exactVariantConfirmed = search.get("exactVariantConfirmed") === "true";
   const cartConfirmed = search.get("cartConfirmed") === "true";
   const tier = search.get("tier") === "urgent" ? "urgent" as const : "personal" as const;
+  const alertLevel = search.get("alertLevel") === "watch" ? "watch" as const : "reliable" as const;
   if (limit === null || limit === 0 || after === null || score === null || discount === null || priceCents === null || sellerScore === null || historyPoints === null || verifiedAgeMinutes === null) {
     return serverJson(
       {
@@ -119,7 +120,9 @@ export async function GET(request: Request) {
             eq(pushSubscriptions.enabled, true),
             eq(userPreferences.notificationEnabled, true),
             gt(pushSubscriptions.id, cursor),
-            lte(userPreferences.minScore, score),
+            alertLevel === "watch"
+              ? eq(userPreferences.notificationSpeed, "instant")
+              : lte(userPreferences.minScore, score),
           ),
         )
         .orderBy(asc(pushSubscriptions.id))
@@ -196,17 +199,22 @@ export async function GET(request: Request) {
           deliveryCountry,
           gtin,
         }));
-        const speedMismatch = tier === "personal" && (
-          row.notificationSpeed === "digest" ||
-          (row.notificationSpeed === "balanced" && score < Math.min(100, row.minScore + 8))
-        );
+        const speedMismatch = alertLevel === "watch"
+          ? row.notificationSpeed !== "instant"
+          : tier === "personal" && (
+              row.notificationSpeed === "digest" ||
+              (row.notificationSpeed === "balanced" && score < Math.min(100, row.minScore + 8))
+            );
+        const requiredScore = alertLevel === "watch" ? Math.min(row.minScore, 45) : row.minScore;
+        const requiredSellerScore = alertLevel === "watch" ? Math.min(row.minSellerScore, 30) : row.minSellerScore;
         const filtered =
+          score < requiredScore ||
           discount < row.minDiscount ||
-          sellerScore < row.minSellerScore ||
+          sellerScore < requiredSellerScore ||
           historyPoints < row.minimumHistoryPoints ||
           verifiedAgeMinutes > row.maxAlertAgeMinutes ||
           (row.requireExactVariant && !exactVariantConfirmed) ||
-          (row.requireCartConfirmation && !cartConfirmed) ||
+          (alertLevel !== "watch" && row.requireCartConfirmation && !cartConfirmed) ||
           (row.maxPriceCents !== null && priceCents > row.maxPriceCents) ||
           (markets.length > 0 && !markets.includes(market)) ||
           (categories.length > 0 && !categories.includes(category)) ||
