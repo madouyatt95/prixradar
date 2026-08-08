@@ -4,7 +4,9 @@ import { runtimeEnv as env } from "@/lib/runtime-env";
 import { getDb } from "@/db";
 import { alertFeedback, alertIntelligence, alerts, priceObservations } from "@/db/schema";
 import { ANOMALY_LIMITS, type AnomalyEvaluation } from "@/lib/anomaly";
+import { NON_AMAZON_EXTREME_DISCOUNT_PERCENT } from "@/lib/deal-policy";
 import { assessPurchasability } from "@/lib/purchasability";
+import { sellerChannel } from "@/lib/seller-channel";
 import { isActiveSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
@@ -133,6 +135,12 @@ function serializeAlert(
     affiliateUrl = url.toString();
   }
   const buyNow = parseBuyNow(row.buyNowJson, row.buyNowScore);
+  const sellerIntelligence = intelligence ? parseJsonObject(intelligence.sellerJson) : {};
+  const sellerSignals = sellerIntelligence.signals && typeof sellerIntelligence.signals === "object" && !Array.isArray(sellerIntelligence.signals)
+    ? sellerIntelligence.signals as Record<string, unknown>
+    : {};
+  const fulfillment = typeof sellerSignals.fulfillment === "string" ? sellerSignals.fulfillment : null;
+  const channel = sellerChannel({ source: row.source, merchant: row.merchant, seller: row.seller, fulfillment });
   const totalCents = intelligence?.finalTotalCents ?? (row.shippingCents === null ? null : row.priceCents + row.shippingCents);
   const purchasability = assessPurchasability({
     sourceMode: row.sourceMode,
@@ -184,6 +192,10 @@ function serializeAlert(
       label: evidence?.secondVerification === true ? "2/2 vérifications" : "1/2 vérifications",
     },
     seller: row.seller,
+    sellerChannel: channel,
+    sellerChannelLabel: channel === "third_party" ? "Vendeur tiers" : "Enseigne",
+    sellerTrusted: sellerSignals.trusted === true,
+    sellerFulfillment: fulfillment,
     condition: row.condition,
     publicPriceCents: row.publicPriceCents,
     priceAccessibleToAll: row.priceAccessibleToAll,
@@ -320,15 +332,53 @@ export async function GET(request: Request) {
     gte(alerts.observedAt, freshAfter),
     sql`json_extract(${alerts.evidenceJson}, '$.analysis.checks.secondVerification') = 0`,
   );
+  const jdSportsNonAccessory = sql`not (
+    ${alerts.source} = 'jd_sports' and (
+      lower(coalesce(${alerts.category}, '')) like '%accessoir%'
+      or lower(${alerts.title}) like '%chaussette%'
+      or lower(${alerts.title}) like '%socks%'
+      or lower(${alerts.title}) like '%boxer%'
+      or lower(${alerts.title}) like '%sacoche%'
+      or lower(${alerts.title}) like '%casquette%'
+      or lower(${alerts.title}) like '%portefeuille%'
+      or lower(${alerts.title}) like '%sac à dos%'
+    )
+  )`;
+  const publicDealPolicy = or(
+    eq(alerts.source, "amazon"),
+    and(
+      gte(alerts.discountPercent, NON_AMAZON_EXTREME_DISCOUNT_PERCENT),
+      gt(alerts.usualPriceCents, alerts.priceCents),
+      jdSportsNonAccessory,
+    ),
+  );
+  const verifiedWatchVisibility = and(
+    eq(alerts.sourceMode, "live"),
+    inArray(alerts.status, ["review", "monitoring"]),
+    isNotNull(alerts.verifiedAt),
+    isNotNull(alerts.expiresAt),
+    gt(alerts.expiresAt, now),
+    gte(alerts.observedAt, freshAfter),
+    gte(alerts.verifiedAt, freshAfter),
+    sql`json_extract(${alerts.evidenceJson}, '$.analysis.checks.secondVerification') = 1`,
+    or(
+      and(eq(alerts.source, "amazon"), gte(alerts.discountPercent, ANOMALY_LIMITS.minDiscountPercent), gte(alerts.score, 35)),
+      and(gte(alerts.discountPercent, NON_AMAZON_EXTREME_DISCOUNT_PERCENT), gt(alerts.usualPriceCents, alerts.priceCents)),
+    ),
+  );
   const visibility = view === "single_check"
     ? singleCheckVisibility
     : includeDemo
     ? or(
         liveEligibility,
+        verifiedWatchVisibility,
         and(eq(alerts.sourceMode, "demo"), isNotNull(alerts.expiresAt), gt(alerts.expiresAt, now)),
       )
-    : liveEligibility;
-  const conditions: SQL[] = [visibility as SQL, gte(alerts.discountPercent, minDiscount), gte(alerts.score, minScore)];
+    : or(liveEligibility, verifiedWatchVisibility);
+  const dealVisibility = includeDemo
+    ? or(eq(alerts.sourceMode, "demo"), publicDealPolicy)
+    : publicDealPolicy;
+  const conditions: SQL[] = [visibility as SQL, dealVisibility as SQL, gte(alerts.discountPercent, minDiscount), gte(alerts.score, minScore)];
   conditions.push(lte(alerts.publicPriceCents, maxPrice));
   if (accessibleOnly) conditions.push(eq(alerts.priceAccessibleToAll, true));
   if (source !== null) conditions.push(eq(alerts.source, source));
