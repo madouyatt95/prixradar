@@ -13,13 +13,14 @@ test("concentre le forfait Keepa API 20 sur Amazon France", () => {
   if (!action || action.type !== "RUN_ACTOR") assert.fail("Action Actor attendue");
   const input = JSON.parse(action.runInput?.body ?? "{}") as Record<string, unknown>;
   assert.deepEqual(input.markets, ["FR"]);
-  assert.equal(input.limit, 100);
+  assert.equal(input.limit, 20);
+  assert.equal(input.pageRotation, 12);
   assert.equal(input.minimumDropPercent, 30);
   assert.equal(input.notify, true);
   assert.equal(input.liveVerificationLimit, 0);
   assert.equal(input.verifyAmazonPage, false);
   assert.equal(input.useRemoteCoverage, false);
-  assert.equal(input.useRemoteDiscovery, true);
+  assert.equal(input.useRemoteDiscovery, false);
 });
 
 test("récupère la couverture distante et teste les connecteurs chaque jour", () => {
