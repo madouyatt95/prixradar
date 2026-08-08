@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from "react";
+import { sellerChannel as resolveSellerChannel, type SellerChannel } from "@/lib/seller-channel";
 import { AdminView } from "./admin-view";
 
 type Tab = "radar" | "watchlist" | "sources" | "admin" | "settings";
@@ -33,6 +34,10 @@ type AlertItem = {
   freshness: string;
   verifiedAt: string;
   seller: string;
+  sellerChannel?: SellerChannel;
+  sellerTrusted?: boolean;
+  sellerFulfillment?: string | null;
+  notificationEligible?: boolean;
   condition: string;
   shipping: string;
   sku: string;
@@ -760,6 +765,15 @@ function mapLiveAlert(value: unknown): AlertItem | null {
       : source === "amazon" || source === "keepa"
         ? `Amazon.${market === "GB" ? "co.uk" : market.toLowerCase()}`
         : RETAIL_SOURCE_NAMES.get(source) ?? source.charAt(0).toUpperCase() + source.slice(1);
+  const seller = typeof item.seller === "string" ? item.seller : merchant;
+  const sellerChannel = item.sellerChannel === "third_party" || item.sellerChannel === "retailer"
+    ? item.sellerChannel
+    : resolveSellerChannel({
+        source,
+        merchant,
+        seller,
+        fulfillment: typeof item.sellerFulfillment === "string" ? item.sellerFulfillment : null,
+      });
   const currency = item.currency === "GBP" ? "GBP" : "EUR";
   const current = Math.max(0, totalCents / 100);
   const usual = Math.max(current, usualPriceCents / 100);
@@ -805,7 +819,11 @@ function mapLiveAlert(value: unknown): AlertItem | null {
             new Date(verified),
           )
         : "récent",
-    seller: typeof item.seller === "string" ? item.seller : merchant,
+    seller,
+    sellerChannel,
+    sellerTrusted: item.sellerTrusted === true,
+    sellerFulfillment: typeof item.sellerFulfillment === "string" ? item.sellerFulfillment : null,
+    notificationEligible: item.notificationEligible === true,
     condition: typeof item.condition === "string" ? item.condition : "Neuf",
     shipping:
       item.shippingCents === null || item.shippingCents === undefined
@@ -2178,6 +2196,7 @@ function RadarView({
   maxAlertAgeMinutes: number;
   closeExpiredMinutes: number;
 }) {
+  const [sellerView, setSellerView] = useState<SellerChannel>("retailer");
   const categories = [...new Set(alerts.map((alert) => alert.category))].slice(0, 3);
   const filters = ["Tout", "Prix public", "Très probable", "Remise ≥ 30 %", "Budget ≤ 250 €", "Amazon", "France", ...categories.map((category) => `Catégorie · ${category}`)];
   const verifiedCount = alerts.filter((alert) => alert.score >= 75).length;
@@ -2186,6 +2205,10 @@ function RadarView({
     ? [...alerts].sort((a, b) => a.discount - b.discount)[Math.floor(alerts.length / 2)]
         .discount
     : 0;
+  const retailerAlerts = alerts.filter((alert) => alert.sellerChannel !== "third_party");
+  const thirdPartyAlerts = alerts.filter((alert) => alert.sellerChannel === "third_party");
+  const retailerSignals = singleCheckSignals.filter((alert) => alert.sellerChannel !== "third_party");
+  const thirdPartySignals = singleCheckSignals.filter((alert) => alert.sellerChannel === "third_party");
   return (
     <section className="view-section">
       <PageHeading
@@ -2271,19 +2294,34 @@ function RadarView({
         <h2>Alertes en cours</h2>
         <span>{alerts.length} résultat{alerts.length === 1 ? "" : "s"}</span>
       </div>
+      <SellerChannelTabs
+        value={sellerView}
+        onChange={setSellerView}
+        retailerCount={retailerAlerts.length}
+        thirdPartyCount={thirdPartyAlerts.length}
+      />
       {alerts.length ? (
-        <div className="alert-grid">
-          {alerts.map((alert, index) => (
-            <AlertCard
-              key={alert.id}
-              alert={alert}
-              featured={index === 0}
-              watched={watched.has(alert.id)}
-              onWatch={() => onWatch(alert)}
-              onOpen={() => onOpen(alert)}
-              freshnessState={localAlertFreshness(alert, maxAlertAgeMinutes, closeExpiredMinutes)}
-            />
-          ))}
+        <div className="seller-lanes">
+          <AlertSellerLane
+            channel="retailer"
+            selected={sellerView === "retailer"}
+            alerts={retailerAlerts}
+            watched={watched}
+            onWatch={onWatch}
+            onOpen={onOpen}
+            maxAlertAgeMinutes={maxAlertAgeMinutes}
+            closeExpiredMinutes={closeExpiredMinutes}
+          />
+          <AlertSellerLane
+            channel="third_party"
+            selected={sellerView === "third_party"}
+            alerts={thirdPartyAlerts}
+            watched={watched}
+            onWatch={onWatch}
+            onOpen={onOpen}
+            maxAlertAgeMinutes={maxAlertAgeMinutes}
+            closeExpiredMinutes={closeExpiredMinutes}
+          />
         </div>
       ) : (
         <div className="empty-state">
@@ -2308,16 +2346,82 @@ function RadarView({
           <div><span className="eyebrow">À regarder avant confirmation</span><h2 id="single-check-title">Signaux à confirmer</h2><p>Un premier relevé a détecté un prix intéressant, mais la seconde lecture n’a pas encore concordé. Ces signaux ne déclenchent ni notification ni passeport certifié.</p></div>
           <span>{singleCheckSignals.length} signal{singleCheckSignals.length === 1 ? "" : "s"} · 1/2</span>
         </div>
-        {singleCheckSignals.length > 0 ? <div className="single-check-list">
-          {singleCheckSignals.map((alert) => <article key={alert.id} className="single-check-card">
-            <button type="button" onClick={() => onOpen(alert)} aria-label={`Analyser le signal ${alert.title}`}><span className={`single-check-mark accent-${alert.accent}`}>{alert.label}</span><span className="single-check-copy"><span><strong>{alert.merchant}</strong><i>1/2 vérifications</i></span><h3>{alert.title}</h3><small>{alert.reasons[0] ?? "Seconde lecture non concordante"}</small></span></button>
-            <span className="single-check-price"><strong>{money(alert.currentPrice, alert.currency)}</strong><small>{alert.shipping}</small></span>
-            <a href={alert.url} target="_blank" rel="noreferrer">Voir le produit ↗</a>
-          </article>)}
+        {singleCheckSignals.length > 0 ? <div className="single-check-columns">
+          <SingleCheckLane channel="retailer" selected={sellerView === "retailer"} alerts={retailerSignals} onOpen={onOpen} />
+          <SingleCheckLane channel="third_party" selected={sellerView === "third_party"} alerts={thirdPartySignals} onOpen={onOpen} />
         </div> : <p className="single-check-empty">Aucun prix récent n’attend une seconde confirmation.</p>}
       </section>
     </section>
   );
+}
+
+function SellerChannelTabs({
+  value,
+  onChange,
+  retailerCount,
+  thirdPartyCount,
+}: {
+  value: SellerChannel;
+  onChange: (value: SellerChannel) => void;
+  retailerCount: number;
+  thirdPartyCount: number;
+}) {
+  return <div className="seller-channel-tabs" role="tablist" aria-label="Type de vendeur">
+    <button type="button" role="tab" aria-selected={value === "retailer"} className={value === "retailer" ? "is-active" : ""} onClick={() => onChange("retailer")}>Enseignes <span>{retailerCount}</span></button>
+    <button type="button" role="tab" aria-selected={value === "third_party"} className={value === "third_party" ? "is-active" : ""} onClick={() => onChange("third_party")}>Vendeurs tiers <span>{thirdPartyCount}</span></button>
+  </div>;
+}
+
+function AlertSellerLane({
+  channel,
+  selected,
+  alerts,
+  watched,
+  onWatch,
+  onOpen,
+  maxAlertAgeMinutes,
+  closeExpiredMinutes,
+}: {
+  channel: SellerChannel;
+  selected: boolean;
+  alerts: AlertItem[];
+  watched: Set<string>;
+  onWatch: (alert: AlertItem) => void;
+  onOpen: (alert: AlertItem) => void;
+  maxAlertAgeMinutes: number;
+  closeExpiredMinutes: number;
+}) {
+  const thirdParty = channel === "third_party";
+  return <section className={`seller-lane ${selected ? "is-selected" : ""}`} data-channel={channel}>
+    <header><div><span>{thirdParty ? "Marketplace" : "Vente directe"}</span><h3>{thirdParty ? "Vendeurs tiers" : "Enseignes"}</h3></div><strong>{alerts.length}</strong></header>
+    <p>{thirdParty ? "Prix conservés, avec vendeur et niveau de confiance affichés séparément." : "Offres vendues directement par l’enseigne ou Amazon."}</p>
+    {alerts.length > 0 ? <div className="alert-grid">
+      {alerts.map((alert) => <AlertCard
+        key={alert.id}
+        alert={alert}
+        featured={false}
+        watched={watched.has(alert.id)}
+        onWatch={() => onWatch(alert)}
+        onOpen={() => onOpen(alert)}
+        freshnessState={localAlertFreshness(alert, maxAlertAgeMinutes, closeExpiredMinutes)}
+      />)}
+    </div> : <div className="seller-lane-empty"><strong>{thirdParty ? "Aucun prix tiers retenu" : "Aucune offre directe retenue"}</strong><span>Le radar continue sa surveillance automatiquement.</span></div>}
+  </section>;
+}
+
+function SingleCheckLane({ channel, selected, alerts, onOpen }: { channel: SellerChannel; selected: boolean; alerts: AlertItem[]; onOpen: (alert: AlertItem) => void }) {
+  return <section className={`single-check-lane ${selected ? "is-selected" : ""}`} data-channel={channel}>
+    <h3>{channel === "third_party" ? "Vendeurs tiers" : "Enseignes"} <span>{alerts.length}</span></h3>
+    {alerts.length > 0 ? <div className="single-check-list">{alerts.map((alert) => <SingleCheckCard key={alert.id} alert={alert} onOpen={() => onOpen(alert)} />)}</div> : <p className="single-check-empty">Aucun signal dans cette colonne.</p>}
+  </section>;
+}
+
+function SingleCheckCard({ alert, onOpen }: { alert: AlertItem; onOpen: () => void }) {
+  return <article className="single-check-card">
+    <button type="button" onClick={onOpen} aria-label={`Analyser le signal ${alert.title}`}><span className={`single-check-mark accent-${alert.accent}`}>{alert.label}</span><span className="single-check-copy"><span><strong>{alert.seller}</strong><i>{alert.sellerChannel === "third_party" ? "vendeur à contrôler" : "1/2 vérifications"}</i></span><h3>{alert.title}</h3><small>{alert.reasons[0] ?? "Seconde lecture non concordante"}</small></span></button>
+    <span className="single-check-price"><strong>{money(alert.currentPrice, alert.currency)}</strong><small>{alert.shipping}</small></span>
+    <a href={alert.url} target="_blank" rel="noreferrer">Voir le produit ↗</a>
+  </article>;
 }
 
 function AlertCard({
@@ -2351,14 +2455,15 @@ function AlertCard({
           <div className="card-meta">
             <span className="card-meta-left">
               <span className="merchant-pill">{alert.merchant}</span>
-              <span className={`signal-mode ${alert.sourceMode === "live" ? "is-live" : ""}`}>
-                {alert.sourceMode === "live" ? "VÉRIFIÉE" : "NON PUBLIÉE"}
+              <span className={`signal-mode ${alert.notificationEligible ? "is-live" : ""}`}>
+                {alert.sourceMode !== "live" ? "NON PUBLIÉE" : alert.notificationEligible ? "PRÊTE À NOTIFIER" : "PRIX VÉRIFIÉ"}
               </span>
             </span>
             <span className={freshnessState === "stale" ? "freshness-badge is-stale" : "freshness-badge"} title={freshnessState === "stale" ? "État d’affichage local calculé selon vos préférences" : undefined}>{freshnessState === "stale" ? `Fenêtre dépassée · ${alert.freshness}` : alert.freshness}</span>
           </div>
           <h3>{alert.title}</h3>
           <p className="card-source">{alert.source}</p>
+          <p className={`seller-line ${alert.sellerChannel === "third_party" ? "is-third-party" : ""}`}>{alert.sellerChannel === "third_party" ? "Vendeur tiers" : "Enseigne"} · {alert.seller}</p>
           {alert.intelligence ? <div className="autonomy-badges"><span>{cartLabel(alert.intelligence.shadowCart.status)}</span><span>Variante {alert.intelligence.variant.confidence}%</span><span>Urgence {alert.intelligence.lifetime.urgencyScore}/100</span></div> : null}
           <div className="price-line">
             <strong>{money(alert.currentPrice, alert.currency)}</strong>
