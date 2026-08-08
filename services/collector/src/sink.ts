@@ -1,5 +1,4 @@
 import { stableHash } from "./normalize.js";
-import { notificationEligible } from "./verify.js";
 import type {
   IngestResponse,
   Market,
@@ -242,7 +241,10 @@ export function toAlertIngestEnvelope(
         ? observation.verification.secondObservedAt
         : null,
       expiresAt,
-      notify: requestNotification && notificationEligible(observation),
+      // The backend is the authority for reliable versus "to verify" alerts.
+      // The collector only communicates whether this run is allowed to ask for
+      // delivery; it must not pre-empt the backend's richer historical checks.
+      notify: requestNotification,
       rawHash,
       publicPriceCents: promotion.accessibleToAll ? observation.offer.total?.amountMinor ?? null : null,
       priceAccessibleToAll: promotion.accessibleToAll,
