@@ -3,6 +3,7 @@ import { Actor } from "apify";
 import { connectorForUrl } from "./connectors/index.js";
 import { parseCoverageTargets, type CoverageTarget } from "./coverage-plan.js";
 import { assertSourceScanAuthorized, scanSourceUrl, verifySourceUrl } from "./crawler.js";
+import { isExtremeRetailCandidate, offerDiscountPercent } from "./deal-policy.js";
 import type { CollectorConfig } from "./config.js";
 import { KeepaClient, scanKeepaMarket, verifyKeepaCodeProduct } from "./keepa.js";
 import {
@@ -446,20 +447,42 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               timeoutMs: config.httpTimeoutMs,
             });
           }
+          const productTarget = connector.productPathPatterns.some((pattern) => pattern.test(new URL(url).pathname));
           const targetUrls = initialScan
-            ? (initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, productLimit ?? limit))
+            ? (productTarget && initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, productLimit ?? limit))
             : [url];
-          const candidates = targetUrls.length > 0 ? targetUrls : [url];
+          const candidates = initialScan ? targetUrls : [url];
           const targets = candidates.filter((targetUrl) => {
             if (seenProductUrls.has(targetUrl)) return false;
             seenProductUrls.add(targetUrl);
             return true;
           });
           let verifiedProducts = 0;
+          let policySkipped = 0;
           let verificationFailures = 0;
           let antiBotBlocked = false;
           for (const targetUrl of targets) {
             try {
+              if (connector.source === "jd_sports") {
+                const preview = await scanSourceUrl(targetUrl, {
+                  ...scanOptions,
+                  browserFallback: false,
+                  maxDiscoveredUrls: 1,
+                  shadowCart: false,
+                });
+                const previewOffer = preview.offers[0];
+                if (!previewOffer || !isExtremeRetailCandidate(previewOffer)) {
+                  policySkipped += 1;
+                  await Actor.pushData({
+                    dataKind: "deal-policy-skipped",
+                    source: connector.source,
+                    url: targetUrl,
+                    reason: previewOffer ? "DISCOUNT_BELOW_70_OR_ACCESSORY" : "NO_HTTP_OFFER",
+                    discountPercent: previewOffer ? offerDiscountPercent(previewOffer) : null,
+                  });
+                  continue;
+                }
+              }
               const observation = await verifySourceUrl(targetUrl, {
                 ...scanOptions,
                 verifyDelayMs: config.verifyDelayMs,
@@ -483,11 +506,12 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             }
           }
           return {
-            productsSeen: verifiedProducts,
+            productsSeen: verifiedProducts + policySkipped,
             duplicatesSkipped: candidates.length - targets.length,
             nextPageCursor: initialScan ? initialScan.nextPageUrl : undefined,
             attemptedProducts: targets.length,
             verificationFailures,
+            policySkipped,
             antiBotBlocked,
           };
         },
@@ -495,6 +519,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         metrics: (result) => ({
           duplicatesSkipped: result.duplicatesSkipped,
           antiBotBlocked: result.antiBotBlocked,
+          policySkipped: result.policySkipped,
           ...(result.nextPageCursor !== undefined ? { nextPageCursor: result.nextPageCursor } : {}),
         }),
         degradedErrorCode: (result) => result.antiBotBlocked

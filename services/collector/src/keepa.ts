@@ -415,7 +415,7 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     referencePrice: product.referenceMinor === null
       ? null
       : { amountMinor: product.referenceMinor, currency: market.currency },
-    seller: product.buyBoxIsAmazon ? "Amazon" : null,
+    seller: product.buyBoxIsAmazon ? "Amazon" : "Vendeur tiers Amazon",
     sellerTrusted: product.buyBoxIsAmazon,
     condition: "new",
     availability: "in_stock",
@@ -423,6 +423,14 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     strategy: "keepa",
     fixture,
     promotion: { type: "public_price", label: null, accessibleToAll: true },
+    sellerSignals: {
+      ratingPercent: null,
+      reviewCount: null,
+      fulfillment: product.buyBoxIsAmazon ? "direct" : "merchant",
+      country: null,
+      warranty: null,
+      returns: null,
+    },
   };
 }
 
