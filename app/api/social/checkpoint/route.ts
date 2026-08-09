@@ -45,9 +45,12 @@ export async function POST(request: Request) {
       && body.usageTotalUsd >= 0 && body.usageTotalUsd <= 100
       ? body.usageTotalUsd
       : null;
+    const conservativeMicros = status === "succeeded"
+      ? 1_000 + postsReturned * 7_000
+      : run.estimatedCostMicros;
     const actualMicros = usageTotalUsd === null
-      ? status === "succeeded" ? 1_000 + postsReturned * 7_000 : run.estimatedCostMicros
-      : Math.ceil(usageTotalUsd * 1_000_000);
+      ? conservativeMicros
+      : Math.max(conservativeMicros, Math.ceil(usageTotalUsd * 1_000_000));
     const finishedAtMs = Date.parse(typeof body.finishedAt === "string" ? body.finishedAt : "");
     const finishedAt = Number.isFinite(finishedAtMs) ? new Date(finishedAtMs).toISOString() : new Date().toISOString();
     const providerRunId = typeof body.providerRunId === "string" && /^[A-Za-z0-9]{8,32}$/u.test(body.providerRunId)

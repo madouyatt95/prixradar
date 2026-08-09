@@ -112,6 +112,14 @@ export function actorRunCostUsd(run: ActorRunCost, datasetItemsCount = 0) {
     : null;
 }
 
+export function officialFacebookRunCostUsd(run: ActorRunCost, datasetItemsCount: number) {
+  const reported = actorRunCostUsd(run, datasetItemsCount) ?? 0;
+  // The official Actor can omit its pay-per-event details from a child-run response.
+  // Keep the Free-plan ceiling as a safe floor: $0.001/run + $0.007/date-filtered item.
+  const conservative = 0.001 + Math.max(0, datasetItemsCount) * 0.007;
+  return Math.max(reported, conservative);
+}
+
 function cleanString(value: unknown, maximum = 2_048) {
   return typeof value === "string" ? value.replace(/\r\n?/gu, "\n").trim().slice(0, maximum) : "";
 }
@@ -265,7 +273,7 @@ export async function collectOfficialFacebookSources(options: {
   }
   return {
     providerRunId: run.id,
-    usageTotalUsd: actorRunCostUsd(run, data.items.length),
+    usageTotalUsd: officialFacebookRunCostUsd(run, data.items.length),
     finishedAt: run.finishedAt instanceof Date ? run.finishedAt.toISOString() : new Date().toISOString(),
     rawItemsCount: data.items.length,
     results: options.sources.map((source) => ({

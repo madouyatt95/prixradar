@@ -5,6 +5,7 @@ import {
   actorRunCostUsd,
   FACEBOOK_SOCIAL_SOURCES,
   normalizeOfficialFacebookPost,
+  officialFacebookRunCostUsd,
   parseFacebookArticle,
 } from "../src/social.js";
 
@@ -29,6 +30,10 @@ test("calcule le coût réel des événements facturés par l’Actor officiel",
 
 test("conserve le coût d’usage quand aucun tarif par événement n’est fourni", () => {
   assert.equal(actorRunCostUsd({ usageTotalUsd: 0.001 }), 0.001);
+});
+
+test("ne sous-estime jamais le coût de l’Actor Facebook quand Apify omet ses événements", () => {
+  assert.equal(officialFacebookRunCostUsd({ usageTotalUsd: 0.001 }, 2), 0.015);
 });
 
 test("extrait un post Facebook public avec son lien marchand et son heure", () => {
