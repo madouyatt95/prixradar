@@ -23,7 +23,11 @@ test("le scan EAN déclenche une détection persistante et une recherche Keepa p
   assert.match(route, /restoredRule/u);
   assert.match(plan, /eanScans/u);
   assert.match(plan, /status: "processing"/u);
+  assert.match(plan, /includeEanScans/u);
+  assert.match(plan, /plannedSourceIds/u);
   assert.match(actor, /productsByCodes\(market, \[scan\.gtin\]\)/u);
+  assert.match(actor, /endpoint\.searchParams\.set\("includeEan", "1"\)/u);
+  assert.match(actor, /input\.processEanScans === true/u);
   assert.match(actor, /postEanScanResult/u);
   assert.match(keepa, /code: unique\.join\(","\)/u);
   assert.match(interfaceSource, /Détecteur autonome/u);
