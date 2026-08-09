@@ -5,7 +5,13 @@ import { parseCoverageTargets, type CoverageTarget } from "./coverage-plan.js";
 import { assertSourceScanAuthorized, publicWebScanOptions, scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import { isExtremeRetailCandidate, offerDiscountPercent } from "./deal-policy.js";
 import type { CollectorConfig } from "./config.js";
-import { KeepaClient, scanKeepaMarket, verifyKeepaCodeProduct } from "./keepa.js";
+import {
+  DEFAULT_AMAZON_EXCLUDED_FAMILIES,
+  KeepaClient,
+  scanKeepaMarket,
+  verifyKeepaCodeProduct,
+  type AmazonExcludedFamily,
+} from "./keepa.js";
 import {
   runReportedSourceAttempt,
   sourceAttempt,
@@ -15,6 +21,7 @@ import { deliverObservation, deliverObservationSafely, liveVerifyKeepaObservatio
 import { sendDailyDigests, sendProtectionPush } from "./push.js";
 import { postEanScanResult, postFrontierItems, privateApiHeaders } from "./sink.js";
 import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
+import { verifyOfferSnapshots } from "./verify.js";
 
 interface ActorInput {
   source?: RetailSource | "all";
@@ -35,6 +42,7 @@ interface ActorInput {
   processEanScans?: boolean;
   scanAmazon?: boolean;
   shadowCart?: boolean;
+  excludedAmazonCategories?: AmazonExcludedFamily[];
 }
 
 type RemoteDiscoverySegment = {
@@ -42,6 +50,7 @@ type RemoteDiscoverySegment = {
   market: Market;
   label: string;
   categoryIds: number[];
+  excludedFamilies: AmazonExcludedFamily[];
   minPriceCents: number;
   maxPriceCents: number;
   minimumDropPercent: number;
@@ -59,6 +68,12 @@ type RemoteEanScan = {
 };
 type ActorCoverageTarget = Omit<CoverageTarget, "sourceConfigurationId"> & { sourceConfigurationId: string | null };
 type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[]; eanScans: RemoteEanScan[] };
+
+function amazonExcludedFamilies(value: unknown): AmazonExcludedFamily[] {
+  if (!Array.isArray(value)) return [...DEFAULT_AMAZON_EXCLUDED_FAMILIES];
+  const allowed = new Set<AmazonExcludedFamily>(["books", "music", "wall_art"]);
+  return [...new Set(value.filter((item): item is AmazonExcludedFamily => typeof item === "string" && allowed.has(item as AmazonExcludedFamily)))];
+}
 
 function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePriority[] {
   if (!Array.isArray(value)) return [];
@@ -119,12 +134,14 @@ async function remotePlan(
         const categoryIds = Array.isArray(value.categoryIds)
           ? value.categoryIds.filter((item): item is number => Number.isSafeInteger(item) && Number(item) > 0).slice(0, 20)
           : [];
+        const excludedFamilies = amazonExcludedFamilies(value.excludedFamilies);
         const number = (field: string, fallback: number) => Number.isSafeInteger(value[field]) ? Number(value[field]) : fallback;
         return [{
           id: String(value.id ?? `${market}:default`),
           market,
           label: String(value.label ?? "Découverte"),
           categoryIds,
+          excludedFamilies,
           minPriceCents: Math.max(1, number("minPriceCents", 1)),
           maxPriceCents: Math.max(1, number("maxPriceCents", 100_000_000)),
           minimumDropPercent: Math.max(20, Math.min(90, number("minimumDropPercent", 30))),
@@ -463,6 +480,82 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             });
           }
           const productTarget = connector.productPathPatterns.some((pattern) => pattern.test(new URL(url).pathname));
+          const jdListingOffers = connector.source === "jd_sports" && initialScan && !productTarget
+            ? initialScan.offers
+                .filter((offer) => offer.verificationScope === "category_listing")
+                .slice(0, productLimit ?? limit)
+            : [];
+          if (initialScan && jdListingOffers.length > 0) {
+            const qualifyingOffers = jdListingOffers.filter(isExtremeRetailCandidate);
+            const policySkipped = jdListingOffers.length - qualifyingOffers.length;
+            await Actor.pushData({
+              dataKind: "deal-policy-summary",
+              source: connector.source,
+              categoryUrl: url,
+              productsSeen: jdListingOffers.length,
+              qualifyingProducts: qualifyingOffers.length,
+              policySkipped,
+              rule: "PUBLIC_PRICE_DROP_AT_LEAST_70_NON_ACCESSORY",
+            });
+
+            if (qualifyingOffers.length === 0) {
+              return {
+                productsSeen: jdListingOffers.length,
+                duplicatesSkipped: 0,
+                nextPageCursor: initialScan.nextPageUrl,
+                attemptedProducts: 0,
+                verificationFailures: 0,
+                policySkipped,
+                antiBotBlocked: false,
+              };
+            }
+
+            await new Promise<void>((resolve) => setTimeout(resolve, config.verifyDelayMs));
+            const confirmationScan = await scanSourceUrl(url, coverageScanOptions);
+            const confirmationByProduct = new Map(
+              confirmationScan.offers
+                .filter((offer) => offer.verificationScope === "category_listing")
+                .map((offer) => [offer.product.productKey, offer] as const),
+            );
+            let verifiedProducts = 0;
+            let verificationFailures = 0;
+            for (const firstOffer of qualifyingOffers) {
+              const secondOffer = confirmationByProduct.get(firstOffer.product.productKey);
+              if (!secondOffer) {
+                verificationFailures += 1;
+                await Actor.pushData({
+                  dataKind: "verification-failure",
+                  url: firstOffer.product.url,
+                  errorCode: "LISTING_SECOND_READ_MISSING",
+                });
+                continue;
+              }
+              const observation = verifyOfferSnapshots(firstOffer, secondOffer);
+              if (observation.verification.status !== "confirmed") {
+                verificationFailures += 1;
+                await Actor.pushData({
+                  dataKind: "verification-failure",
+                  url: firstOffer.product.url,
+                  errorCode: "LISTING_SECOND_READ_CHANGED",
+                });
+                continue;
+              }
+              if (!fixture) await deliverObservation(observation, config, { allowPush: input.notify === true });
+              await Actor.pushData({ dataKind: "verified-listing-observation", ...observation });
+              seenProductUrls.add(firstOffer.product.url);
+              verifiedProducts += 1;
+            }
+            return {
+              productsSeen: jdListingOffers.length,
+              duplicatesSkipped: 0,
+              nextPageCursor: initialScan.nextPageUrl,
+              attemptedProducts: qualifyingOffers.length,
+              verificationFailures,
+              policySkipped,
+              antiBotBlocked: false,
+              verifiedProducts,
+            };
+          }
           const targetUrls = initialScan
             ? (productTarget && initialScan.offers.length > 0 ? [url] : initialScan.discoveredUrls.slice(0, productLimit ?? limit))
             : [url];
@@ -569,6 +662,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             market,
             label: "Découverte générale",
             categoryIds: [],
+            excludedFamilies: amazonExcludedFamilies(input.excludedAmazonCategories),
             minPriceCents: 1,
             maxPriceCents: 100_000_000,
             minimumDropPercent,
@@ -593,6 +687,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               page: rotatingPage(segment.page),
               minimumDropPercent: segment.minimumDropPercent,
               categoryIds: segment.categoryIds,
+              excludedFamilies: segment.excludedFamilies,
               minPriceCents: segment.minPriceCents,
               maxPriceCents: segment.maxPriceCents,
               fixture,
