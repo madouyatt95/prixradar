@@ -52,6 +52,7 @@ export interface AlertIngestEnvelope {
     priceAccessibleToAll: boolean;
     promotionType: "public_price" | "coupon" | "membership" | "cashback" | "trade_in" | "bundle" | "unknown";
     promotionLabel: string | null;
+    verificationScope: "product_page" | "category_listing";
     deliveryCountry?: string;
     deliveryPostalCode?: string;
     deliveryMode?: "home" | "pickup" | "either";
@@ -250,6 +251,7 @@ export function toAlertIngestEnvelope(
       priceAccessibleToAll: promotion.accessibleToAll,
       promotionType: promotion.type,
       promotionLabel: promotion.label,
+      verificationScope: observation.offer.verificationScope ?? "product_page",
       ...(observation.offer.deliveryContext ? {
         deliveryCountry: observation.offer.deliveryContext.country,
         deliveryPostalCode: observation.offer.deliveryContext.postalCode,
