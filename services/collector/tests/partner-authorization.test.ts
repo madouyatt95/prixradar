@@ -5,6 +5,7 @@ import { loadConfig } from "../src/config.js";
 import {
   assertSourceScanAuthorized,
   PartnerSourceAuthorizationError,
+  publicWebScanOptions,
   PublicWebPolicyError,
 } from "../src/crawler.js";
 import type { PartnerRetailSource } from "../src/types.js";
@@ -79,6 +80,16 @@ test("les voies web publiques approuvées fonctionnent sans partenariat", () => 
   for (const url of PUBLIC_WEB_URLS) {
     assert.doesNotThrow(() => assertSourceScanAuthorized(url));
   }
+});
+
+test("l'Actor neutralise le proxy et le panier avant une collecte web publique", () => {
+  const original = { proxyUrls: ["https://proxy.example"], shadowCart: true, browserFallback: true };
+  const safe = publicWebScanOptions("fnac", original);
+  assert.equal(safe.proxyUrls, undefined);
+  assert.equal(safe.shadowCart, false);
+  assert.equal(safe.browserFallback, true);
+  assert.deepEqual(original.proxyUrls, ["https://proxy.example"]);
+  assert.equal(publicWebScanOptions("amazon", original), original);
 });
 
 test("les voies publiques refusent les parcours privés, le panier et les proxys", () => {
