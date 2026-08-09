@@ -157,8 +157,20 @@ export function parseFacebookArticle(raw: RawFacebookArticle, source: FacebookSo
   };
 }
 
-async function visibleArticles(page: Page): Promise<RawFacebookArticle[]> {
-  await page.locator('[role="article"]').first().waitFor({ state: "attached", timeout: 10_000 }).catch(() => undefined);
+async function dismissPublicCookieDialog(page: Page) {
+  const decline = page.getByRole("button", {
+    name: /(?:refuser les cookies optionnels|decline optional cookies|only allow essential cookies)/iu,
+  }).first();
+  if (await decline.isVisible({ timeout: 2_500 }).catch(() => false)) {
+    await decline.click({ timeout: 2_500 }).catch(() => undefined);
+    await page.waitForTimeout(350);
+  }
+}
+
+async function visibleArticles(page: Page, groupId: string): Promise<RawFacebookArticle[]> {
+  await dismissPublicCookieDialog(page);
+  const postLink = page.locator(`a[href*="/groups/${groupId}/posts/"]`).first();
+  await postLink.waitFor({ state: "attached", timeout: 10_000 }).catch(() => undefined);
   for (let pass = 0; pass < 2; pass += 1) {
     await page.mouse.wheel(0, 1_200);
     await page.waitForTimeout(650);
@@ -193,7 +205,7 @@ export async function collectFacebookSocialSources(options: {
   const proxies = proxyConfiguration(options.proxyUrls);
   const crawler = new PlaywrightCrawler({
     launchContext: { launcher: chromium, launchOptions: { headless: true } },
-    maxConcurrency: 1,
+    maxConcurrency: 2,
     maxRequestsPerCrawl: FACEBOOK_SOCIAL_SOURCES.length,
     maxRequestRetries: 1,
     requestHandlerTimeoutSecs: Math.max(20, Math.ceil(options.timeoutMs / 1_000)),
@@ -203,6 +215,7 @@ export async function collectFacebookSocialSources(options: {
     respectRobotsTxtFile: true,
     ...(proxies ? { proxyConfiguration: proxies } : {}),
     preNavigationHooks: [async ({ page }, gotoOptions) => {
+      await page.setViewportSize({ width: 1_280, height: 1_600 });
       await page.setExtraHTTPHeaders({ "accept-language": "fr-FR,fr;q=0.9,en;q=0.5" });
       gotoOptions.waitUntil = "domcontentloaded";
     }],
@@ -219,7 +232,7 @@ export async function collectFacebookSocialSources(options: {
         results.set(source.id, { source, publications: [], loadedUrl: page.url(), errorCode: "UNEXPECTED_REDIRECT" });
         return;
       }
-      const raw = await visibleArticles(page);
+      const raw = await visibleArticles(page, source.groupId);
       const unique = new Map<string, SocialPublication>();
       for (const article of raw) {
         const publication = parseFacebookArticle(article, source, now);
