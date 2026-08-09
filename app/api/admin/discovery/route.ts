@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 const MARKETS = new Set(["FR", "DE", "IT", "ES", "GB"]);
 const DEFAULT_MARKETS = ["FR"] as const;
+const DEFAULT_EXCLUDED_FAMILIES = ["books", "music", "wall_art"] as const;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -26,6 +27,29 @@ function categories(value: unknown) {
   return [...new Set(value.map((item) => integer(item, "categoryIds", 1, 9_999_999_999)))];
 }
 
+function excludedFamilies(value: unknown) {
+  if (value === undefined) return [...DEFAULT_EXCLUDED_FAMILIES];
+  if (!Array.isArray(value)) throw new Error("excludedFamilies est invalide.");
+  const allowed = new Set<string>(DEFAULT_EXCLUDED_FAMILIES);
+  const parsed = [...new Set(value.map((item) => typeof item === "string" ? item : ""))];
+  if (parsed.some((item) => !allowed.has(item))) throw new Error("excludedFamilies est invalide.");
+  return parsed;
+}
+
+function storedCategoryConfiguration(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) return { include: categories(parsed), excludeFamilies: [...DEFAULT_EXCLUDED_FAMILIES] };
+    if (record(parsed)) return {
+      include: categories(parsed.include),
+      excludeFamilies: excludedFamilies(parsed.excludeFamilies),
+    };
+  } catch {
+    // Legacy or malformed values fall back to the safe editorial exclusions.
+  }
+  return { include: [], excludeFamilies: [...DEFAULT_EXCLUDED_FAMILIES] };
+}
+
 async function idFor(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return `ds_${[...new Uint8Array(digest)].slice(0, 12).map((part) => part.toString(16).padStart(2, "0")).join("")}`;
@@ -37,7 +61,10 @@ export async function GET(request: Request) {
   try {
     const items = await getDb().select().from(discoverySegments)
       .orderBy(desc(discoverySegments.priority), discoverySegments.market, discoverySegments.label);
-    return adminJson({ ok: true, items });
+    return adminJson({ ok: true, items: items.map((item) => ({
+      ...item,
+      ...storedCategoryConfiguration(item.categoryIdsJson),
+    })) });
   } catch {
     return adminJson({ ok: false, error: "La stratégie de découverte est indisponible." }, 503);
   }
@@ -62,7 +89,7 @@ export async function POST(request: Request) {
         source: "amazon",
         market,
         label: band.label,
-        categoryIdsJson: "[]",
+        categoryIdsJson: JSON.stringify({ include: [], excludeFamilies: DEFAULT_EXCLUDED_FAMILIES }),
         minPriceCents: band.min,
         maxPriceCents: band.max,
         minimumDropPercent: 30,
@@ -84,7 +111,10 @@ export async function POST(request: Request) {
       source: "amazon",
       market,
       label,
-      categoryIdsJson: JSON.stringify(categories(raw.categoryIds)),
+      categoryIdsJson: JSON.stringify({
+        include: categories(raw.categoryIds),
+        excludeFamilies: excludedFamilies(raw.excludedFamilies),
+      }),
       minPriceCents,
       maxPriceCents,
       minimumDropPercent: integer(raw.minimumDropPercent ?? 30, "minimumDropPercent", 20, 90),
@@ -117,6 +147,13 @@ export async function PATCH(request: Request) {
     }
     if (raw.dailyTokenBudget !== undefined) patch.dailyTokenBudget = integer(raw.dailyTokenBudget, "dailyTokenBudget", 1, 100_000);
     if (raw.priority !== undefined) patch.priority = integer(raw.priority, "priority", 0, 100);
+    if (raw.excludedFamilies !== undefined) {
+      const rows = await getDb().select({ categoryIdsJson: discoverySegments.categoryIdsJson })
+        .from(discoverySegments).where(eq(discoverySegments.id, raw.id)).limit(1);
+      if (!rows[0]) return adminJson({ ok: false, error: "Segment introuvable." }, 404);
+      const current = storedCategoryConfiguration(rows[0].categoryIdsJson);
+      patch.categoryIdsJson = JSON.stringify({ include: current.include, excludeFamilies: excludedFamilies(raw.excludedFamilies) });
+    }
     const [item] = await getDb().update(discoverySegments).set(patch)
       .where(eq(discoverySegments.id, raw.id)).returning();
     if (!item) return adminJson({ ok: false, error: "Segment introuvable." }, 404);
