@@ -65,6 +65,7 @@ const SOURCE_STATUSES = new Set(["healthy", "degraded", "offline", "not_configur
 const PROMOTION_TYPES = new Set(["public_price", "coupon", "membership", "cashback", "trade_in", "bundle", "unknown"]);
 const CART_PROBE_STATUSES = new Set(["confirmed", "product_page", "blocked", "unavailable"]);
 const FULFILLMENT_TYPES = new Set(["direct", "platform", "merchant", "unknown"]);
+const VERIFICATION_SCOPES = new Set(["product_page", "category_listing"]);
 
 type Source = ActiveSourceId;
 type UnknownRecord = Record<string, unknown>;
@@ -110,6 +111,7 @@ type ParsedAlert = {
   priceAccessibleToAll: boolean;
   promotionType: string;
   promotionLabel: string | null;
+  verificationScope: "product_page" | "category_listing";
   deliveryCountry: string | null;
   deliveryPostalPrefix: string | null;
   deliveryMode: DeliveryMode | null;
@@ -352,6 +354,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "priceAccessibleToAll",
     "promotionType",
     "promotionLabel",
+    "verificationScope",
     "deliveryCountry",
     "deliveryPostalCode",
     "deliveryMode",
@@ -449,6 +452,9 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     priceAccessibleToAll: optionalBoolean(value.priceAccessibleToAll, "priceAccessibleToAll", true),
     promotionType: value.promotionType === undefined ? "public_price" : requiredString(value.promotionType, "promotionType", 32),
     promotionLabel: optionalString(value.promotionLabel, "promotionLabel", 240),
+    verificationScope: value.verificationScope === undefined
+      ? "product_page"
+      : requiredString(value.verificationScope, "verificationScope", 32) as "product_page" | "category_listing",
     deliveryCountry,
     deliveryPostalPrefix: postalPrefix(deliveryPostalCode, deliveryCountry ?? "FR"),
     deliveryMode,
@@ -457,6 +463,10 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     sellerSignals: parseSellerSignals(value.sellerSignals, sellerTrusted),
   };
   if (!PROMOTION_TYPES.has(parsed.promotionType)) throw new Error("promotionType est invalide.");
+  if (!VERIFICATION_SCOPES.has(parsed.verificationScope)) throw new Error("verificationScope est invalide.");
+  if (parsed.verificationScope === "category_listing" && source !== "jd_sports") {
+    throw new Error("La vérification de catégorie est réservée à JD Sports.");
+  }
   if (parsed.priceAccessibleToAll && parsed.publicPriceCents === null) parsed.publicPriceCents = parsed.priceCents;
   if (!parsed.priceAccessibleToAll && parsed.promotionType === "public_price") throw new Error("Un prix conditionnel doit préciser son type de promotion.");
 
@@ -753,6 +763,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     trustedReferenceSource: envelope.source === "amazon" && parsed.historicalPrices.length > 0 ? "keepa" : null,
     priceAccessibleToAll: parsed.priceAccessibleToAll,
     crossMerchantPricesCents: [...comparableBySource.values()],
+    categoryListingPrice: parsed.verificationScope === "category_listing",
   };
   const evaluation = evaluatePriceAnomaly(
     candidate,
@@ -861,24 +872,42 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     && (envelope.source !== "amazon"
       || parsed.seller === "Amazon"
       || parsed.seller.includes(" · "));
-  const watchNotificationEligible = !notificationEligible
+  const categoryListingWatchEligible = envelope.source === "jd_sports"
+    && parsed.verificationScope === "category_listing"
     && publicDealPolicyEligible
     && identifiedSeller
+    && parsed.sellerTrusted
     && evaluation.score >= 45
+    && evaluation.discountPercent >= 70
     && evaluation.checks.liveSource
-    && evaluation.checks.historicalBaseline
-    && evaluation.checks.enoughHistory
     && evaluation.checks.materialDiscount
-    && evaluation.checks.robustDeviation
     && evaluation.checks.freshObservation
     && evaluation.checks.exactVariant
-    && evaluation.checks.shippingIncluded
     && evaluation.checks.newCondition
     && evaluation.checks.available
     && evaluation.checks.secondVerification
     && evaluation.checks.notExpired
-    && evaluation.checks.publicPriceAccessible
-    && evaluation.checks.marketComparisonCoherent;
+    && evaluation.checks.publicPriceAccessible;
+  const watchNotificationEligible = !notificationEligible
+    && publicDealPolicyEligible
+    && identifiedSeller
+    && (categoryListingWatchEligible || (
+      evaluation.score >= 45
+      && evaluation.checks.liveSource
+      && evaluation.checks.historicalBaseline
+      && evaluation.checks.enoughHistory
+      && evaluation.checks.materialDiscount
+      && evaluation.checks.robustDeviation
+      && evaluation.checks.freshObservation
+      && evaluation.checks.exactVariant
+      && evaluation.checks.shippingIncluded
+      && evaluation.checks.newCondition
+      && evaluation.checks.available
+      && evaluation.checks.secondVerification
+      && evaluation.checks.notExpired
+      && evaluation.checks.publicPriceAccessible
+      && evaluation.checks.marketComparisonCoherent
+    ));
   const alertLevel = notificationEligible ? "reliable" as const : watchNotificationEligible ? "watch" as const : "none" as const;
   const deliveryMode = alertDeliveryMode();
   const deliveryEligible = alertLevel !== "none" && deliveryMode === "live";
@@ -931,6 +960,11 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     watchNotificationEligible,
     alertLevel,
     publicDealPolicyEligible,
+    verificationScope: parsed.verificationScope,
+    categoryListingWatchEligible,
+    categoryListingLimitations: parsed.verificationScope === "category_listing"
+      ? ["product_page_not_verified", "size_not_verified", "shipping_unknown"]
+      : [],
     deliveryEligible,
     deliveryMode,
     adaptiveMinimumScore,
