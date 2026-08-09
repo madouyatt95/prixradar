@@ -49,6 +49,45 @@ export interface KeepaProduct {
   buyBoxIsFba: boolean;
   buyBoxSellerId: string | null;
   history: TrustedHistoricalPrice[];
+  categoryPath: string[];
+  productGroup: string | null;
+}
+
+export type AmazonExcludedFamily = "books" | "music" | "wall_art";
+export const DEFAULT_AMAZON_EXCLUDED_FAMILIES: readonly AmazonExcludedFamily[] = ["books", "music", "wall_art"];
+
+const EXCLUDED_CATEGORY_IDS: Partial<Record<Market, Partial<Record<AmazonExcludedFamily, readonly number[]>>>> = {
+  // Amazon.fr top-level browse nodes. The text classifier below remains the
+  // authority for nested wall-art nodes and products returned outside a root.
+  FR: { books: [301061], music: [301062] },
+};
+
+export function excludedCategoryIdsFor(
+  market: Market,
+  families: readonly AmazonExcludedFamily[],
+): number[] {
+  const marketIds = EXCLUDED_CATEGORY_IDS[market] ?? {};
+  return [...new Set(families.flatMap((family) => marketIds[family] ?? []))];
+}
+
+function normalizedCategoryText(value: string) {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
+}
+
+export function isExcludedAmazonProduct(
+  product: Pick<KeepaProduct, "title" | "categoryPath" | "productGroup">,
+  families: readonly AmazonExcludedFamily[],
+): boolean {
+  const familySet = new Set(families);
+  const category = normalizedCategoryText([...product.categoryPath, product.productGroup ?? ""].join(" "));
+  if (familySet.has("books") && /\b(?:book|books|livre|livres|buch|bucher|libro|libri|libros|kindle)\b/u.test(category)) return true;
+  if (familySet.has("music") && /\b(?:music|musique|musik|musica|vinyl|vinyle|vinili|cds?)\b/u.test(category)) return true;
+  if (familySet.has("wall_art") && /\b(?:wall art|art mural|decoration murale|tableau|tableaux|poster|posters|affiche|affiches|toile|toiles|canvas print|kunstdruck|arte da parete|cuadro|cuadros)\b/u.test(category)) return true;
+  if (!category && familySet.has("wall_art")) {
+    const title = normalizedCategoryText(product.title);
+    return /\b(?:tableau|poster|affiche|toile)\b/u.test(title);
+  }
+  return false;
 }
 
 export interface KeepaClientOptions {
@@ -222,6 +261,9 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
     ?? arrayPrice(current, PRICE_INDEXES.list);
   const imageName = text(raw.imagesCSV ?? raw.imageCSV)?.split(",")[0]?.trim() ?? null;
   const historySeries = csv[PRICE_INDEXES.buyBox];
+  const categoryPath = (Array.isArray(raw.categoryTree) ? raw.categoryTree : [])
+    .flatMap((entry): string[] => isRecord(entry) && text(entry.name) ? [text(entry.name) as string] : [])
+    .slice(0, 20);
 
   return {
     asin,
@@ -240,6 +282,8 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
     buyBoxIsFba: stats?.buyBoxIsFBA === true,
     buyBoxSellerId: text(stats?.buyBoxSellerId),
     history: normalizeBuyBoxHistory(historySeries, asin, observedAt),
+    categoryPath,
+    productGroup: text(raw.productGroup),
   };
 }
 
@@ -330,6 +374,7 @@ export class KeepaClient {
     categoryIds?: readonly number[];
     minPriceCents?: number;
     maxPriceCents?: number;
+    excludedCategoryIds?: readonly number[];
   } = {}): Promise<KeepaDeal[]> {
     const config = KEEPA_MARKETS[market];
     const minPriceCents = Math.max(1, Math.round(options.minPriceCents ?? 1));
@@ -340,7 +385,9 @@ export class KeepaClient {
       includeCategories: [...new Set(options.categoryIds ?? [])]
         .filter((value) => Number.isSafeInteger(value) && value > 0)
         .slice(0, 20),
-      excludeCategories: [],
+      excludeCategories: [...new Set(options.excludedCategoryIds ?? [])]
+        .filter((value) => Number.isSafeInteger(value) && value > 0)
+        .slice(0, 20),
       priceTypes: [PRICE_INDEXES.buyBox],
       deltaPercentRange: [options.minimumDropPercent ?? 30, 100],
       currentRange: [minPriceCents, maxPriceCents],
@@ -406,6 +453,7 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
       brand: product.brand,
       model: product.model,
       gtin: product.gtin,
+      category: product.categoryPath.at(-1) ?? product.productGroup,
       url: `https://${market.host}/dp/${product.asin}`,
       imageUrl: product.imageUrl,
     },
@@ -539,12 +587,19 @@ export async function scanKeepaMarket(
     categoryIds?: readonly number[];
     minPriceCents?: number;
     maxPriceCents?: number;
+    excludedFamilies?: readonly AmazonExcludedFamily[];
   } = {},
 ): Promise<VerifiedObservation[]> {
-  const deals = (await client.deals(market, options)).slice(0, options.limit ?? 50);
+  const excludedFamilies = options.excludedFamilies ?? DEFAULT_AMAZON_EXCLUDED_FAMILIES;
+  const deals = (await client.deals(market, {
+    ...options,
+    excludedCategoryIds: excludedCategoryIdsFor(market, excludedFamilies),
+  })).slice(0, options.limit ?? 50);
   if (deals.length === 0) return [];
   const products = await client.products(market, deals.map((deal) => deal.asin));
-  const byAsin = new Map(products.map((product) => [product.asin, product]));
+  const byAsin = new Map(products
+    .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies))
+    .map((product) => [product.asin, product]));
   return deals.flatMap((deal) => {
     const product = byAsin.get(deal.asin);
     return product ? [verifyKeepaDeal(deal, product, options.fixture ?? false)] : [];
