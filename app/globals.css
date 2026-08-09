@@ -3862,17 +3862,6 @@ a {
     padding-left: 13px;
   }
 
-  .dealabs-momentum {
-    margin-right: -13px;
-    margin-left: -13px;
-    padding-left: 13px;
-  }
-
-  .dealabs-momentum > header,
-  .dealabs-strip {
-    padding-right: 13px;
-  }
-
   .page-heading h1 {
     font-size: 30px;
   }
@@ -4254,6 +4243,19 @@ a {
   .purchasability-checks { grid-template-columns: repeat(2, 1fr); }
   .purchasability-actions { align-items: stretch; flex-direction: column; }
   .purchase-confirm > div { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 390px) {
+  .dealabs-momentum {
+    margin-right: -13px;
+    margin-left: -13px;
+    padding-left: 13px;
+  }
+
+  .dealabs-momentum > header,
+  .dealabs-strip {
+    padding-right: 13px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
