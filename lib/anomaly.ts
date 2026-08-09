@@ -40,6 +40,8 @@ export type AnomalyCandidate = {
   trustedReferenceSource?: "keepa" | null;
   priceAccessibleToAll?: boolean;
   crossMerchantPricesCents?: number[];
+  /** A category listing can prove the item price while shipping remains unknown. */
+  categoryListingPrice?: boolean;
 };
 
 export type AnomalyEvaluation = {
@@ -222,8 +224,9 @@ export function evaluatePriceAnomaly(
   }
 
   const shippingIncluded = candidate.shippingCents !== null;
-  const currentTotalCents =
-    candidate.shippingCents === null ? null : candidate.priceCents + candidate.shippingCents;
+  const currentTotalCents = candidate.shippingCents === null
+    ? candidate.categoryListingPrice === true ? candidate.priceCents : null
+    : candidate.priceCents + candidate.shippingCents;
   if (
     currentTotalCents !== null &&
     (!Number.isSafeInteger(currentTotalCents) || currentTotalCents > ANOMALY_LIMITS.maxPriceCents * 2)
