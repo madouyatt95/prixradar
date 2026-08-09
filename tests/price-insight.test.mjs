@@ -16,7 +16,6 @@ test("neutralise un pic isolé et ferme un faux prix barré Amazon", () => {
       point("2026-05-28T12:00:00.000Z", 15_227),
       point("2026-06-11T12:00:00.000Z", 5_407),
       point("2026-07-10T12:00:00.000Z", 5_822),
-      point("2026-07-25T12:00:00.000Z", 5_750),
       point("2026-08-02T12:00:00.000Z", 5_736),
     ],
   });

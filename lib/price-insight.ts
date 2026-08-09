@@ -150,7 +150,9 @@ export function buildPriceInsight(input: {
   const totalDurationMs = segments.reduce((sum, segment) => sum + segment.durationMs, 0);
   const coverageDays = roundOne(totalDurationMs / DAY_MS);
   const baselineFromHistory = weightedMedian(segments);
-  const reliableHistory = filtered.length >= 5 && coverageDays >= 7;
+  // Four clean price regimes over at least a week are enough to demote a
+  // normalised price. Alert delivery remains stricter in anomaly.ts (5 points).
+  const reliableHistory = filtered.length >= 4 && coverageDays >= 7;
   const baselineCents = reliableHistory
     ? baselineFromHistory
     : input.fallbackBaselineCents ?? baselineFromHistory;
