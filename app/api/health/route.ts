@@ -14,18 +14,28 @@ function configured(key: string) {
 
 export async function GET() {
   let database = false;
+  let dealabsLastSyncAt: string | null = null;
 
   try {
     const result = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
     database = result?.ok === 1;
+    const dealabs = await env.DB.prepare("SELECT last_seen_at AS lastSeenAt FROM community_signals WHERE provider='dealabs' ORDER BY last_seen_at DESC LIMIT 1").first<{ lastSeenAt: string }>();
+    dealabsLastSyncAt = dealabs?.lastSeenAt ?? null;
   } catch {
-    database = false;
+    try {
+      const result = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+      database = result?.ok === 1;
+    } catch {
+      database = false;
+    }
   }
+
+  const dealabsAgeMs = dealabsLastSyncAt ? Date.now() - Date.parse(dealabsLastSyncAt) : Number.POSITIVE_INFINITY;
 
   const body = {
     ok: database,
     service: "prixradar",
-    version: "0.10.0",
+    version: "0.11.0",
     checkedAt: new Date().toISOString(),
     runtime: database ? "cloudflare-d1" : process.env.VERCEL === "1" ? "vercel-preview" : "unconfigured",
     alertDeliveryMode: ((env as unknown as { ALERT_DELIVERY_MODE?: unknown }).ALERT_DELIVERY_MODE ?? process.env.ALERT_DELIVERY_MODE) === "live" ? "live" : "shadow",
@@ -42,7 +52,9 @@ export async function GET() {
       administration: configured("ADMIN_EMAILS"),
       cloudflareAccess: adminConfigured(),
       affiliateLinks: configured("AMAZON_ASSOCIATE_TAG"),
+      dealabsTrend: dealabsAgeMs >= 0 && dealabsAgeMs <= 15 * 60_000,
     },
+    dealabsLastSyncAt,
   };
 
   return Response.json(body, {

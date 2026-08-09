@@ -259,6 +259,62 @@ export const priceObservations = sqliteTable(
   ]
 );
 
+export const communitySignals = sqliteTable(
+  "community_signals",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull().default("dealabs"),
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    merchant: text("merchant").notNull(),
+    category: text("category"),
+    dealUrl: text("deal_url").notNull(),
+    merchantUrl: text("merchant_url"),
+    imageUrl: text("image_url"),
+    source: text("source"),
+    market: text("market"),
+    productId: text("product_id"),
+    currency: text("currency").notNull().default("EUR"),
+    priceCents: integer("price_cents"),
+    temperature: integer("temperature").notNull().default(0),
+    velocityX100: integer("velocity_x100").notNull().default(0),
+    status: text("status").notNull().default("new"),
+    inspectionRequestId: text("inspection_request_id"),
+    publishedAt: text("published_at").notNull(),
+    firstSeenAt: text("first_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("community_signals_provider_external_unique").on(table.provider, table.externalId),
+    index("community_signals_status_seen_idx").on(table.status, table.lastSeenAt),
+    index("community_signals_temperature_seen_idx").on(table.temperature, table.lastSeenAt),
+    index("community_signals_product_idx").on(table.source, table.market, table.productId),
+    check("community_signals_provider_allowed", sql`${table.provider} = 'dealabs'`),
+    check("community_signals_currency_allowed", sql`${table.currency} IN ('EUR', 'GBP')`),
+    check("community_signals_price_nonnegative", sql`${table.priceCents} >= 0`),
+    check("community_signals_temperature_nonnegative", sql`${table.temperature} >= 0`),
+    check("community_signals_velocity_nonnegative", sql`${table.velocityX100} >= 0`),
+    check("community_signals_status_allowed", sql`${table.status} IN ('new', 'heating', 'hot', 'cooling', 'stale')`),
+  ],
+);
+
+export const communitySignalObservations = sqliteTable(
+  "community_signal_observations",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    signalId: text("signal_id").notNull().references(() => communitySignals.id, { onDelete: "cascade" }),
+    temperature: integer("temperature").notNull(),
+    observedAt: text("observed_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("community_signal_observation_unique").on(table.signalId, table.temperature, table.observedAt),
+    index("community_signal_observation_signal_seen_idx").on(table.signalId, table.observedAt),
+    check("community_signal_observations_temperature_nonnegative", sql`${table.temperature} >= 0`),
+  ],
+);
+
 export const alertIntelligence = sqliteTable(
   "alert_intelligence",
   {

@@ -78,6 +78,7 @@ type Metrics = {
     frontierActive: number; frontierBlocked: number; duplicatesAvoided: number;
     inspectionsRequested: number; inspectionsCompleted: number;
   };
+  dealabs: { hotSignals: number; heatingFast: number; merchantLinks: number; checksQueued: number };
 };
 
 type BudgetRecommendation = {
@@ -159,6 +160,7 @@ const DEFAULT_METRICS: Metrics = {
   costPerExploitableAlertEuros: null, exploitableAlerts: 0, alertsInReview: 0,
   conditionalPrices: 0, feedback: { total: 0, useful: 0, falsePositive: 0, expired: 0 },
   autonomy: { analyzed: 0, cartsConfirmed: 0, trueAnomalies: 0, riskySellers: 0, averageVariantConfidence: 0, averageUrgency: 0, frontierTotal: 0, frontierActive: 0, frontierBlocked: 0, duplicatesAvoided: 0, inspectionsRequested: 0, inspectionsCompleted: 0 },
+  dealabs: { hotSignals: 0, heatingFast: 0, merchantLinks: 0, checksQueued: 0 },
 };
 const DEFAULT_GRAPH_METRICS = { canonicalProducts: 0, merchantMappings: 0, pendingReviews: 0 };
 
@@ -371,6 +373,7 @@ export function AdminView() {
           <div><span>Origine</span><strong>{metrics.autonomy.trueAnomalies}</strong><small>anomalies réelles · {metrics.autonomy.riskySellers} vendeurs risqués</small></div>
           <div><span>Sentinelle</span><strong>{metrics.autonomy.frontierActive}/{metrics.autonomy.frontierTotal}</strong><small>URL actives · {metrics.autonomy.duplicatesAvoided} doublons évités</small></div>
           <div><span>Partages PWA</span><strong>{metrics.autonomy.inspectionsCompleted}/{metrics.autonomy.inspectionsRequested}</strong><small>inspections terminées</small></div>
+          <div><span>Dealabs</span><strong>{metrics.dealabs.heatingFast}/{metrics.dealabs.hotSignals}</strong><small>montent vite · {metrics.dealabs.checksQueued} contrôles lancés</small></div>
           <div><span>Urgence</span><strong>{metrics.autonomy.averageUrgency}/100</strong><small>durée d’opportunité estimée</small></div>
         </div>
       </section>

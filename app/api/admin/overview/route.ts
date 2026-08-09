@@ -2,7 +2,7 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { runtimeEnv as env } from "@/lib/runtime-env";
 
 import { getDb } from "@/db";
-import { alertFeedback, alertIntelligence, alerts, collectionRuns, inspectionRequests, notificationDeliveries, sentinelFrontier, sourceConfigurations } from "@/db/schema";
+import { alertFeedback, alertIntelligence, alerts, collectionRuns, communitySignals, inspectionRequests, notificationDeliveries, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { adminJson, authorizeAdmin } from "@/lib/admin";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
 
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   const database = getDb();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   try {
-    const [runRows, alertRows, feedbackRows, deliveryRows, sources, sourceRunRows, sourceAlertRows, autonomyRows, frontierRows, inspectionRows] = await Promise.all([
+    const [runRows, alertRows, feedbackRows, deliveryRows, sources, sourceRunRows, sourceAlertRows, autonomyRows, frontierRows, inspectionRows, dealabsRows] = await Promise.all([
       database.select({
         runs: sql<number>`count(*)`,
         productsSeen: sql<number>`coalesce(sum(${collectionRuns.productsSeen}), 0)`,
@@ -76,6 +76,12 @@ export async function GET(request: Request) {
         requested: sql<number>`count(*)`,
         completed: sql<number>`coalesce(sum(case when ${inspectionRequests.status} = 'completed' then 1 else 0 end), 0)`,
       }).from(inspectionRequests).where(gte(inspectionRequests.requestedAt, since)),
+      database.select({
+        total: sql<number>`count(*)`,
+        heating: sql<number>`coalesce(sum(case when ${communitySignals.status} = 'heating' then 1 else 0 end), 0)`,
+        connected: sql<number>`coalesce(sum(case when ${communitySignals.merchantUrl} is not null then 1 else 0 end), 0)`,
+        queued: sql<number>`coalesce(sum(case when ${communitySignals.inspectionRequestId} is not null then 1 else 0 end), 0)`,
+      }).from(communitySignals).where(gte(communitySignals.lastSeenAt, since)),
     ]);
     const runs = runRows[0] ?? { runs: 0, productsSeen: 0, antiBotBlocks: 0, keepaRequests: 0, apifyCostMicros: 0 };
     const alertMetrics = alertRows[0] ?? { accepted: 0, exploitable: 0, review: 0, conditional: 0 };
@@ -139,6 +145,12 @@ export async function GET(request: Request) {
           duplicatesAvoided: Number(frontierRows[0]?.duplicates ?? 0),
           inspectionsRequested: Number(inspectionRows[0]?.requested ?? 0),
           inspectionsCompleted: Number(inspectionRows[0]?.completed ?? 0),
+        },
+        dealabs: {
+          hotSignals: Number(dealabsRows[0]?.total ?? 0),
+          heatingFast: Number(dealabsRows[0]?.heating ?? 0),
+          merchantLinks: Number(dealabsRows[0]?.connected ?? 0),
+          checksQueued: Number(dealabsRows[0]?.queued ?? 0),
         },
       },
       sources,

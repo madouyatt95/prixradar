@@ -158,7 +158,10 @@ test("ships autonomous cart, variant, index, sharing and sentinel controls", asy
   assert.match(inspections, /status: "pending"/);
   assert.match(frontier, /sentinelPriority/);
   assert.match(sourcePlan, /frontierItems/);
-  assert.doesNotMatch(app, /idealo|Dealabs/);
+  assert.doesNotMatch(app, /idealo/i);
+  assert.match(app, /Ça chauffe maintenant/);
+  assert.match(app, /Signal communautaire/);
+  assert.match(app, /Confirmé par PrixRadar/);
 });
 
 test("keeps the mobile header clear of the iPhone safe area", async () => {

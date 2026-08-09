@@ -1,4 +1,4 @@
-# PrixRadar v0.9.0
+# PrixRadar v0.11.0
 
 PWA mobile-first pour détecter, vérifier et suivre des anomalies de prix sans
 présenter une remise comme une « erreur certaine ».
@@ -31,6 +31,7 @@ présenter une remise comme une « erreur certaine ».
 | Bouclier après achat | actif | contrôle du même produit toutes les 6 h pendant 1 à 60 jours, seuil prudent `max(5 €, 3 %)`, Push privé et dédupliqué |
 | Portefeuille d’économies | actif | prix réellement payé, référence, économie suivie, montant potentiellement récupérable et journal d’événements |
 | Détecteur EAN autonome | actif côté application | Caméra Barcode Detector/ZXing, radar exact et file D1 ; recherche Amazon EU5 lorsque Keepa et le collecteur planifié sont activés |
+| Tendance Dealabs | actif sur Cloudflare | flux RSS public « tendance » toutes les 5 min, vitesse de chauffe, dédoublonnage et vérification prioritaire du lien marchand |
 | Vérification immédiate | actif | file prioritaire durable consommée par l'Actor, résultat conservé |
 | Score « Acheter maintenant » | actif | décision séparée du score d'anomalie, cinq facteurs explicables |
 | Intelligence autonome | actif | panier fantôme, empreinte variante, indice interne, origine, vendeur et durée probable |
@@ -114,6 +115,9 @@ La migration `0009` conserve les radars existants et ajoute les missions, les
 paniers-projets, les achats protégés et leur journal de prix sans désactiver les
 clés étrangères. La migration `0010` ajoute l’audit et la déduplication des Push
 du bouclier après achat.
+La migration `0013` ajoute les signaux communautaires Dealabs et leur historique
+de température. Ils restent séparés des alertes de prix tant que le marchand
+n’a pas été contrôlé par PrixRadar.
 
 ## Configuration utilisateur
 
@@ -149,6 +153,7 @@ le préfixe `NEXT_PUBLIC_` pour ces valeurs.
 | `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` | validation cryptographique de l'identité Cloudflare Access |
 | `ADMIN_EMAILS` | seconde liste blanche des administrateurs autorisés |
 | `ALERT_DELIVERY_MODE` | `shadow` par défaut, `live` seulement après recette |
+| `DEALABS_EMAIL_DOMAINS` | domaines d’expédition autorisés pour le canal e-mail de secours ; `dealabs.com` par défaut |
 
 La route `/api/health` n’expose que des booléens de capacité, jamais les secrets.
 
@@ -192,6 +197,7 @@ le passage en accès public sans connexion ChatGPT, se trouve dans
 - `POST /api/push/deliveries` : réservation/déduplication puis résultat d’envoi ;
 - `GET|POST /api/push/protection` : réservation privée et audit du Push de baisse après achat ;
 - `GET /api/keepa` : snapshot historique mis en cache et limité par appareil.
+- `GET /api/dealabs` : deals qui chauffent, vitesse observée et état de la vérification marchande ;
 - `GET|POST|DELETE /api/radars` : alertes en langage naturel, durables par appareil ;
 - `GET|POST|PATCH|DELETE /api/missions` : missions simples ou paniers-projets, budget, échéance, état et meilleures alertes correspondantes ;
 - `GET|POST|PATCH /api/purchases` : achats LIVE confirmés, portefeuille, protection après achat et décisions de retour/conservation ;

@@ -3100,6 +3100,44 @@ a {
 .radar-rule-list i { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); }
 .radar-rule-list button { border: 0; color: inherit; background: transparent; cursor: pointer; }
 
+.dealabs-momentum {
+  margin: 0 0 24px;
+  padding: 21px;
+  border: 1px solid #f0c2b5;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #fff5f0, #fffdf8 68%);
+}
+.dealabs-momentum > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+.dealabs-momentum > header h2 { margin: 3px 0 5px; font-size: 22px; letter-spacing: -.6px; }
+.dealabs-momentum > header p { max-width: 680px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.dealabs-live { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; color: #8e432f; background: #ffe2d8; font-size: 8px; font-weight: 820; }
+.dealabs-live i { width: 7px; height: 7px; border-radius: 50%; background: #df6648; box-shadow: 0 0 0 4px rgb(223 102 72 / 12%); }
+.dealabs-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.dealabs-card { min-width: 0; overflow: hidden; border: 1px solid #ead8cf; border-radius: 16px; background: rgb(255 255 255 / 82%); }
+.dealabs-card-main { display: grid; min-width: 0; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 10px; color: inherit; text-decoration: none; }
+.dealabs-thumb { position: relative; display: grid; width: 72px; height: 72px; place-items: center; overflow: hidden; border-radius: 12px; background: linear-gradient(135deg, #ef7a5e, #9d3e2d); background-position: center; background-size: cover; }
+.dealabs-thumb::after { position: absolute; inset: 0; content: ""; background: linear-gradient(180deg, transparent 48%, rgb(62 19 10 / 32%)); }
+.dealabs-thumb i { position: relative; z-index: 1; padding: 4px 6px; border-radius: 7px; color: #fff; background: rgb(107 35 22 / 72%); font-size: 8px; font-style: normal; font-weight: 900; letter-spacing: .08em; }
+.dealabs-card-copy { min-width: 0; }
+.dealabs-card-meta { display: flex; align-items: center; gap: 6px; }
+.dealabs-card-meta strong { color: #c94e33; font-size: 16px; }
+.dealabs-card-meta i { padding: 3px 6px; border-radius: 999px; color: #8e432f; background: #ffe4db; font-size: 7px; font-style: normal; font-weight: 820; }
+.dealabs-card-copy h3 { display: -webkit-box; overflow: hidden; margin: 4px 0 3px; font-size: 11px; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.dealabs-card-copy small { display: block; overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.dealabs-proof { display: inline-flex; margin-top: 7px; padding: 4px 7px; border-radius: 999px; color: #765d29; background: #f7edce; font-size: 7px; font-weight: 820; }
+.dealabs-proof.is-confirmed { color: #23785c; background: #dff3e9; }
+.dealabs-proof.is-checking { color: #5147a2; background: #ece9ff; }
+.dealabs-proof.is-neutral { color: #52616b; background: #edf1f3; }
+.dealabs-proof.is-warning { color: #94513f; background: #fae5df; }
+.dealabs-price { padding-right: 3px; font-size: 14px; white-space: nowrap; }
+.dealabs-card footer { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 7px 9px; border-top: 1px solid #f0e4de; }
+.dealabs-card footer a,
+.dealabs-card footer button,
+.dealabs-card footer span { padding: 0; border: 0; color: #6d6260; background: transparent; font: inherit; font-size: 8px; font-weight: 750; text-decoration: none; }
+.dealabs-card footer button { color: var(--violet-dark); cursor: pointer; }
+.dealabs-card footer span { color: var(--muted); }
+.dealabs-empty { margin: 0; padding: 16px; border: 1px dashed #e5bbae; border-radius: 14px; color: var(--muted); background: rgb(255 255 255 / 58%); font-size: 10px; line-height: 1.5; }
+
 .single-check-section { margin-top: 28px; padding-top: 23px; border-top: 1px solid var(--line); }
 .single-check-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin-bottom: 12px; }
 .single-check-heading h2 { margin: 4px 0 5px; font-size: 21px; letter-spacing: -.5px; }
@@ -3761,6 +3799,15 @@ a {
   .natural-radar { grid-template-columns: 1fr; padding: 17px; }
   .natural-radar form { grid-template-columns: 1fr; }
   .radar-rule-list { grid-column: 1; }
+  .dealabs-momentum { margin-right: -17px; margin-left: -17px; padding: 17px 0 17px 17px; border-right: 0; border-left: 0; border-radius: 0; }
+  .dealabs-momentum > header { display: block; padding-right: 17px; }
+  .dealabs-live { margin-top: 10px; }
+  .dealabs-strip { display: flex; overflow-x: auto; padding-right: 17px; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .dealabs-strip::-webkit-scrollbar { display: none; }
+  .dealabs-card { min-width: min(86vw, 360px); scroll-snap-align: start; }
+  .dealabs-card-main { grid-template-columns: 66px minmax(0, 1fr); }
+  .dealabs-thumb { width: 66px; height: 66px; }
+  .dealabs-price { grid-column: 2; padding: 0; }
   .notification-speed { grid-template-columns: 1fr; }
   .buy-now-factors { grid-template-columns: repeat(2, 1fr); }
   .proof-passport dl > div { grid-template-columns: 95px 1fr; }

@@ -95,6 +95,27 @@ type AlertItem = {
   };
 };
 
+type DealabsSignal = {
+  id: string;
+  title: string;
+  merchant: string;
+  category: string | null;
+  dealUrl: string;
+  merchantUrl: string | null;
+  imageUrl: string | null;
+  currency: "EUR" | "GBP";
+  priceCents: number | null;
+  temperature: number;
+  velocityPerMinute: number;
+  momentum: "new" | "heating" | "hot" | "cooling";
+  publishedAt: string;
+  verification: {
+    status: "confirmed" | "single_check" | "not_anomalous" | "failed" | "checking" | "queued" | "unsupported";
+    alertId: string | null;
+    level: "reliable" | "watch" | "confirmed" | "community";
+  };
+};
+
 type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
 
 type EanOffer = {
@@ -927,6 +948,35 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   };
 }
 
+function mapDealabsSignal(value: unknown): DealabsSignal | null {
+  const item = record(value);
+  const verification = record(item?.verification);
+  if (!item || !verification || typeof item.id !== "string" || typeof item.title !== "string" || typeof item.dealUrl !== "string") return null;
+  const status = String(verification.status);
+  if (!["confirmed", "single_check", "not_anomalous", "failed", "checking", "queued", "unsupported"].includes(status)) return null;
+  const momentum = ["new", "heating", "hot", "cooling"].includes(String(item.momentum)) ? String(item.momentum) as DealabsSignal["momentum"] : "hot";
+  return {
+    id: item.id,
+    title: item.title,
+    merchant: typeof item.merchant === "string" ? item.merchant : "Marchand",
+    category: typeof item.category === "string" ? item.category : null,
+    dealUrl: item.dealUrl,
+    merchantUrl: typeof item.merchantUrl === "string" ? item.merchantUrl : null,
+    imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : null,
+    currency: item.currency === "GBP" ? "GBP" : "EUR",
+    priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
+    temperature: Math.max(0, Math.round(finite(item.temperature))),
+    velocityPerMinute: Math.max(0, finite(item.velocityPerMinute)),
+    momentum,
+    publishedAt: typeof item.publishedAt === "string" ? item.publishedAt : new Date().toISOString(),
+    verification: {
+      status: status as DealabsSignal["verification"]["status"],
+      alertId: typeof verification.alertId === "string" ? verification.alertId : null,
+      level: verification.level === "reliable" || verification.level === "watch" || verification.level === "confirmed" ? verification.level : "community",
+    },
+  };
+}
+
 function mapEanDetection(value: unknown, fallbackGtin: string): EanDetection | null {
   const payload = record(value);
   if (!payload || !["anomaly", "normal", "monitoring"].includes(String(payload.verdict))) return null;
@@ -1000,6 +1050,7 @@ export function PriceRadarApp() {
   const [selected, setSelected] = useState<AlertItem | null>(null);
   const [liveAlerts, setLiveAlerts] = useState<AlertItem[]>([]);
   const [singleCheckSignals, setSingleCheckSignals] = useState<AlertItem[]>([]);
+  const [dealabsSignals, setDealabsSignals] = useState<DealabsSignal[]>([]);
   const [liveLoading, setLiveLoading] = useState(true);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
   const [health, setHealth] = useState<HealthCapabilities | null>(null);
@@ -1083,6 +1134,20 @@ export function PriceRadarApp() {
     return () => {
       window.removeEventListener("beforeinstallprompt", installHandler);
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => fetch("/api/dealabs?limit=20", { headers: { accept: "application/json" } })
+      .then(async (response) => response.ok ? response.json() as Promise<{ items?: unknown[] }> : { items: [] })
+      .then((payload) => {
+        if (!active) return;
+        setDealabsSignals((payload.items ?? []).map(mapDealabsSignal).filter((item): item is DealabsSignal => item !== null));
+      })
+      .catch(() => undefined);
+    void load();
+    const timer = window.setInterval(() => void load(), 5 * 60_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   useEffect(() => {
@@ -1952,6 +2017,7 @@ export function PriceRadarApp() {
       <RadarView
         alerts={visibleAlerts}
         singleCheckSignals={singleCheckSignals}
+        dealabsSignals={dealabsSignals}
         filter={filter}
         setFilter={setFilter}
         search={search}
@@ -1960,6 +2026,10 @@ export function PriceRadarApp() {
         watched={watched}
         onWatch={toggleWatch}
         onOpen={setSelected}
+        onOpenMatched={(alertId) => {
+          const alert = knownAlerts.find((candidate) => candidate.id === alertId);
+          if (alert) setSelected(alert);
+        }}
         mode={hasLiveSources || liveAlerts.length ? "live" : "fixture"}
         loading={liveLoading}
         keepaAvailable={health?.keepa === true}
@@ -2154,6 +2224,7 @@ function PageHeading({
 function RadarView({
   alerts,
   singleCheckSignals,
+  dealabsSignals,
   filter,
   setFilter,
   search,
@@ -2162,6 +2233,7 @@ function RadarView({
   watched,
   onWatch,
   onOpen,
+  onOpenMatched,
   onLookup,
   mode,
   loading,
@@ -2178,6 +2250,7 @@ function RadarView({
 }: {
   alerts: AlertItem[];
   singleCheckSignals: AlertItem[];
+  dealabsSignals: DealabsSignal[];
   filter: string;
   setFilter: (value: string) => void;
   search: string;
@@ -2186,6 +2259,7 @@ function RadarView({
   watched: Set<string>;
   onWatch: (alert: AlertItem) => void;
   onOpen: (alert: AlertItem) => void;
+  onOpenMatched: (alertId: string) => void;
   onLookup: () => void;
   mode: SourceMode;
   loading: boolean;
@@ -2262,6 +2336,8 @@ function RadarView({
           <small>sur les alertes vérifiées</small>
         </div>
       </div>
+
+      <DealabsMomentum signals={dealabsSignals} onOpenMatched={onOpenMatched} />
 
       <div className="toolbar">
         <label className="search-field">
@@ -2365,6 +2441,47 @@ function RadarView({
       </section>
     </section>
   );
+}
+
+function dealabsVerification(signal: DealabsSignal) {
+  if (signal.verification.status === "confirmed") return { label: "Confirmé par PrixRadar", tone: "confirmed" };
+  if (signal.verification.status === "single_check") return { label: "Premier contrôle positif", tone: "checking" };
+  if (signal.verification.status === "not_anomalous") return { label: "Prix contrôlé · pas d’anomalie", tone: "neutral" };
+  if (signal.verification.status === "checking" || signal.verification.status === "queued") return { label: "Vérification en cours", tone: "checking" };
+  if (signal.verification.status === "failed") return { label: "Contrôle à renouveler", tone: "warning" };
+  return { label: "Signal communautaire", tone: "community" };
+}
+
+function DealabsMomentum({ signals, onOpenMatched }: { signals: DealabsSignal[]; onOpenMatched: (alertId: string) => void }) {
+  const hottest = signals.slice(0, 8);
+  return <section className="dealabs-momentum" aria-labelledby="dealabs-momentum-title">
+    <header>
+      <div><span className="eyebrow">Tendance communautaire</span><h2 id="dealabs-momentum-title">Ça chauffe maintenant</h2><p>Dealabs repère l’intérêt de la communauté. PrixRadar contrôle ensuite le vrai prix chez le marchand avant de parler d’erreur de prix.</p></div>
+      <span className="dealabs-live"><i aria-hidden="true" />Actualisé toutes les 5 min</span>
+    </header>
+    {hottest.length > 0 ? <div className="dealabs-strip">
+      {hottest.map((signal) => {
+        const verification = dealabsVerification(signal);
+        const momentum = signal.momentum === "heating" ? "Monte très vite" : signal.momentum === "cooling" ? "Ralentit" : signal.momentum === "new" ? "Nouveau" : "Très populaire";
+        return <article className="dealabs-card" key={signal.id}>
+          <a className="dealabs-card-main" href={signal.dealUrl} target="_blank" rel="noreferrer">
+            <span className="dealabs-thumb" style={signal.imageUrl ? { backgroundImage: `url(${signal.imageUrl})` } : undefined}><i>HOT</i></span>
+            <span className="dealabs-card-copy">
+              <span className="dealabs-card-meta"><strong>{signal.temperature}°</strong><i>{signal.velocityPerMinute >= 0.1 ? `+${signal.velocityPerMinute.toFixed(1)}°/min` : momentum}</i></span>
+              <h3>{signal.title}</h3>
+              <small>{signal.merchant}{signal.category ? ` · ${signal.category}` : ""} · {relativeTime(signal.publishedAt)}</small>
+              <span className={`dealabs-proof is-${verification.tone}`}>{verification.label}</span>
+            </span>
+            {signal.priceCents !== null ? <strong className="dealabs-price">{money(signal.priceCents / 100, signal.currency)}</strong> : null}
+          </a>
+          <footer>
+            <a href={signal.dealUrl} target="_blank" rel="noreferrer">Voir sur Dealabs ↗</a>
+            {signal.verification.alertId ? <button type="button" onClick={() => onOpenMatched(signal.verification.alertId!)}>Voir l’analyse</button> : signal.merchantUrl ? <a href={signal.merchantUrl} target="_blank" rel="noreferrer">Voir le produit ↗</a> : <span>Marchand non raccordé</span>}
+          </footer>
+        </article>;
+      })}
+    </div> : <p className="dealabs-empty">Le radar Dealabs démarre. Les premiers deals dépassant rapidement 100° apparaîtront ici automatiquement.</p>}
+  </section>;
 }
 
 function SellerChannelTabs({

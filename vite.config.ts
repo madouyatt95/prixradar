@@ -24,6 +24,10 @@ const localBindingConfig = {
   name: "prixradar",
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  compatibility_date: "2026-07-21",
+  triggers: {
+    crons: ["*/5 * * * *"],
+  },
   vars: {
     // Keep the administration cost center aligned with the active Keepa API 20 plan.
     // `wrangler deploy --keep-vars` preserves the other dashboard-managed values.

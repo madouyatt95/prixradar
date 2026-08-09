@@ -32,6 +32,15 @@ const checks = [
     },
     label: "API et D1",
   },
+  {
+    path: "/api/dealabs?limit=1",
+    validate: async (response) => {
+      if (!response.ok) return false;
+      const payload = await response.json();
+      return payload.ok === true && Array.isArray(payload.items) && payload.cadenceMinutes === 5;
+    },
+    label: "radar Dealabs",
+  },
 ];
 
 let failed = false;
