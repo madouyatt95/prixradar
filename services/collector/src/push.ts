@@ -251,7 +251,20 @@ export async function sendPushForObservation(
   options: { alertLevel?: "reliable" | "watch" } = {},
 ): Promise<PushDeliverySummary> {
   const alertLevel = options.alertLevel === "watch" ? "watch" as const : "reliable" as const;
-  const watchEligible = observation.offer.fixture === false
+  const categoryListingWatchEligible = observation.offer.fixture === false
+    && observation.offer.product.source === "jd_sports"
+    && observation.offer.verificationScope === "category_listing"
+    && observation.verification.status === "confirmed"
+    && observation.verification.matchingIdentity
+    && observation.verification.matchingPrice
+    && hasExactVariantEvidence(observation.offer)
+    && observation.offer.availability === "in_stock"
+    && observation.offer.condition === "new"
+    && observation.offer.sellerTrusted
+    && observation.offer.seller === "JD Sports"
+    && observation.offer.promotion?.accessibleToAll !== false
+    && (observation.anomaly.discountPercent ?? 0) >= 70;
+  const fullyVerifiedWatchEligible = observation.offer.fixture === false
     && observation.verification.status === "confirmed"
     && observation.verification.matchingIdentity
     && observation.verification.matchingPrice
@@ -264,6 +277,7 @@ export async function sendPushForObservation(
     && observation.offer.seller !== null
     && (observation.anomaly.discountPercent ?? 0) >= 20
     && ["watch", "probable", "strong"].includes(observation.anomaly.classification);
+  const watchEligible = categoryListingWatchEligible || fullyVerifiedWatchEligible;
   if ((alertLevel === "reliable" && !notificationEligible(observation)) || (alertLevel === "watch" && !watchEligible)) {
     return { eligible: false, targets: 0, reserved: 0, sent: 0, failed: 0 };
   }
@@ -304,12 +318,14 @@ export async function sendPushForObservation(
     alertLevel,
   });
   const summary: PushDeliverySummary = { eligible: true, targets: targets.length, reserved: 0, sent: 0, failed: 0 };
-  const total = observation.offer.total;
-  if (total === null) return { eligible: false, targets: 0, reserved: 0, sent: 0, failed: 0 };
+  const total = observation.offer.total ?? observation.offer.price;
+  const listingOnly = observation.offer.verificationScope === "category_listing";
   const payload = JSON.stringify({
     alertId,
     title: `${alertLevel === "watch" ? "Prix à vérifier" : "PrixRadar"} · ${observation.offer.product.title}`,
-    body: `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · ${alertLevel === "watch" ? "baisse inhabituelle, vendeur à contrôler" : `score ${backendScore}/100`}`,
+    body: listingOnly
+      ? `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · baisse de ${Math.round(observation.anomaly.discountPercent ?? 0)} %, taille, stock et livraison à confirmer`
+      : `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · ${alertLevel === "watch" ? "baisse inhabituelle, vendeur à contrôler" : `score ${backendScore}/100`}`,
     url: observation.offer.product.url,
     source: observation.offer.product.source,
     market: observation.offer.product.market,
