@@ -273,10 +273,16 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const rawCoverageTargets: ActorCoverageTarget[] = configuredUrls.length > 0
       ? configuredUrls.map((url) => ({ url, sourceConfigurationId: null, productLimit: null }))
       : shouldUseRemoteCoverage ? plan.coverageTargets : [];
-    const coverageTargets = [...new Map(rawCoverageTargets.map((target) => [
+    const uniqueCoverageTargets = [...new Map(rawCoverageTargets.map((target) => [
       `${target.sourceConfigurationId ?? "manual"}:${target.url}`,
       target,
     ])).values()];
+    const jdRotationOffset = source === "jd_sports" && uniqueCoverageTargets.length > 1
+      ? Math.floor(Date.now() / (4 * 60 * 60_000)) % uniqueCoverageTargets.length
+      : 0;
+    const coverageTargets = jdRotationOffset === 0
+      ? uniqueCoverageTargets
+      : [...uniqueCoverageTargets.slice(jdRotationOffset), ...uniqueCoverageTargets.slice(0, jdRotationOffset)];
     const seenProductUrls = new Set<string>();
     for (const task of plan.priorityTasks) {
       if (source !== "all" && task.source !== source) continue;
