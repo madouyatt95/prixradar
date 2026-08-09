@@ -2490,7 +2490,12 @@ function SocialFeedView({
 }) {
   const [platform, setPlatform] = useState<"all" | "facebook" | "x">("all");
   const filtered = platform === "all" ? publications : publications.filter((item) => item.platform === platform);
-  const liveFacebook = sources.filter((source) => source.platform === "facebook" && source.status === "live").length;
+  const facebookSources = sources.filter((source) => source.platform === "facebook");
+  const activeFacebookSources = facebookSources.filter((source) => source.status === "live");
+  const liveFacebook = activeFacebookSources.length;
+  const facebookCadence = liveFacebook > 0
+    ? Math.min(...activeFacebookSources.map((source) => source.cadenceMinutes))
+    : null;
   return (
     <section className="social-page">
       <PageHeading
@@ -2504,8 +2509,8 @@ function SocialFeedView({
       />
 
       <div className="social-summary">
-        <div><strong>{liveFacebook}/{sources.filter((source) => source.platform === "facebook").length || 4}</strong><span>groupes Facebook suivis</span></div>
-        <div><strong>5 min</strong><span>entre deux passages</span></div>
+        <div><strong>{liveFacebook}/{facebookSources.length || 4}</strong><span>groupes Facebook actifs</span></div>
+        <div><strong>{facebookCadence ? `${facebookCadence} min` : "Pause"}</strong><span>{facebookCadence ? "entre deux passages" : "collecte non activée"}</span></div>
         <div><strong>0</strong><span>jeton Keepa utilisé</span></div>
       </div>
 
@@ -2515,8 +2520,8 @@ function SocialFeedView({
           const waiting = source.status === "awaiting_access";
           return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
             <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
-            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Relève momentanément difficile" : "Première relève en attente"}</small></span>
-            <i>{live ? "Actif" : waiting ? "En attente" : "Suivi"}</i>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Accès public limité" : "Première relève en attente"}</small></span>
+            <i>{live ? "Actif" : waiting ? "En attente" : "En pause"}</i>
           </a>;
         })}
       </section>
@@ -2547,7 +2552,7 @@ function SocialFeedView({
             </footer>
           </article>)}
         </div>
-      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : "La première relève est en cours"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les quatre groupes Facebook n’en dépendent pas." : "Les nouvelles publications apparaîtront ici automatiquement après le prochain passage."}</p></div>}
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : liveFacebook > 0 ? "Aucune nouvelle publication" : "Collecte Facebook en pause"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les quatre groupes Facebook n’en dépendent pas." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Facebook limite le fil depuis les serveurs cloud. Aucun passage automatique coûteux n’est lancé tant qu’une fréquence n’a pas été validée."}</p></div>}
     </section>
   );
 }
