@@ -846,12 +846,128 @@ function fallbackOffer(
   return offer;
 }
 
+function jdSportsListingCategory(pageUrl: string): string | null {
+  const path = new URL(pageUrl).pathname.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+  if (path.includes("chaussure")) return "Chaussures";
+  if (path.includes("vetement")) return "Vêtements";
+  if (path.includes("accessoire")) return "Accessoires";
+  return null;
+}
+
+/**
+ * JD Sports exposes the public price, crossed-out price and merchant SKU on
+ * category cards even when its product pages reject datacenter traffic.
+ * These offers intentionally keep shipping unknown and carry a listing-only
+ * scope so the backend can label them "à vérifier" rather than reliable.
+ */
+export function extractJdSportsListingOffers(
+  html: string,
+  pageUrl: string,
+  options: { observedAt?: string; fixture?: boolean } = {},
+): OfferSnapshot[] {
+  const connector = connectorForUrl(pageUrl);
+  if (connector.source !== "jd_sports") return [];
+  const pagePath = new URL(pageUrl).pathname;
+  if (connector.productPathPatterns.some((pattern) => pattern.test(pagePath))) return [];
+
+  const $ = cheerio.load(html);
+  const offers: OfferSnapshot[] = [];
+  const seen = new Set<string>();
+  for (const card of $(".itemContainer[data-productsku]").toArray()) {
+    const element = $(card);
+    const rawSku = cleanText(element.attr("data-productsku"), 160);
+    const sku = normalizedVariantPart(rawSku);
+    const link = element.find("a[data-e2e='product-listing-name'][href], a[data-e2e='plp-productList-link'][href]").first();
+    const href = link.attr("href");
+    const title = cleanText(
+      element.find("a[data-e2e='product-listing-name']").first().text()
+        || element.find("img[alt]").first().attr("alt"),
+      300,
+    );
+    const priceMinor = parseMoneyMinor(
+      cleanText(element.find("[data-e2e='product-listing-price'] [data-oi-price]").first().text(), 80)
+        ?? cleanText(element.find("[data-e2e='product-listing-price']").first().text(), 80),
+    );
+    const referenceMinor = parseMoneyMinor(
+      cleanText(element.find(".itemPrice .was [data-oi-price]").first().text(), 80)
+        ?? cleanText(element.find(".itemPrice .was").first().text(), 80),
+    );
+    if (!sku || !href || !title || priceMinor === null || priceMinor <= 0) continue;
+
+    let productUrl: string;
+    try {
+      productUrl = normalizeProductUrl(new URL(href, pageUrl).toString(), connector.allowedHosts);
+    } catch {
+      continue;
+    }
+    const expectedId = expectedVariantIdForUrl(productUrl, connector);
+    const observedId = `sku:${sku}`;
+    if (!expectedId || expectedId !== observedId || seen.has(observedId)) continue;
+    seen.add(observedId);
+
+    const imageUrl = cleanText(
+      element.find("img.thumbnail[src], img[src]").first().attr("src"),
+      2_048,
+    );
+    offers.push({
+      product: {
+        productKey: productKey({ source: connector.source, market: connector.market, externalId: rawSku ?? sku }),
+        source: connector.source,
+        market: connector.market,
+        externalId: rawSku ?? sku,
+        title,
+        brand: null,
+        model: null,
+        gtin: null,
+        category: jdSportsListingCategory(pageUrl),
+        url: productUrl,
+        imageUrl,
+      },
+      variantIdentity: {
+        expectedId,
+        observedId,
+        expectedSource: "listing_link",
+        observedSource: "merchant_dom",
+        merchantProductId: rawSku ?? sku,
+        gtin: null,
+        selectedOptions: {},
+      },
+      price: { amountMinor: priceMinor, currency: connector.currency },
+      shipping: null,
+      total: null,
+      referencePrice: referenceMinor !== null && referenceMinor > priceMinor
+        ? { amountMinor: referenceMinor, currency: connector.currency }
+        : null,
+      seller: "JD Sports",
+      sellerTrusted: true,
+      condition: "new",
+      availability: "in_stock",
+      observedAt: options.observedAt ?? new Date().toISOString(),
+      strategy: "connector",
+      fixture: options.fixture ?? false,
+      verificationScope: "category_listing",
+      promotion: { type: "public_price", label: "Prix public affiché sur la catégorie JD Sports", accessibleToAll: true },
+      sellerSignals: {
+        ratingPercent: null,
+        reviewCount: null,
+        fulfillment: "direct",
+        country: "FR",
+        warranty: null,
+        returns: null,
+      },
+    });
+  }
+  return offers;
+}
+
 export function extractRetailOffers(
   html: string,
   pageUrl: string,
   options: { observedAt?: string; fixture?: boolean; requestedUrl?: string } = {},
 ): OfferSnapshot[] {
   const connector = connectorForUrl(pageUrl);
+  const listingOffers = extractJdSportsListingOffers(html, pageUrl, options);
+  if (listingOffers.length > 0) return listingOffers;
   const structured = extractJsonLdOffers(html, {
     source: connector.source,
     market: connector.market,
