@@ -95,6 +95,7 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
   const actions: unknown[] = [];
   const auth: string[] = [];
   const subscriptions: unknown[] = [];
+  const notificationOptions: unknown[] = [];
   const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     auth.push(new Headers(init?.headers).get("authorization") ?? "");
@@ -124,8 +125,9 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
   };
   const summary = await sendPushForObservation("alert-1", 90, alert(), config, {
     fetchImpl: fakeFetch,
-    sendNotification: async (subscription) => {
+    sendNotification: async (subscription, _payload, options) => {
       subscriptions.push(subscription);
+      notificationOptions.push(options);
       return { statusCode: 201, headers: {}, body: "" };
     },
   });
@@ -139,6 +141,37 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
     endpoint: "https://push.example/subscription-1",
     keys: { p256dh: "p256-dh_", auth: "au-th_" },
   }]);
+  assert.equal((notificationOptions[0] as { topic?: string }).topic, "alert-1");
+});
+
+test("normalise un identifiant d'alerte en topic Web Push sûr", async () => {
+  let topic = "";
+  const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+    if (url.pathname === "/api/push/targets") {
+      return Response.json({ ok: true, targets: [{
+        id: 1,
+        endpoint: "https://push.example/subscription-1",
+        keys: { p256dh: "p256dh", auth: "auth" },
+        contentEncoding: "aes128gcm",
+        minScore: 60,
+        tier: "urgent",
+      }], nextAfter: null });
+    }
+    if (body?.action === "reserve") return Response.json({ ok: true, reserved: true, reservationId: 1 });
+    return Response.json({ ok: true, reserved: false });
+  };
+  const summary = await sendPushForObservation("amazon:fr:B09XQN4TXR", 90, alert(), config, {
+    fetchImpl: fakeFetch,
+    sendNotification: async (_subscription, _payload, options) => {
+      topic = String(options?.topic ?? "");
+      return { statusCode: 201, headers: {}, body: "" };
+    },
+  });
+  assert.equal(topic, "amazon-fr-B09XQN4TXR");
+  assert.match(topic, /^[A-Za-z0-9_-]{1,32}$/u);
+  assert.equal(summary.sent, 1);
 });
 
 test("livre une baisse après achat uniquement à la réservation du propriétaire", async () => {
