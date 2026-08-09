@@ -174,6 +174,67 @@ test("normalise un identifiant d'alerte en topic Web Push sûr", async () => {
   assert.equal(summary.sent, 1);
 });
 
+test("envoie une baisse JD Sports à vérifier sans inventer les frais de livraison", async () => {
+  const listing = alert();
+  listing.alertCandidateId = "jd_sports:fr:19742720_jdsportsfr";
+  listing.offer = {
+    ...listing.offer,
+    product: {
+      ...listing.offer.product,
+      productKey: listing.alertCandidateId,
+      source: "jd_sports",
+      externalId: "19742720_jdsportsfr",
+      title: "New Balance 740 Enfant",
+      url: "https://m.jdsports.fr/product/blanc-new-balance-740-enfant/19742720_jdsportsfr/",
+    },
+    variantIdentity: {
+      expectedId: "sku:19742720_jdsportsfr",
+      observedId: "sku:19742720_jdsportsfr",
+      expectedSource: "listing_link",
+      observedSource: "merchant_dom",
+      merchantProductId: "19742720_jdsportsfr",
+      gtin: null,
+      selectedOptions: {},
+    },
+    price: { amountMinor: 5_500, currency: "EUR" },
+    shipping: null,
+    total: null,
+    referencePrice: { amountMinor: 20_000, currency: "EUR" },
+    seller: "JD Sports",
+    sellerTrusted: true,
+    verificationScope: "category_listing",
+  };
+  listing.anomaly = { score: 49, classification: "watch", discountPercent: 72.5, reasons: [] };
+  const payloads: string[] = [];
+  const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+    if (url.pathname === "/api/push/targets") {
+      assert.equal(url.searchParams.get("alertLevel"), "watch");
+      assert.equal(url.searchParams.get("discount"), "73");
+      return Response.json({ ok: true, targets: [{
+        id: 8,
+        endpoint: "https://push.example/jd-listing",
+        keys: { p256dh: "p256dh", auth: "auth" },
+        contentEncoding: "aes128gcm",
+        tier: "personal",
+      }] });
+    }
+    if (body?.action === "reserve") return Response.json({ ok: true, reserved: true, reservationId: 8 });
+    return Response.json({ ok: true });
+  };
+  const summary = await sendPushForObservation(listing.alertCandidateId, 49, listing, config, {
+    fetchImpl: fakeFetch,
+    sendNotification: async (_subscription, payload) => {
+      payloads.push(String(payload));
+      return { statusCode: 201, headers: {}, body: "" };
+    },
+  }, { alertLevel: "watch" });
+  assert.equal(summary.sent, 1);
+  assert.match(payloads[0] ?? "", /taille, stock et livraison à confirmer/u);
+  assert.match(payloads[0] ?? "", /55\.00 EUR/u);
+});
+
 test("livre une baisse après achat uniquement à la réservation du propriétaire", async () => {
   const completions: unknown[] = [];
   const payloads: string[] = [];
