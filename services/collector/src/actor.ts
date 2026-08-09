@@ -32,6 +32,7 @@ interface ActorInput {
   liveVerificationLimit?: number;
   useRemoteCoverage?: boolean;
   useRemoteDiscovery?: boolean;
+  processEanScans?: boolean;
   scanAmazon?: boolean;
   shadowCart?: boolean;
 }
@@ -78,9 +79,14 @@ function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePrio
   });
 }
 
-async function remotePlan(config: CollectorConfig): Promise<RemotePlan> {
+async function remotePlan(
+  config: CollectorConfig,
+  options: { source: RetailSource | "all"; includeEanScans: boolean },
+): Promise<RemotePlan> {
   if (!config.priceRadarBaseUrl || !config.ingestSecret) return { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
+  if (options.source !== "all") endpoint.searchParams.set("source", options.source);
+  if (options.includeEanScans) endpoint.searchParams.set("includeEan", "1");
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
       secret: config.ingestSecret,
@@ -242,8 +248,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const configuredUrls = inputUrls(input.urls);
     const shouldUseRemoteCoverage = configuredUrls.length === 0 && input.useRemoteCoverage !== false;
     const usesRemotePlan = shouldUseRemoteCoverage
-      || input.useRemoteDiscovery === true;
-    const plan = usesRemotePlan ? await remotePlan(config) : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
+      || input.useRemoteDiscovery === true
+      || input.processEanScans === true;
+    const plan = usesRemotePlan
+      ? await remotePlan(config, { source, includeEanScans: input.processEanScans === true })
+      : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
     const rawCoverageTargets: ActorCoverageTarget[] = configuredUrls.length > 0
       ? configuredUrls.map((url) => ({ url, sourceConfigurationId: null, productLimit: null }))
       : shouldUseRemoteCoverage ? plan.coverageTargets : [];
@@ -253,6 +262,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     ])).values()];
     const seenProductUrls = new Set<string>();
     for (const task of plan.priorityTasks) {
+      if (source !== "all" && task.source !== source) continue;
       if (seenProductUrls.has(task.url)) continue;
       try {
         const observation = await verifySourceUrl(task.url, {
@@ -294,6 +304,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       }
     }
     for (const recheck of plan.rechecks) {
+      if (source !== "all" && recheck.source !== source) continue;
       try {
         const observation = await verifySourceUrl(recheck.url, {
           ...scanOptions,
@@ -318,7 +329,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         });
       }
     }
-    for (const scan of plan.eanScans) {
+    for (const scan of input.processEanScans === true ? plan.eanScans : []) {
       const found = new Set<string>();
       const marketsChecked = new Set<Market>();
       let errorCode: string | null = null;
