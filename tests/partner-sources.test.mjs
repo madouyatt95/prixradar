@@ -34,9 +34,10 @@ test("keeps partner sources out of every live execution path until authorized", 
   assert.match(admin, /value === undefined \? !isPartnerRequiredSource\(source\)/u);
   assert.match(admin, /PARTNER_AUTHORIZATION_REQUIRED/u);
   assert.match(plan, /authorizedSourceIds/u);
+  assert.match(plan, /plannedSourceIds = requestedSource === null[\s\S]+\? authorizedSourceIds[\s\S]+authorizedSourceIds\.filter/u);
   assert.match(plan, /isPublicWebSource\(source\) \? Math\.max\(60, adjusted\)/u);
   for (const table of ["sourceConfigurations", "recheckRequests", "inspectionRequests", "sentinelFrontier"]) {
-    assert.match(plan, new RegExp(`inArray\\(${table}\\.source, authorizedSourceIds\\)`, "u"));
+    assert.match(plan, new RegExp(`inArray\\(${table}\\.source, plannedSourceIds\\)`, "u"));
   }
   assert.match(ingest, /PARTNER_AUTHORIZATION_REQUIRED/u);
   assert.match(ingest, /isPublicWebSource\(envelope\.source\)/u);
