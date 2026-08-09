@@ -56,6 +56,15 @@ function base64Url(value: string): string {
   return value.trim().replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
 }
 
+function pushTopic(value: string): string {
+  const safe = value
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/gu, "-")
+    .replace(/-+/gu, "-")
+    .replace(/^-|-$/gu, "");
+  return (safe || "prixradar").slice(0, 32);
+}
+
 function configureVapid(config: PushConfig): void {
   webPush.setVapidDetails(
     config.vapidSubject,
@@ -324,7 +333,7 @@ export async function sendPushForObservation(
       await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
         TTL: 900,
         urgency: target.tier === "urgent" ? "high" : "normal",
-        topic: alertId.slice(0, 32),
+        topic: pushTopic(alertId),
         ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm"
           ? { contentEncoding: target.contentEncoding }
           : {}),
@@ -388,7 +397,7 @@ export async function sendDailyDigests(
       await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
         TTL: 43_200,
         urgency: "low",
-        topic: `digest-${new Date().toISOString().slice(0, 10)}`.slice(0, 32),
+        topic: pushTopic(`digest-${new Date().toISOString().slice(0, 10)}`),
         ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm" ? { contentEncoding: target.contentEncoding } : {}),
       });
       await deliveryAction({ action: "complete", reservationId: reservation.reservationId, status: "sent" }, config, fetchImpl);
@@ -431,7 +440,7 @@ export async function sendProtectionPush(
       await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
         TTL: 21_600,
         urgency: "high",
-        topic: `shield-${purchaseId}`.slice(0, 32),
+        topic: pushTopic(`shield-${purchaseId}`),
         ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm" ? { contentEncoding: target.contentEncoding } : {}),
       });
       await protectedJson(config, endpoint, { method: "POST", body: JSON.stringify({ notificationId: target.notificationId, status: "sent" }) }, fetchImpl);
