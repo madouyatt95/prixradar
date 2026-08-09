@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { alerts, collectionRuns, discoverySegments, eanScanRequests, inspectionRequests, merchantProducts, purchases, recheckRequests, sentinelFrontier, sourceConfigurations } from "@/db/schema";
 import { optimizeCoverageBudgets } from "@/lib/budget-optimizer";
-import { ACTIVE_SOURCE_IDS, isPartnerSourceAuthorized, isPublicWebSource } from "@/lib/source-registry";
+import { ACTIVE_SOURCE_IDS, isActiveSource, isPartnerSourceAuthorized, isPublicWebSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
 
@@ -65,8 +65,20 @@ export async function GET(request: Request) {
 
   try {
     const database = getDb();
+    const searchParams = new URL(request.url).searchParams;
+    const requestedSourceValue = searchParams.get("source");
+    if (requestedSourceValue !== null && requestedSourceValue !== "all" && !isActiveSource(requestedSourceValue)) {
+      return json({ ok: false, code: "INVALID_SOURCE" }, 400);
+    }
+    const requestedSource = requestedSourceValue !== null && requestedSourceValue !== "all"
+      ? requestedSourceValue
+      : null;
+    const includeEanScans = searchParams.get("includeEan") === "1";
     const partnerAuthorization = authorizedPartnerSources();
     const authorizedSourceIds = ACTIVE_SOURCE_IDS.filter((source) => isPartnerSourceAuthorized(source, partnerAuthorization));
+    const plannedSourceIds = requestedSource === null
+      ? authorizedSourceIds
+      : authorizedSourceIds.filter((source) => source === requestedSource);
     const staleClaim = new Date(Date.now() - 15 * 60_000).toISOString();
     await database.update(recheckRequests).set({ status: "pending", claimedAt: null, updatedAt: new Date().toISOString() })
       .where(and(eq(recheckRequests.status, "processing"), sql`${recheckRequests.claimedAt} < ${staleClaim}`));
@@ -82,7 +94,7 @@ export async function GET(request: Request) {
       database
         .select()
         .from(sourceConfigurations)
-        .where(and(eq(sourceConfigurations.enabled, true), inArray(sourceConfigurations.source, authorizedSourceIds)))
+        .where(and(eq(sourceConfigurations.enabled, true), inArray(sourceConfigurations.source, plannedSourceIds)))
         .orderBy(asc(sourceConfigurations.lastRunAt), asc(sourceConfigurations.source)),
       database
         .select()
@@ -90,28 +102,28 @@ export async function GET(request: Request) {
         .where(eq(discoverySegments.enabled, true))
         .orderBy(desc(discoverySegments.priority), asc(discoverySegments.lastRunAt)),
       database.select().from(recheckRequests)
-        .where(and(eq(recheckRequests.status, "pending"), inArray(recheckRequests.source, authorizedSourceIds)))
+        .where(and(eq(recheckRequests.status, "pending"), inArray(recheckRequests.source, plannedSourceIds)))
         .orderBy(asc(recheckRequests.requestedAt)).limit(25),
       database.select().from(inspectionRequests)
-        .where(and(eq(inspectionRequests.status, "pending"), inArray(inspectionRequests.source, authorizedSourceIds)))
+        .where(and(eq(inspectionRequests.status, "pending"), inArray(inspectionRequests.source, plannedSourceIds)))
         .orderBy(asc(inspectionRequests.requestedAt)).limit(25),
-      database.select().from(eanScanRequests)
+      includeEanScans ? database.select().from(eanScanRequests)
         .where(and(
           inArray(eanScanRequests.status, ["queued", "monitoring", "matched", "failed"]),
           sql`${eanScanRequests.nextCheckAt} <= ${planNow}`,
         ))
-        .orderBy(asc(eanScanRequests.nextCheckAt), desc(eanScanRequests.requestedAt)).limit(3),
+        .orderBy(asc(eanScanRequests.nextCheckAt), desc(eanScanRequests.requestedAt)).limit(3) : Promise.resolve([]),
       database.select().from(sentinelFrontier)
         .where(and(
           inArray(sentinelFrontier.status, ["queued", "active"]),
-          inArray(sentinelFrontier.source, authorizedSourceIds),
+          inArray(sentinelFrontier.source, plannedSourceIds),
           sql`${sentinelFrontier.nextScanAt} <= ${new Date().toISOString()}`,
         ))
         .orderBy(desc(sentinelFrontier.priority), asc(sentinelFrontier.nextScanAt)).limit(50),
       database.select().from(purchases)
         .where(and(
           inArray(purchases.status, ["protected", "action_available"]),
-          inArray(purchases.source, authorizedSourceIds),
+          inArray(purchases.source, plannedSourceIds),
           sql`${purchases.nextCheckAt} <= ${planNow}`,
           sql`${purchases.protectionEndsAt} > ${planNow}`,
         ))
@@ -175,7 +187,7 @@ export async function GET(request: Request) {
         yieldPerThousand: budget?.yieldPerThousand ?? 0,
       }];
     });
-    const discoveryItems = segments.flatMap((segment) => {
+    const discoveryItems = (requestedSource === null || requestedSource === "amazon" ? segments : []).flatMap((segment) => {
       const due = segment.lastRunAt === null || now - Date.parse(segment.lastRunAt) >= segment.cadenceMinutes * 60_000;
       if (!due) return [];
       const runsPerDay = Math.max(1, Math.ceil(1_440 / segment.cadenceMinutes));
