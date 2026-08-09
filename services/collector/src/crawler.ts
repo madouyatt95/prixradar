@@ -21,6 +21,7 @@ import {
   type OfferSnapshot,
   type PartnerRetailSource,
   type PublicWebRetailSource,
+  type RetailSource,
   type VerifiedObservation,
 } from "./types.js";
 import { parseMoneyMinor } from "./normalize.js";
@@ -33,6 +34,12 @@ export interface ScanOptions {
   proxyUrls?: readonly string[];
   authorizedPartnerSources?: readonly PartnerRetailSource[];
   shadowCart?: boolean;
+}
+
+export function publicWebScanOptions<T extends ScanOptions>(source: RetailSource, options: T): T {
+  if (!isPublicWebRetailSource(source)) return options;
+  const { proxyUrls: _proxyUrls, ...directOptions } = options;
+  return { ...directOptions, shadowCart: false } as T;
 }
 
 const FORBIDDEN_COMMERCE_ACTION = /(?:buy\s*now|acheter\s*maintenant|commander|passer\s*la\s*commande|checkout|paiement|payment|place\s*order|proceed\s*to\s*checkout|finaliser)/iu;
