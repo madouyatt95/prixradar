@@ -62,6 +62,20 @@ export const FACEBOOK_GROUPS_ACTOR_ID = "apify/facebook-groups-scraper";
 
 type OfficialFacebookPost = Record<string, unknown>;
 
+type ActorRunCost = {
+  usageTotalUsd?: number;
+  chargedEventCounts?: Record<string, number>;
+  pricingInfo?: {
+    pricingModel?: string;
+    pricePerUnitUsd?: number;
+    pricingPerEvent?: {
+      actorChargeEvents?: Record<string, {
+        eventPriceUsd?: number;
+      }>;
+    };
+  };
+};
+
 export type OfficialFacebookRunResult = {
   providerRunId: string;
   usageTotalUsd: number | null;
@@ -73,6 +87,28 @@ export type OfficialFacebookRunResult = {
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
+    : null;
+}
+
+export function actorRunCostUsd(run: ActorRunCost, datasetItemsCount = 0) {
+  if (run.pricingInfo?.pricingModel === "PAY_PER_EVENT") {
+    const eventPrices = run.pricingInfo.pricingPerEvent?.actorChargeEvents ?? {};
+    const total = Object.entries(run.chargedEventCounts ?? {}).reduce((sum, [eventName, count]) => {
+      const price = eventPrices[eventName]?.eventPriceUsd;
+      return Number.isFinite(count) && count >= 0 && Number.isFinite(price) && (price ?? -1) >= 0
+        ? sum + count * (price ?? 0)
+        : sum;
+    }, 0);
+    if (total > 0) return Math.round(total * 1_000_000) / 1_000_000;
+  }
+  if (run.pricingInfo?.pricingModel === "PRICE_PER_DATASET_ITEM") {
+    const price = run.pricingInfo.pricePerUnitUsd;
+    if (Number.isFinite(price) && (price ?? -1) >= 0 && Number.isSafeInteger(datasetItemsCount) && datasetItemsCount >= 0) {
+      return Math.round(datasetItemsCount * (price ?? 0) * 1_000_000) / 1_000_000;
+    }
+  }
+  return typeof run.usageTotalUsd === "number" && Number.isFinite(run.usageTotalUsd) && run.usageTotalUsd >= 0
+    ? run.usageTotalUsd
     : null;
 }
 
@@ -229,7 +265,7 @@ export async function collectOfficialFacebookSources(options: {
   }
   return {
     providerRunId: run.id,
-    usageTotalUsd: typeof run.usageTotalUsd === "number" && Number.isFinite(run.usageTotalUsd) ? run.usageTotalUsd : null,
+    usageTotalUsd: actorRunCostUsd(run, data.items.length),
     finishedAt: run.finishedAt instanceof Date ? run.finishedAt.toISOString() : new Date().toISOString(),
     rawItemsCount: data.items.length,
     results: options.sources.map((source) => ({

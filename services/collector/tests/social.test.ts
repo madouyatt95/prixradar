@@ -1,7 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FACEBOOK_SOCIAL_SOURCES, normalizeOfficialFacebookPost, parseFacebookArticle } from "../src/social.js";
+import {
+  actorRunCostUsd,
+  FACEBOOK_SOCIAL_SOURCES,
+  normalizeOfficialFacebookPost,
+  parseFacebookArticle,
+} from "../src/social.js";
+
+test("calcule le coût réel des événements facturés par l’Actor officiel", () => {
+  assert.equal(actorRunCostUsd({
+    usageTotalUsd: 0.001,
+    chargedEventCounts: {
+      "actor-start": 1,
+      "date-filter": 2,
+    },
+    pricingInfo: {
+      pricingModel: "PAY_PER_EVENT",
+      pricingPerEvent: {
+        actorChargeEvents: {
+          "actor-start": { eventPriceUsd: 0.001 },
+          "date-filter": { eventPriceUsd: 0.007 },
+        },
+      },
+    },
+  }), 0.015);
+});
+
+test("conserve le coût d’usage quand aucun tarif par événement n’est fourni", () => {
+  assert.equal(actorRunCostUsd({ usageTotalUsd: 0.001 }), 0.001);
+});
 
 test("extrait un post Facebook public avec son lien marchand et son heure", () => {
   const source = FACEBOOK_SOCIAL_SOURCES[0];
