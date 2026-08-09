@@ -83,6 +83,15 @@ export async function verifyWithSecondRead(
   await (options.sleep ?? defaultSleep)(options.delayMs ?? 2_500);
   const second = await read();
 
+  return verifyOfferSnapshots(first, second, options.baselineMinor);
+}
+
+export function verifyOfferSnapshots(
+  first: OfferSnapshot,
+  second: OfferSnapshot,
+  baselineMinor?: number | null,
+): VerifiedObservation {
+
   const firstVariantSignature = evidenceSignature(first.variantIdentity);
   const secondVariantSignature = evidenceSignature(second.variantIdentity);
   const matchingIdentity = hasExactVariantEvidence(first)
@@ -110,7 +119,7 @@ export async function verifyWithSecondRead(
     && matchingAvailability
     && matchingDelivery
     && matchingCart;
-  const anomaly = scoreOffer(second, options.baselineMinor);
+  const anomaly = scoreOffer(second, baselineMinor);
 
   return {
     schemaVersion: "1",
