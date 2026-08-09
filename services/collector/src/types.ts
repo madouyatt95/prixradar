@@ -91,7 +91,7 @@ export interface ProductIdentity {
 export interface VariantIdentityEvidence {
   expectedId: string | null;
   observedId: string | null;
-  expectedSource: "request_url" | "keepa_deal" | "unknown";
+  expectedSource: "request_url" | "listing_link" | "keepa_deal" | "unknown";
   observedSource: "merchant_dom" | "canonical_link" | "json_ld" | "keepa_product" | "unknown";
   merchantProductId: string | null;
   gtin: string | null;
@@ -113,6 +113,8 @@ export interface OfferSnapshot {
   observedAt: string;
   strategy: ExtractionStrategy;
   fixture: boolean;
+  /** Category listings prove the displayed item price, but not size, stock or shipping on the product page. */
+  verificationScope?: "product_page" | "category_listing";
   promotion?: {
     type: PromotionType;
     label: string | null;
