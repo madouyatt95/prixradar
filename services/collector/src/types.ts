@@ -106,6 +106,8 @@ export interface OfferSnapshot {
   /** Null means shipping is unknown; it must never be interpreted as free. */
   total: Money | null;
   referencePrice: Money | null;
+  /** Distinguishes a merchant-displayed crossed price from a historical estimate. */
+  referencePriceSource?: "merchant_page" | "keepa_average" | "keepa_list" | "unknown";
   seller: string | null;
   sellerTrusted: boolean;
   condition: "new" | "used" | "refurbished" | "unknown";

@@ -66,6 +66,7 @@ const PROMOTION_TYPES = new Set(["public_price", "coupon", "membership", "cashba
 const CART_PROBE_STATUSES = new Set(["confirmed", "product_page", "blocked", "unavailable"]);
 const FULFILLMENT_TYPES = new Set(["direct", "platform", "merchant", "unknown"]);
 const VERIFICATION_SCOPES = new Set(["product_page", "category_listing"]);
+const REFERENCE_PRICE_SOURCES = new Set(["merchant_page", "keepa_average", "keepa_list", "unknown"]);
 
 type Source = ActiveSourceId;
 type UnknownRecord = Record<string, unknown>;
@@ -100,6 +101,7 @@ type ParsedAlert = {
   expectedVariantId: string | null;
   observedVariantId: string | null;
   merchantReferenceCents: number | null;
+  referencePriceSource: "merchant_page" | "keepa_average" | "keepa_list" | "unknown";
   verificationCount: number;
   observedAt: string;
   verifiedAt: string | null;
@@ -343,6 +345,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     "expectedVariantId",
     "observedVariantId",
     "merchantReferenceCents",
+    "referencePriceSource",
     "verificationCount",
     "observedAt",
     "verifiedAt",
@@ -441,6 +444,9 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     expectedVariantId,
     observedVariantId,
     merchantReferenceCents: nullableMoney(value.merchantReferenceCents, "merchantReferenceCents"),
+    referencePriceSource: value.referencePriceSource === undefined
+      ? source === "amazon" ? "keepa_average" : "unknown"
+      : requiredString(value.referencePriceSource, "referencePriceSource", 24) as ParsedAlert["referencePriceSource"],
     verificationCount: integerInRange(value.verificationCount, "verificationCount", 0, 20),
     observedAt: isoTimestamp(value.observedAt, "observedAt") as string,
     verifiedAt: isoTimestamp(value.verifiedAt, "verifiedAt", true),
@@ -463,6 +469,7 @@ function parseAlert(source: Source, value: UnknownRecord): ParsedAlert {
     sellerSignals: parseSellerSignals(value.sellerSignals, sellerTrusted),
   };
   if (!PROMOTION_TYPES.has(parsed.promotionType)) throw new Error("promotionType est invalide.");
+  if (!REFERENCE_PRICE_SOURCES.has(parsed.referencePriceSource)) throw new Error("referencePriceSource est invalide.");
   if (!VERIFICATION_SCOPES.has(parsed.verificationScope)) throw new Error("verificationScope est invalide.");
   if (parsed.verificationScope === "category_listing" && source !== "jd_sports") {
     throw new Error("La vérification de catégorie est réservée à JD Sports.");
@@ -864,6 +871,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     category: parsed.category,
   });
   const notificationEligible = evaluation.notificationEligible
+    && !evaluation.shouldAutoClose
     && evaluation.score >= adaptiveMinimumScore
     && autonomyEligible
     && publicDealPolicyEligible;
@@ -889,6 +897,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     && evaluation.checks.notExpired
     && evaluation.checks.publicPriceAccessible;
   const watchNotificationEligible = !notificationEligible
+    && !evaluation.shouldAutoClose
     && publicDealPolicyEligible
     && identifiedSeller
     && (categoryListingWatchEligible || (
@@ -925,7 +934,9 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     expiresAt: parsed.expiresAt,
   });
   const now = new Date().toISOString();
-  const alertStatus = notificationEligible
+  const alertStatus = evaluation.shouldAutoClose
+    ? "expired"
+    : notificationEligible
     ? "active"
     : watchNotificationEligible
       ? "review"
@@ -974,6 +985,11 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     sellerTrusted: parsed.sellerTrusted,
     historyProvider: parsed.historicalPrices.length > 0 ? "keepa" : null,
     importedHistoryPoints: parsed.historicalPrices.length,
+    priceReference: {
+      source: parsed.referencePriceSource,
+      amountCents: parsed.merchantReferenceCents,
+      merchantDisplayed: parsed.referencePriceSource === "merchant_page",
+    },
     canonicalProduct: {
       id: canonicalMatch.canonicalProductId,
       method: canonicalMatch.method,

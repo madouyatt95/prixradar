@@ -1,3 +1,5 @@
+import { buildPriceInsight, type PriceInsightClassification } from "@/lib/price-insight";
+
 export const ANOMALY_LIMITS = {
   maxPriceCents: 100_000_000,
   maxHistoryPoints: 60,
@@ -59,6 +61,16 @@ export type AnomalyEvaluation = {
   marketMedianCents: number | null;
   marketSources: number;
   marketDiscountPercent: number | null;
+  rarityScore: number | null;
+  priceSeenPercent: number | null;
+  daysAtOrBelow: number | null;
+  historyCoverageDays: number;
+  stableSince: string | null;
+  stableDays: number | null;
+  lastDropAt: string | null;
+  dropAgeMinutes: number | null;
+  classification: PriceInsightClassification;
+  shouldAutoClose: boolean;
   checks: {
     liveSource: boolean;
     historicalBaseline: boolean;
@@ -245,15 +257,25 @@ export function evaluatePriceAnomaly(
   const trustedProviderAverage = candidate.trustedReferenceSource === "keepa"
     && merchantReference !== null
     && merchantReference !== undefined;
+  const priceInsight = buildPriceInsight({
+    currentTotalCents,
+    observedAt: candidate.observedAt,
+    history: normalizedHistory.map((point) => ({
+      totalCents: point.totalCents,
+      observedAt: new Date(point.observedAtMs).toISOString(),
+      available: true,
+    })),
+    fallbackBaselineCents: merchantReference ?? null,
+  });
   const baselineSource =
-    trustedProviderAverage
-      ? "trusted_provider_average"
-      : historicalMedian !== null
+    priceInsight.baselineCents !== null && normalizedHistory.length >= ANOMALY_LIMITS.minHistoricalPoints
       ? "historical_median"
+      : trustedProviderAverage
+        ? "trusted_provider_average"
       : merchantReference !== null && merchantReference !== undefined
         ? "merchant_reference"
         : "unavailable";
-  const rawBaseline = trustedProviderAverage ? merchantReference : historicalMedian ?? merchantReference ?? null;
+  const rawBaseline = priceInsight.baselineCents ?? historicalMedian ?? merchantReference ?? null;
   const usualPriceCents = rawBaseline === null ? null : Math.round(rawBaseline);
   const rawMad =
     historicalMedian === null ? null : median(historicalTotals.map((total) => Math.abs(total - historicalMedian)));
@@ -334,11 +356,18 @@ export function evaluatePriceAnomaly(
   if (!checks.freshObservation || !checks.notExpired) score = Math.min(score, 49);
   if (!checks.publicPriceAccessible) score = Math.min(score, 49);
   if (!checks.marketComparisonCoherent) score = Math.min(score, 59);
+  if (priceInsight.classification === "stable_good_price") score = Math.min(score, 59);
+  if (priceInsight.classification === "normal_price") score = Math.min(score, 39);
   score = clamp(Math.round(score), 0, 100);
 
   const reasons = blockingReasons(checks);
+  if (priceInsight.classification === "stable_good_price") reasons.push("price_stable");
+  if (priceInsight.classification === "normal_price") reasons.push("price_normalized");
   const notificationEligible =
-    score >= ANOMALY_LIMITS.minNotificationScore && Object.values(checks).every(Boolean);
+    score >= ANOMALY_LIMITS.minNotificationScore
+    && !priceInsight.shouldAutoClose
+    && (priceInsight.classification === "probable_error" || priceInsight.classification === "recent_drop")
+    && Object.values(checks).every(Boolean);
 
   return {
     score,
@@ -355,6 +384,16 @@ export function evaluatePriceAnomaly(
     marketMedianCents,
     marketSources: marketPrices.length,
     marketDiscountPercent,
+    rarityScore: priceInsight.rarityScore,
+    priceSeenPercent: priceInsight.priceSeenPercent,
+    daysAtOrBelow: priceInsight.daysAtOrBelow,
+    historyCoverageDays: priceInsight.coverageDays,
+    stableSince: priceInsight.stableSince,
+    stableDays: priceInsight.stableDays,
+    lastDropAt: priceInsight.lastDropAt,
+    dropAgeMinutes: priceInsight.dropAgeMinutes,
+    classification: priceInsight.classification,
+    shouldAutoClose: priceInsight.shouldAutoClose,
     checks,
     blockingReasons: reasons,
     components: {

@@ -12,7 +12,7 @@ test("déclare exactement les cinq marchés Amazon Europe couverts", () => {
 test("conserve une Buy Box tierce en la distinguant d'Amazon", () => {
   const snapshot = keepaOffer({
     asin: "B012345678", market: "FR", title: "Produit marketplace", brand: null, model: null, gtin: null,
-    currentMinor: 5_000, referenceMinor: 10_000, observedAt: "2026-08-08T20:00:00.000Z", imageUrl: null,
+    currentMinor: 5_000, referenceMinor: 10_000, referenceSource: "keepa_average", observedAt: "2026-08-08T20:00:00.000Z", imageUrl: null,
     buyBoxIsAmazon: false, buyBoxIsFba: true, buyBoxSellerId: "A1MARKETPLACE", history: [], categoryPath: ["High-Tech"], productGroup: "Electronics",
   });
   assert.equal(snapshot.seller, "Vendeur tiers Amazon · A1MARKETPLACE");
@@ -84,6 +84,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(observations[0]?.offer.total?.amountMinor, 5_000);
   assert.equal(observations[0]?.offer.sellerTrusted, true);
   assert.equal(observations[0]?.offer.referencePrice?.amountMinor, 10_000);
+  assert.equal(observations[0]?.offer.referencePriceSource, "keepa_average");
   assert.equal(observations[0]?.offer.fixture, true);
   assert.equal(observations[0]?.historicalPrices?.length, 6);
   assert.deepEqual(
@@ -107,9 +108,13 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   live.offer.shipping = { amountMinor: 0, currency: "EUR" };
   live.offer.total = { amountMinor: 5_000, currency: "EUR" };
   live.offer.strategy = "connector";
+  live.offer.referencePrice = { amountMinor: 8_000, currency: "EUR" };
+  live.offer.referencePriceSource = "merchant_page";
   const merged = mergeKeepaWithLive(keepa, live);
   assert.equal(merged.verification.status, "confirmed");
   assert.equal(merged.offer.shipping?.amountMinor, 0);
+  assert.equal(merged.offer.referencePrice?.amountMinor, 8_000);
+  assert.equal(merged.offer.referencePriceSource, "merchant_page");
   assert.equal(merged.historicalPrices?.length, 6);
 });
 

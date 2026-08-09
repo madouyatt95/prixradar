@@ -50,6 +50,40 @@ type AlertItem = {
   affiliateUrl?: string | null;
   reasons: string[];
   history: number[];
+  priceReference?: {
+    kind: "merchant" | "historical" | "unavailable";
+    amountCents: number | null;
+    label: string;
+    crossedOut: boolean;
+  };
+  priceInsight?: {
+    classification: "probable_error" | "recent_drop" | "stable_good_price" | "normal_price";
+    classificationLabel: string;
+    baselineCents: number | null;
+    discountPercent: number;
+    rarityScore: number | null;
+    priceSeenPercent: number | null;
+    daysAtOrBelow: number | null;
+    coverageDays: number;
+    stableSince: string | null;
+    stableDays: number | null;
+    lastDropAt: string | null;
+    dropAgeMinutes: number | null;
+    shouldAutoClose: boolean;
+    explanation: string;
+  };
+  comparableOffers?: Array<{
+    alertId: string;
+    source: string;
+    merchant: string;
+    market: string;
+    title: string;
+    url: string;
+    priceCents: number;
+    seller: string | null;
+    observedAt: string;
+    match: string;
+  }>;
   priceAccessibleToAll?: boolean;
   promotionLabel?: string | null;
   marketMedian?: number | null;
@@ -692,6 +726,59 @@ function relativeTime(value: unknown) {
   return hours < 24 ? `il y a ${hours} h` : `il y a ${Math.round(hours / 24)} j`;
 }
 
+function dateTimeLabel(value: string | null | undefined) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "Date inconnue";
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function normalizedHistoryBars(points: unknown[]) {
+  const usable = points
+    .map((value) => record(value))
+    .filter((value): value is Record<string, unknown> => value !== null)
+    .map((point) => ({
+      observedAt: typeof point.observedAt === "string" ? point.observedAt : "",
+      price: finite(point.totalCents, finite(point.priceCents)),
+    }))
+    .filter((point) => point.price > 0 && Number.isFinite(Date.parse(point.observedAt)))
+    .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt));
+  if (usable.length === 0) return [];
+  const sampled = usable.length <= 18
+    ? usable
+    : Array.from({ length: 18 }, (_, index) => usable[Math.round((index / 17) * (usable.length - 1))]).filter(Boolean);
+  const prices = sampled.map((point) => point.price);
+  const minimum = Math.min(...prices);
+  const maximum = Math.max(...prices);
+  if (minimum === maximum) return sampled.map(() => 55);
+  return sampled.map((point) => Math.round(18 + ((point.price - minimum) / (maximum - minimum)) * 82));
+}
+
+function readableReason(reason: string) {
+  return ({
+    source_not_live: "Source non active au moment du contrôle",
+    historical_baseline_missing: "Historique encore insuffisant",
+    history_too_short: "Historique trop court pour conclure",
+    discount_too_small: "Écart trop faible face au prix habituel",
+    deviation_not_robust: "Baisse non confirmée par l’ensemble de l’historique",
+    observation_stale: "Prix à revérifier",
+    variant_not_confirmed: "Variante exacte à confirmer",
+    seller_not_trusted: "Vendeur à contrôler",
+    shipping_unknown: "Livraison encore inconnue",
+    condition_not_new: "Produit non identifié comme neuf",
+    offer_unavailable: "Offre indisponible",
+    second_verification_missing: "Seconde vérification manquante",
+    alert_expired: "Prix expiré",
+    conditional_price: "Prix soumis à une condition",
+    cross_merchant_price_not_anomalous: "Prix cohérent avec les autres enseignes",
+    price_stable: "Bon prix déjà stable",
+    price_normalized: "Prix revenu dans sa zone habituelle",
+  } as Record<string, string>)[reason] ?? reason;
+}
+
 function localAlertFreshness(
   alert: AlertItem,
   maxAgeMinutes: number,
@@ -726,6 +813,7 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   if (!item || typeof item.id !== "string" || typeof item.title !== "string") {
     return null;
   }
+  const itemTitle = item.title;
   const source =
     typeof item.source === "string" ? item.source.toLowerCase() : "merchant";
   const market = typeof item.market === "string" ? item.market.toUpperCase() : "FR";
@@ -745,6 +833,9 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const sellerRecord = record(intelligenceRecord?.seller);
   const lifetimeRecord = record(intelligenceRecord?.lifetime);
   const purchasabilityRecord = record(item.purchasability);
+  const priceReferenceRecord = record(item.priceReference);
+  const priceInsightRecord = record(item.priceInsight);
+  const historyRecord = record(item.history);
   const purchaseChecks = record(purchasabilityRecord?.checks);
   const purchaseCommunity = record(purchasabilityRecord?.community);
   let reasons: string[] = [];
@@ -773,6 +864,8 @@ function mapLiveAlert(value: unknown): AlertItem | null {
       "Seconde vérification requise avant notification",
     ];
   }
+  reasons = reasons.map(readableReason);
+  if (typeof priceInsightRecord?.explanation === "string") reasons.unshift(priceInsightRecord.explanation);
   if (typeof evidence?.marketMedianCents === "number" && finite(evidence.marketSources) >= 2) {
     reasons.unshift(`Prix comparé à ${Math.round(finite(evidence.marketSources))} enseignes · médiane ${money(finite(evidence.marketMedianCents) / 100, item.currency === "GBP" ? "GBP" : "EUR")}`);
   }
@@ -810,9 +903,17 @@ function mapLiveAlert(value: unknown): AlertItem | null {
   const verified = typeof item.verifiedAt === "string" ? item.verifiedAt : item.observedAt;
   const secondCheckConfirmed = verificationRecord?.secondCheckConfirmed === true
     || evidence?.secondVerification === true;
-  const history = Array.isArray(item.history)
-    ? item.history.map((point) => finite(point)).filter((point) => point > 0).slice(-12)
-    : [];
+  const history = Array.isArray(historyRecord?.points)
+    ? normalizedHistoryBars(historyRecord.points)
+    : Array.isArray(item.history)
+      ? item.history.map((point) => finite(point)).filter((point) => point > 0).slice(-18)
+      : [];
+  const classification = priceInsightRecord?.classification === "probable_error"
+    || priceInsightRecord?.classification === "recent_drop"
+    || priceInsightRecord?.classification === "stable_good_price"
+    || priceInsightRecord?.classification === "normal_price"
+    ? priceInsightRecord.classification
+    : "recent_drop";
 
   return {
     id: item.id,
@@ -864,6 +965,48 @@ function mapLiveAlert(value: unknown): AlertItem | null {
     affiliateUrl: typeof item.affiliateUrl === "string" ? item.affiliateUrl : null,
     reasons,
     history,
+    priceReference: {
+      kind: priceReferenceRecord?.kind === "merchant" || priceReferenceRecord?.kind === "historical"
+        ? priceReferenceRecord.kind
+        : "unavailable",
+      amountCents: typeof priceReferenceRecord?.amountCents === "number" ? priceReferenceRecord.amountCents : null,
+      label: typeof priceReferenceRecord?.label === "string" ? priceReferenceRecord.label : "Référence insuffisante",
+      crossedOut: priceReferenceRecord?.crossedOut === true,
+    },
+    priceInsight: {
+      classification,
+      classificationLabel: typeof priceInsightRecord?.classificationLabel === "string" ? priceInsightRecord.classificationLabel : "Baisse récente",
+      baselineCents: typeof priceInsightRecord?.baselineCents === "number" ? priceInsightRecord.baselineCents : null,
+      discountPercent: finite(priceInsightRecord?.discountPercent, discount),
+      rarityScore: typeof priceInsightRecord?.rarityScore === "number" ? priceInsightRecord.rarityScore : null,
+      priceSeenPercent: typeof priceInsightRecord?.priceSeenPercent === "number" ? priceInsightRecord.priceSeenPercent : null,
+      daysAtOrBelow: typeof priceInsightRecord?.daysAtOrBelow === "number" ? priceInsightRecord.daysAtOrBelow : null,
+      coverageDays: finite(priceInsightRecord?.coverageDays),
+      stableSince: typeof priceInsightRecord?.stableSince === "string" ? priceInsightRecord.stableSince : null,
+      stableDays: typeof priceInsightRecord?.stableDays === "number" ? priceInsightRecord.stableDays : null,
+      lastDropAt: typeof priceInsightRecord?.lastDropAt === "string" ? priceInsightRecord.lastDropAt : null,
+      dropAgeMinutes: typeof priceInsightRecord?.dropAgeMinutes === "number" ? priceInsightRecord.dropAgeMinutes : null,
+      shouldAutoClose: priceInsightRecord?.shouldAutoClose === true,
+      explanation: typeof priceInsightRecord?.explanation === "string" ? priceInsightRecord.explanation : "Baisse mesurée par rapport à l’historique disponible.",
+    },
+    comparableOffers: Array.isArray(item.comparableOffers)
+      ? item.comparableOffers.flatMap((value) => {
+          const offer = record(value);
+          if (!offer || typeof offer.alertId !== "string" || typeof offer.url !== "string" || typeof offer.merchant !== "string" || typeof offer.priceCents !== "number") return [];
+          return [{
+            alertId: offer.alertId,
+            source: typeof offer.source === "string" ? offer.source : "merchant",
+            merchant: offer.merchant,
+            market: typeof offer.market === "string" ? offer.market : "FR",
+            title: typeof offer.title === "string" ? offer.title : itemTitle,
+            url: offer.url,
+            priceCents: offer.priceCents,
+            seller: typeof offer.seller === "string" ? offer.seller : null,
+            observedAt: typeof offer.observedAt === "string" ? offer.observedAt : "",
+            match: typeof offer.match === "string" ? offer.match : "Modèle rapproché",
+          }];
+        })
+      : [],
     priceAccessibleToAll: item.priceAccessibleToAll !== false,
     promotionLabel: typeof item.promotionLabel === "string" ? item.promotionLabel : null,
     marketMedian: typeof evidence?.marketMedianCents === "number" ? finite(evidence.marketMedianCents) / 100 : null,
@@ -2553,6 +2696,33 @@ function SingleCheckCard({ alert, onOpen }: { alert: AlertItem; onOpen: () => vo
   </article>;
 }
 
+function ReferencePrice({ alert, compact = false }: { alert: AlertItem; compact?: boolean }) {
+  const reference = alert.priceReference;
+  if (!reference || reference.amountCents === null || reference.amountCents <= Math.round(alert.currentPrice * 100)) return null;
+  const amount = money(reference.amountCents / 100, alert.currency);
+  if (reference.crossedOut) return <del title={reference.label}>{amount}</del>;
+  return <span className={compact ? "estimated-reference is-compact" : "estimated-reference"} title={reference.label}>
+    <small>Habituel estimé</small><b>{amount}</b>
+  </span>;
+}
+
+function PriceInsightStrip({ alert }: { alert: AlertItem }) {
+  const insight = alert.priceInsight;
+  if (!insight) return null;
+  return <div className="price-insight-strip">
+    <span className={`insight-class is-${insight.classification}`}>{insight.classificationLabel}</span>
+    {insight.rarityScore !== null ? <span className="rarity-score">Rareté {insight.rarityScore}/100</span> : <span className="rarity-score">Historique en cours</span>}
+    <small>{insight.lastDropAt ? `Baisse ${relativeTime(insight.lastDropAt)}` : insight.stableDays !== null ? `Stable depuis ${Math.max(1, Math.round(insight.stableDays))} j` : "Chronologie en cours"}</small>
+  </div>;
+}
+
+function MiniPriceChart({ values, label }: { values: number[]; label: string }) {
+  if (values.length === 0) return null;
+  return <div className="mini-price-chart" role="img" aria-label={label}>
+    {values.map((value, index) => <i key={`${value}-${index}`} style={{ height: `${value}%` }} />)}
+  </div>;
+}
+
 function AlertCard({
   alert,
   featured,
@@ -2596,9 +2766,11 @@ function AlertCard({
           {alert.intelligence ? <div className="autonomy-badges"><span>{cartLabel(alert.intelligence.shadowCart.status)}</span><span>Variante {alert.intelligence.variant.confidence}%</span><span>Urgence {alert.intelligence.lifetime.urgencyScore}/100</span></div> : null}
           <div className="price-line">
             <strong>{money(alert.currentPrice, alert.currency)}</strong>
-            <del>{money(alert.usualPrice, alert.currency)}</del>
-            <span className="discount-tag">−{alert.discount} %</span>
+            <ReferencePrice alert={alert} compact />
+            {alert.discount > 0 ? <span className="discount-tag">−{alert.discount} %</span> : null}
           </div>
+          <MiniPriceChart values={alert.history} label={`Évolution du prix sur ${Math.round(alert.priceInsight?.coverageDays ?? 90)} jours`} />
+          <PriceInsightStrip alert={alert} />
           <div className="confidence-row">
             <span className={`confidence ${confidenceClass(alert.confidence)}`}>
               <i /> {alert.confidence}
@@ -3522,10 +3694,19 @@ function AlertDetail({
           <h2 id="detail-title">{alert.title}</h2>
           <div className="detail-price">
             <strong>{money(alert.currentPrice, alert.currency)}</strong>
-            <del>{money(alert.usualPrice, alert.currency)}</del>
-            <span>−{alert.discount} %</span>
+            <ReferencePrice alert={alert} />
+            {alert.discount > 0 ? <span>−{alert.discount} %</span> : null}
           </div>
         </div>
+
+        {alert.priceInsight ? <section className={`price-insight-box is-${alert.priceInsight.classification}`}>
+          <div><span className="eyebrow">Lecture PrixRadar</span><h3>{alert.priceInsight.classificationLabel}</h3><p>{alert.priceInsight.explanation}</p></div>
+          <div className="price-insight-metrics">
+            <span><strong>{alert.priceInsight.rarityScore ?? "—"}<small>/100</small></strong><i>Rareté</i></span>
+            <span><strong>{alert.priceInsight.daysAtOrBelow ?? "—"}<small> j</small></strong><i>À ce niveau</i></span>
+            <span><strong>{alert.priceInsight.lastDropAt ? dateTimeLabel(alert.priceInsight.lastDropAt) : "Aucune"}</strong><i>Dernière baisse</i></span>
+          </div>
+        </section> : null}
 
         <section className="confidence-box">
           <div className="score-ring" style={{ "--score": `${alert.score * 3.6}deg` } as React.CSSProperties}>
@@ -3614,6 +3795,16 @@ function AlertDetail({
             </p>
           </section>
         )}
+
+        <section className="detail-section market-comparison-section">
+          <div className="section-label-row"><h3>Comparaison entre enseignes</h3><span>{alert.comparableOffers?.length ? `${alert.comparableOffers.length} prix liés` : "EAN / modèle"}</span></div>
+          {alert.comparableOffers?.length ? <div className="market-offer-list">
+            {alert.comparableOffers.map((offer) => <a key={offer.alertId} href={offer.url} target="_blank" rel="noreferrer">
+              <span><strong>{offer.merchant}{offer.market !== "FR" ? ` · ${offer.market}` : ""}</strong><small>{offer.match} · contrôlé {relativeTime(offer.observedAt)}</small>{offer.seller ? <small>{offer.seller}</small> : null}</span>
+              <b>{money(offer.priceCents / 100, alert.currency)}</b><i aria-hidden="true">↗</i>
+            </a>)}
+          </div> : <p>Aucun autre prix récent n’est encore rattaché avec assez de certitude à cet EAN ou à ce modèle.</p>}
+        </section>
 
         <section className="detail-section verified-grid">
           <div><span>Vendeur</span><strong>{alert.seller}</strong></div>

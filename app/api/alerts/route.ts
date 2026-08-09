@@ -6,6 +6,7 @@ import { alertFeedback, alertIntelligence, alerts, priceObservations } from "@/d
 import { ANOMALY_LIMITS, type AnomalyEvaluation } from "@/lib/anomaly";
 import { NON_AMAZON_EXTREME_DISCOUNT_PERCENT } from "@/lib/deal-policy";
 import { assessPurchasability } from "@/lib/purchasability";
+import { buildPriceInsight } from "@/lib/price-insight";
 import { sellerChannel } from "@/lib/seller-channel";
 import { isActiveSource } from "@/lib/source-registry";
 
@@ -43,6 +44,11 @@ function parseEvidence(value: string) {
       notificationEligible?: unknown;
       watchNotificationEligible?: unknown;
       alertLevel?: unknown;
+      priceReference?: {
+        source?: unknown;
+        amountCents?: unknown;
+        merchantDisplayed?: unknown;
+      };
       analysis?: Partial<AnomalyEvaluation>;
     };
     if (!parsed || typeof parsed !== "object") return null;
@@ -62,6 +68,12 @@ function parseEvidence(value: string) {
       marketMedianCents: typeof analysis?.marketMedianCents === "number" ? analysis.marketMedianCents : null,
       marketSources: typeof analysis?.marketSources === "number" ? analysis.marketSources : 0,
       marketDiscountPercent: typeof analysis?.marketDiscountPercent === "number" ? analysis.marketDiscountPercent : null,
+      baselineSource: typeof analysis?.baselineSource === "string" ? analysis.baselineSource : null,
+      priceReference: {
+        source: typeof parsed.priceReference?.source === "string" ? parsed.priceReference.source : "unknown",
+        amountCents: typeof parsed.priceReference?.amountCents === "number" ? parsed.priceReference.amountCents : null,
+        merchantDisplayed: parsed.priceReference?.merchantDisplayed === true,
+      },
     };
   } catch {
     return null;
@@ -119,23 +131,58 @@ type PublicHistoryPoint = Pick<
   "priceCents" | "shippingCents" | "totalCents" | "available" | "observedAt"
 >;
 
+type PublicComparison = {
+  id: string;
+  canonicalProductId: string | null;
+  source: string;
+  merchant: string;
+  market: string;
+  title: string;
+  gtin: string | null;
+  url: string;
+  currency: string;
+  publicPriceCents: number | null;
+  observedAt: string;
+  seller: string | null;
+};
+
 function serializeAlert(
   row: typeof alerts.$inferSelect,
   community?: CommunitySummary,
   intelligence?: typeof alertIntelligence.$inferSelect,
   history: PublicHistoryPoint[] = [],
+  comparisons: PublicComparison[] = [],
 ) {
   const evidence = parseEvidence(row.evidenceJson);
+  const totalCents = intelligence?.finalTotalCents ?? (row.shippingCents === null ? null : row.priceCents + row.shippingCents);
+  const priceInsight = buildPriceInsight({
+    currentTotalCents: totalCents,
+    observedAt: row.observedAt,
+    history: history.map((point) => ({
+      totalCents: point.totalCents ?? (point.shippingCents === null ? point.priceCents : point.priceCents + point.shippingCents),
+      observedAt: point.observedAt,
+      available: point.available,
+    })),
+    fallbackBaselineCents: row.usualPriceCents,
+  });
+  const effectiveScore = priceInsight.classification === "normal_price"
+    ? Math.min(row.score, 39)
+    : priceInsight.classification === "stable_good_price"
+      ? Math.min(row.score, 59)
+      : row.score;
   const liveEligible =
     row.sourceMode === "live" &&
     row.status === "active" &&
     row.verifiedAt !== null &&
-    evidence?.notificationEligible === true;
+    evidence?.notificationEligible === true &&
+    !priceInsight.shouldAutoClose &&
+    (priceInsight.classification === "probable_error" || priceInsight.classification === "recent_drop");
   const watchEligible =
     row.sourceMode === "live" &&
     row.status === "review" &&
     row.verifiedAt !== null &&
-    evidence?.watchNotificationEligible === true;
+    evidence?.watchNotificationEligible === true &&
+    (priceInsight.classification === "probable_error" || priceInsight.classification === "recent_drop");
   let affiliateUrl: string | null = null;
   const tag = (env as unknown as { AMAZON_ASSOCIATE_TAG?: unknown }).AMAZON_ASSOCIATE_TAG ?? process.env.AMAZON_ASSOCIATE_TAG;
   if (row.source === "amazon" && typeof tag === "string" && /^[A-Za-z0-9-]{3,40}$/.test(tag)) {
@@ -143,14 +190,24 @@ function serializeAlert(
     url.searchParams.set("tag", tag);
     affiliateUrl = url.toString();
   }
-  const buyNow = parseBuyNow(row.buyNowJson, row.buyNowScore);
+  const parsedBuyNow = parseBuyNow(row.buyNowJson, row.buyNowScore);
+  const buyNow = {
+    ...parsedBuyNow,
+    score: priceInsight.classification === "normal_price"
+      ? Math.min(parsedBuyNow.score, 35)
+      : priceInsight.classification === "stable_good_price"
+        ? Math.min(parsedBuyNow.score, 59)
+        : parsedBuyNow.score,
+    label: priceInsight.classification === "normal_price"
+      ? "Prix habituel"
+      : priceInsight.classification === "stable_good_price" ? "Bon prix sans urgence" : parsedBuyNow.label,
+  };
   const sellerIntelligence = intelligence ? parseJsonObject(intelligence.sellerJson) : {};
   const sellerSignals = sellerIntelligence.signals && typeof sellerIntelligence.signals === "object" && !Array.isArray(sellerIntelligence.signals)
     ? sellerIntelligence.signals as Record<string, unknown>
     : {};
   const fulfillment = typeof sellerSignals.fulfillment === "string" ? sellerSignals.fulfillment : null;
   const channel = sellerChannel({ source: row.source, merchant: row.merchant, seller: row.seller, fulfillment });
-  const totalCents = intelligence?.finalTotalCents ?? (row.shippingCents === null ? null : row.priceCents + row.shippingCents);
   const purchasability = assessPurchasability({
     sourceMode: row.sourceMode,
     status: row.status,
@@ -164,6 +221,38 @@ function serializeAlert(
     communityPositive: community?.positive,
     communityNegative: community?.negative,
   });
+  const comparableBySource = new Map<string, PublicComparison>();
+  for (const comparison of comparisons) {
+    if (comparison.id === row.id || comparison.currency !== row.currency || comparison.publicPriceCents === null) continue;
+    const key = `${comparison.source}:${comparison.market}`;
+    const previous = comparableBySource.get(key);
+    if (!previous || Date.parse(comparison.observedAt) > Date.parse(previous.observedAt)) comparableBySource.set(key, comparison);
+  }
+  const comparableOffers = [...comparableBySource.values()]
+    .sort((left, right) => (left.publicPriceCents ?? Number.MAX_SAFE_INTEGER) - (right.publicPriceCents ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, 8)
+    .map((comparison) => ({
+      alertId: comparison.id,
+      source: comparison.source,
+      merchant: comparison.merchant,
+      market: comparison.market,
+      title: comparison.title,
+      url: comparison.url,
+      priceCents: comparison.publicPriceCents,
+      seller: comparison.seller,
+      observedAt: comparison.observedAt,
+      match: row.gtin && comparison.gtin === row.gtin ? "EAN exact" : "Modèle rapproché",
+    }));
+  const merchantReferenceCents = evidence?.priceReference.merchantDisplayed === true
+    && evidence.priceReference.amountCents !== null
+    && evidence.priceReference.amountCents > (totalCents ?? row.priceCents)
+    ? evidence.priceReference.amountCents
+    : null;
+  const priceReference = merchantReferenceCents !== null
+    ? { kind: "merchant" as const, amountCents: merchantReferenceCents, label: "Prix barré affiché par l’enseigne", crossedOut: true }
+    : priceInsight.baselineCents !== null && priceInsight.baselineCents > (totalCents ?? row.priceCents)
+      ? { kind: "historical" as const, amountCents: priceInsight.baselineCents, label: "Prix habituel estimé sur 90 jours", crossedOut: false }
+      : { kind: "unavailable" as const, amountCents: null, label: "Référence insuffisante", crossedOut: false };
 
   return {
     id: row.id,
@@ -187,9 +276,9 @@ function serializeAlert(
     shippingCents: row.shippingCents,
     shippingKnown: row.shippingCents !== null,
     totalCents,
-    usualPriceCents: row.usualPriceCents,
-    discountPercent: row.discountPercent,
-    score: row.score,
+    usualPriceCents: priceInsight.baselineCents ?? row.usualPriceCents,
+    discountPercent: Math.max(0, Math.round(priceInsight.discountPercent)),
+    score: effectiveScore,
     buyNow,
     confidence: row.confidence,
     status: row.status,
@@ -221,6 +310,9 @@ function serializeAlert(
     observedAt: row.observedAt,
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
+    priceReference,
+    priceInsight,
+    comparableOffers,
     certificateUrl: liveEligible ? `/certified/${encodeURIComponent(row.id)}` : null,
     certificateApiUrl: liveEligible ? `/api/certified/${encodeURIComponent(row.id)}` : null,
     history: row.sourceMode === "live" ? {
@@ -412,7 +504,8 @@ export async function GET(request: Request) {
       database.select({ count: sql<number>`count(*)` }).from(alerts).where(where),
     ]);
     const total = Number(countRows[0]?.count ?? 0);
-    const [feedbackRows, intelligenceRows, observationRows] = rows.length === 0 ? [[], [], []] : await Promise.all([
+    const canonicalIds = [...new Set(rows.map((row) => row.canonicalProductId).filter((id): id is string => id !== null))];
+    const [feedbackRows, intelligenceRows, observationRows, comparisonRows] = rows.length === 0 ? [[], [], [], []] : await Promise.all([
       database.select({
         alertId: alertFeedback.alertId,
         total: sql<number>`count(*)`,
@@ -432,6 +525,27 @@ export async function GET(request: Request) {
       }).from(priceObservations)
         .where(inArray(priceObservations.alertId, rows.filter((row) => row.sourceMode === "live").map((row) => row.id)))
         .orderBy(desc(priceObservations.observedAt)),
+      canonicalIds.length === 0 ? Promise.resolve([]) : database.select({
+        id: alerts.id,
+        canonicalProductId: alerts.canonicalProductId,
+        source: alerts.source,
+        merchant: alerts.merchant,
+        market: alerts.market,
+        title: alerts.title,
+        gtin: alerts.gtin,
+        url: alerts.url,
+        currency: alerts.currency,
+        publicPriceCents: alerts.publicPriceCents,
+        observedAt: alerts.observedAt,
+        seller: alerts.seller,
+      }).from(alerts).where(and(
+        inArray(alerts.canonicalProductId, canonicalIds),
+        eq(alerts.sourceMode, "live"),
+        inArray(alerts.status, ["active", "review", "monitoring"]),
+        eq(alerts.priceAccessibleToAll, true),
+        isNotNull(alerts.publicPriceCents),
+        gte(alerts.observedAt, new Date(nowMs - 7 * 86_400_000).toISOString()),
+      )).orderBy(desc(alerts.observedAt)).limit(250),
     ]);
     const community = new Map(feedbackRows.map((row) => [row.alertId, {
       total: Number(row.total), positive: Number(row.positive), negative: Number(row.negative),
@@ -444,14 +558,30 @@ export async function GET(request: Request) {
       if (points.length < 61) points.push(observation);
       history.set(observation.alertId, points);
     }
+    const comparisons = new Map<string, PublicComparison[]>();
+    for (const comparison of comparisonRows) {
+      if (!comparison.canonicalProductId) continue;
+      const items = comparisons.get(comparison.canonicalProductId) ?? [];
+      items.push(comparison);
+      comparisons.set(comparison.canonicalProductId, items);
+    }
+    const serialized = rows
+      .map((row) => serializeAlert(
+        row,
+        community.get(row.id),
+        intelligence.get(row.id),
+        history.get(row.id),
+        row.canonicalProductId ? comparisons.get(row.canonicalProductId) : undefined,
+      ))
+      .filter((item) => view === "single_check" || item.priceInsight.classification !== "normal_price");
 
     return json(
       {
         ok: true,
         mode: view === "single_check" ? "single_check" : includeDemo ? "live_and_demo" : "live",
         generatedAt: now,
-        count: rows.length,
-        items: rows.map((row) => serializeAlert(row, community.get(row.id), intelligence.get(row.id), history.get(row.id))),
+        count: serialized.length,
+        items: serialized,
         pagination: {
           limit,
           offset,

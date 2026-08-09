@@ -43,6 +43,7 @@ export interface KeepaProduct {
   imageUrl: string | null;
   currentMinor: number;
   referenceMinor: number | null;
+  referenceSource: "keepa_average" | "keepa_list" | "unknown";
   market: Market;
   observedAt: string;
   buyBoxIsAmazon: boolean;
@@ -257,8 +258,14 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
   if (currentMinor === null) return null;
 
   const avg90 = stats?.avg90;
-  const referenceMinor = arrayPrice(avg90, PRICE_INDEXES.buyBox)
-    ?? arrayPrice(current, PRICE_INDEXES.list);
+  const averageReference = arrayPrice(avg90, PRICE_INDEXES.buyBox);
+  const listReference = arrayPrice(current, PRICE_INDEXES.list);
+  const referenceMinor = averageReference ?? listReference;
+  const referenceSource = averageReference !== null
+    ? "keepa_average" as const
+    : listReference !== null
+      ? "keepa_list" as const
+      : "unknown" as const;
   const imageName = text(raw.imagesCSV ?? raw.imageCSV)?.split(",")[0]?.trim() ?? null;
   const historySeries = csv[PRICE_INDEXES.buyBox];
   const categoryPath = (Array.isArray(raw.categoryTree) ? raw.categoryTree : [])
@@ -276,6 +283,7 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
       : null,
     currentMinor,
     referenceMinor: referenceMinor !== null && referenceMinor > currentMinor ? referenceMinor : null,
+    referenceSource: referenceMinor !== null && referenceMinor > currentMinor ? referenceSource : "unknown",
     market,
     observedAt,
     buyBoxIsAmazon: stats?.buyBoxIsAmazon === true || raw.buyBoxIsAmazon === true,
@@ -466,6 +474,7 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     referencePrice: product.referenceMinor === null
       ? null
       : { amountMinor: product.referenceMinor, currency: market.currency },
+    referencePriceSource: product.referenceSource,
     seller: product.buyBoxIsAmazon
       ? "Amazon"
       : product.buyBoxSellerId
@@ -550,7 +559,10 @@ export function mergeKeepaWithLive(
       gtin: liveOffer.product.gtin ?? keepaOfferSnapshot.product.gtin,
       imageUrl: liveOffer.product.imageUrl ?? keepaOfferSnapshot.product.imageUrl,
     },
-    referencePrice: keepaOfferSnapshot.referencePrice ?? liveOffer.referencePrice,
+    referencePrice: liveOffer.referencePrice ?? keepaOfferSnapshot.referencePrice,
+    referencePriceSource: liveOffer.referencePrice
+      ? "merchant_page"
+      : keepaOfferSnapshot.referencePriceSource ?? "unknown",
     fixture: keepaOfferSnapshot.fixture || liveOffer.fixture,
   };
   return {

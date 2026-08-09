@@ -42,6 +42,7 @@ export interface AlertIngestEnvelope {
     expectedVariantId: string | null;
     observedVariantId: string | null;
     merchantReferenceCents: number | null;
+    referencePriceSource: "merchant_page" | "keepa_average" | "keepa_list" | "unknown";
     verificationCount: number;
     observedAt: string;
     verifiedAt: string | null;
@@ -236,6 +237,10 @@ export function toAlertIngestEnvelope(
       expectedVariantId,
       observedVariantId,
       merchantReferenceCents: observation.offer.referencePrice?.amountMinor ?? null,
+      referencePriceSource: observation.offer.referencePriceSource
+        ?? (observation.offer.referencePrice === null
+          ? "unknown"
+          : observation.offer.strategy === "keepa" ? "keepa_average" : "merchant_page"),
       verificationCount: observation.verification.status === "confirmed" ? 2 : 1,
       observedAt: safeObservedAt,
       verifiedAt: observation.verification.status === "confirmed"

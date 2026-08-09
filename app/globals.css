@@ -956,6 +956,70 @@ a {
   font-size: 10px;
 }
 
+.estimated-reference {
+  display: inline-grid;
+  gap: 1px;
+  color: #6f6976;
+  line-height: 1.05;
+}
+
+.estimated-reference small {
+  font-size: 7px;
+  font-weight: 720;
+}
+
+.estimated-reference b {
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.mini-price-chart {
+  display: flex;
+  height: 34px;
+  align-items: flex-end;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 4px 6px 0;
+  border-bottom: 1px solid #ded8e4;
+  border-radius: 8px 8px 2px 2px;
+  background: linear-gradient(180deg, rgb(245 242 250 / 35%), rgb(245 242 250 / 90%));
+}
+
+.mini-price-chart i {
+  min-height: 3px;
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  background: #aaa1de;
+}
+
+.mini-price-chart i:last-child {
+  background: var(--coral);
+}
+
+.price-insight-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.insight-class,
+.rarity-score {
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 7px;
+  font-weight: 820;
+}
+
+.insight-class { color: #fff; background: #6459d9; }
+.insight-class.is-probable_error { background: #d6533d; }
+.insight-class.is-recent_drop { background: #6657db; }
+.insight-class.is-stable_good_price { color: #2b684e; background: #dcefe5; }
+.insight-class.is-normal_price { color: #5e5a64; background: #e9e6eb; }
+.rarity-score { color: #514a72; background: #eeeafa; }
+.price-insight-strip > small { margin-left: auto; color: var(--muted); font-size: 7px; font-weight: 720; }
+
 .discount-tag {
   display: inline-flex;
   min-height: 23px;
@@ -2848,6 +2912,9 @@ a {
   font-size: 12px;
 }
 
+.detail-price .estimated-reference b { font-size: 13px; }
+.detail-price .estimated-reference small { font-size: 8px; }
+
 .detail-price span {
   padding: 4px 8px;
   border-radius: 7px;
@@ -2867,6 +2934,42 @@ a {
   border-radius: 17px;
   background: #f3f0fb;
 }
+
+.price-insight-box {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #d6d0f3;
+  border-radius: 17px;
+  background: linear-gradient(135deg, #f5f2ff, #fff);
+}
+
+.price-insight-box.is-probable_error { border-color: #efb1a3; background: linear-gradient(135deg, #fff0eb, #fff); }
+.price-insight-box.is-stable_good_price { border-color: #aed8c4; background: linear-gradient(135deg, #edf9f2, #fff); }
+.price-insight-box h3,
+.price-insight-box p { margin: 0; }
+.price-insight-box h3 { margin-top: 4px; font-size: 17px; }
+.price-insight-box p { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+
+.price-insight-metrics {
+  display: grid;
+  grid-template-columns: 0.8fr 0.9fr 1.6fr;
+  gap: 7px;
+}
+
+.price-insight-metrics > span {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgb(210 204 232 / 70%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.price-insight-metrics strong,
+.price-insight-metrics i { display: block; }
+.price-insight-metrics strong { overflow: hidden; font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.price-insight-metrics strong small { font-size: 8px; }
+.price-insight-metrics i { margin-top: 3px; color: var(--muted); font-size: 7px; font-style: normal; font-weight: 760; text-transform: uppercase; }
 
 .score-ring {
   display: grid;
@@ -2978,6 +3081,33 @@ a {
   color: var(--muted);
   font-size: 8px;
 }
+
+.market-offer-list {
+  display: grid;
+  gap: 7px;
+}
+
+.market-offer-list a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  color: inherit;
+  background: #fff;
+  text-decoration: none;
+}
+
+.market-offer-list a:hover { border-color: #aaa0e0; }
+.market-offer-list a span,
+.market-offer-list a strong,
+.market-offer-list a small { display: block; min-width: 0; }
+.market-offer-list a strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.market-offer-list a small { margin-top: 2px; color: var(--muted); font-size: 7px; }
+.market-offer-list a > b { font-size: 12px; white-space: nowrap; }
+.market-offer-list a > i { color: var(--violet); font-size: 11px; font-style: normal; }
 
 .verified-grid {
   display: grid;
