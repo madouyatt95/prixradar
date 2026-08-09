@@ -123,3 +123,35 @@ test("JD Sports extrait la référence, le prix et le stock depuis la fiche publ
   assert.equal(offer.variantIdentity?.expectedId, "sku:19735246_jdsportsfr");
   assert.equal(offer.variantIdentity?.observedId, "sku:19735246_jdsportsfr");
 });
+
+test("JD Sports extrait les prix des cartes catégorie sans inventer la livraison", () => {
+  const categoryUrl = "https://m.jdsports.fr/promo/c/chaussures/";
+  const html = `<span class="itemContainer" data-productsku="19742720_jdsportsfr">
+    <a href="/product/blanc-new-balance-740-enfant/19742720_jdsportsfr/" data-e2e="plp-productList-link">
+      <img class="thumbnail" alt="New Balance 740 Enfant" src="https://images.example/740.jpg">
+    </a>
+    <span class="itemTitle"><a href="/product/blanc-new-balance-740-enfant/19742720_jdsportsfr/" data-e2e="product-listing-name">New Balance 740 Enfant</a></span>
+    <div class="itemPrice">
+      <span class="was">Était <span data-oi-price>200,00€</span></span>
+      <span class="now" data-e2e="product-listing-price">Maintenant <span data-oi-price>55,00€</span></span>
+    </div>
+  </span>`;
+  const [offer] = extractRetailOffers(html, categoryUrl, {
+    fixture: true,
+    observedAt: "2026-08-09T12:00:00.000Z",
+    requestedUrl: categoryUrl,
+  });
+  assert.ok(offer);
+  assert.equal(offer.product.externalId, "19742720_jdsportsfr");
+  assert.equal(offer.product.url, "https://m.jdsports.fr/product/blanc-new-balance-740-enfant/19742720_jdsportsfr/");
+  assert.equal(offer.product.category, "Chaussures");
+  assert.equal(offer.price.amountMinor, 5_500);
+  assert.equal(offer.referencePrice?.amountMinor, 20_000);
+  assert.equal(offer.shipping, null);
+  assert.equal(offer.total, null);
+  assert.equal(offer.verificationScope, "category_listing");
+  assert.equal(offer.sellerTrusted, true);
+  assert.equal(offer.variantIdentity?.expectedSource, "listing_link");
+  assert.equal(offer.variantIdentity?.expectedId, "sku:19742720_jdsportsfr");
+  assert.equal(offer.variantIdentity?.observedId, "sku:19742720_jdsportsfr");
+});
