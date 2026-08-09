@@ -94,6 +94,7 @@ test("une fixture ne récupère aucune cible et n’envoie rien", async () => {
 test("réserve puis complète chaque livraison avec le secret push distinct", async () => {
   const actions: unknown[] = [];
   const auth: string[] = [];
+  const subscriptions: unknown[] = [];
   const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     auth.push(new Headers(init?.headers).get("authorization") ?? "");
@@ -112,7 +113,7 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
       return Response.json({ ok: true, targets: [{
         id: 1,
         endpoint: "https://push.example/subscription-1",
-        keys: { p256dh: "p256dh", auth: "auth" },
+        keys: { p256dh: "p256+dh/=", auth: "au+th/=" },
         contentEncoding: "aes128gcm",
         minScore: 60,
         tier: "urgent",
@@ -123,7 +124,10 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
   };
   const summary = await sendPushForObservation("alert-1", 90, alert(), config, {
     fetchImpl: fakeFetch,
-    sendNotification: async () => ({ statusCode: 201, headers: {}, body: "" }),
+    sendNotification: async (subscription) => {
+      subscriptions.push(subscription);
+      return { statusCode: 201, headers: {}, body: "" };
+    },
   });
   assert.deepEqual(summary, { eligible: true, targets: 1, reserved: 1, sent: 1, failed: 0 });
   assert.deepEqual(actions, [
@@ -131,6 +135,10 @@ test("réserve puis complète chaque livraison avec le secret push distinct", as
     { action: "complete", reservationId: 1, status: "sent" },
   ]);
   assert.ok(auth.every((value) => value === "Bearer PUSH_SECRET_TEST"));
+  assert.deepEqual(subscriptions, [{
+    endpoint: "https://push.example/subscription-1",
+    keys: { p256dh: "p256-dh_", auth: "au-th_" },
+  }]);
 });
 
 test("livre une baisse après achat uniquement à la réservation du propriétaire", async () => {

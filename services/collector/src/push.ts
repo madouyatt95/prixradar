@@ -52,6 +52,28 @@ type DeliveryAction =
   | { action: "reserve"; alertId: string; subscriptionId: number; tier?: "urgent" | "personal" | "digest"; alertLevel?: "reliable" | "watch" }
   | { action: "complete"; reservationId: number; status: "sent" | "failed"; errorCode?: string };
 
+function base64Url(value: string): string {
+  return value.trim().replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/gu, "");
+}
+
+function configureVapid(config: PushConfig): void {
+  webPush.setVapidDetails(
+    config.vapidSubject,
+    base64Url(config.vapidPublicKey),
+    base64Url(config.vapidPrivateKey),
+  );
+}
+
+function normalizedSubscription(target: PushSubscriptionTarget) {
+  return {
+    endpoint: target.endpoint,
+    keys: {
+      p256dh: base64Url(target.keys.p256dh),
+      auth: base64Url(target.keys.auth),
+    },
+  };
+}
+
 function apiEndpoint(baseUrl: string, path: string): URL {
   const base = new URL(baseUrl);
   const local = base.hostname === "localhost" || base.hostname === "127.0.0.1";
@@ -242,7 +264,7 @@ export async function sendPushForObservation(
 
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   if (!dependencies.sendNotification) {
-    webPush.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
+    configureVapid(config);
   }
   const targets = await fetchPushTargets(backendScore, config, fetchImpl, {
     discount: observation.anomaly.discountPercent ?? 0,
@@ -299,10 +321,7 @@ export async function sendPushForObservation(
     summary.reserved += 1;
 
     try {
-      await (dependencies.sendNotification ?? webPush.sendNotification)({
-        endpoint: target.endpoint,
-        keys: target.keys,
-      }, payload, {
+      await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
         TTL: 900,
         urgency: target.tier === "urgent" ? "high" : "normal",
         topic: alertId.slice(0, 32),
@@ -348,7 +367,7 @@ export async function sendDailyDigests(
     throw new SinkConfigurationError("Clés VAPID absentes: résumés désactivés.");
   }
   const fetchImpl = dependencies.fetchImpl ?? fetch;
-  if (!dependencies.sendNotification) webPush.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
+  if (!dependencies.sendNotification) configureVapid(config);
   const endpoint = apiEndpoint(config.baseUrl, "api/push/digests");
   const response = await protectedJson<{ ok: boolean; targets?: DigestTarget[] }>(config, endpoint, { method: "GET" }, fetchImpl);
   const targets = Array.isArray(response.targets) ? response.targets.filter((target) => validTarget(target) && typeof target.alertId === "string") : [];
@@ -366,7 +385,7 @@ export async function sendDailyDigests(
       badgeCount: 1,
     });
     try {
-      await (dependencies.sendNotification ?? webPush.sendNotification)({ endpoint: target.endpoint, keys: target.keys }, payload, {
+      await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
         TTL: 43_200,
         urgency: "low",
         topic: `digest-${new Date().toISOString().slice(0, 10)}`.slice(0, 32),
@@ -391,7 +410,7 @@ export async function sendProtectionPush(
     throw new SinkConfigurationError("Clés VAPID absentes: bouclier Push désactivé.");
   }
   const fetchImpl = dependencies.fetchImpl ?? fetch;
-  if (!dependencies.sendNotification) webPush.setVapidDetails(config.vapidSubject, config.vapidPublicKey, config.vapidPrivateKey);
+  if (!dependencies.sendNotification) configureVapid(config);
   const endpoint = apiEndpoint(config.baseUrl, "api/push/protection");
   endpoint.searchParams.set("purchaseId", purchaseId);
   const response = await protectedJson<{ ok: boolean; targets?: ProtectionTarget[] }>(config, endpoint, { method: "GET" }, fetchImpl);
@@ -409,7 +428,7 @@ export async function sendProtectionPush(
       badgeCount: 1,
     });
     try {
-      await (dependencies.sendNotification ?? webPush.sendNotification)({ endpoint: target.endpoint, keys: target.keys }, payload, {
+      await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
         TTL: 21_600,
         urgency: "high",
         topic: `shield-${purchaseId}`.slice(0, 32),
