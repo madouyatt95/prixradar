@@ -46,14 +46,26 @@ function effectiveCadence(source: string, cadenceMinutes: number, volatilityScor
   return isPublicWebSource(source) ? Math.max(60, adjusted) : adjusted;
 }
 
-function categoryIds(value: string) {
+const DEFAULT_EXCLUDED_FAMILIES = ["books", "music", "wall_art"] as const;
+
+function categoryConfiguration(value: string) {
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? [...new Set(parsed.filter((item): item is number => Number.isSafeInteger(item) && item > 0))].slice(0, 20)
-      : [];
+    const includeValue = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && Array.isArray((parsed as { include?: unknown }).include)
+        ? (parsed as { include: unknown[] }).include
+        : [];
+    const excludeValue = parsed && typeof parsed === "object" && Array.isArray((parsed as { excludeFamilies?: unknown }).excludeFamilies)
+      ? (parsed as { excludeFamilies: unknown[] }).excludeFamilies
+      : DEFAULT_EXCLUDED_FAMILIES;
+    const allowed = new Set<string>(DEFAULT_EXCLUDED_FAMILIES);
+    return {
+      include: [...new Set(includeValue.filter((item): item is number => Number.isSafeInteger(item) && item > 0))].slice(0, 20),
+      excludeFamilies: [...new Set(excludeValue.filter((item): item is string => typeof item === "string" && allowed.has(item)))],
+    };
   } catch {
-    return [];
+    return { include: [], excludeFamilies: [...DEFAULT_EXCLUDED_FAMILIES] };
   }
 }
 
@@ -193,12 +205,14 @@ export async function GET(request: Request) {
       const runsPerDay = Math.max(1, Math.ceil(1_440 / segment.cadenceMinutes));
       const perRunLimit = Math.max(1, Math.min(100, Math.floor(segment.dailyTokenBudget / runsPerDay)));
       const page = Math.floor(now / (segment.cadenceMinutes * 60_000)) % 10;
+      const categoryConfig = categoryConfiguration(segment.categoryIdsJson);
       return [{
         id: segment.id,
         source: "amazon" as const,
         market: segment.market,
         label: segment.label,
-        categoryIds: categoryIds(segment.categoryIdsJson),
+        categoryIds: categoryConfig.include,
+        excludedFamilies: categoryConfig.excludeFamilies,
         minPriceCents: segment.minPriceCents,
         maxPriceCents: segment.maxPriceCents,
         minimumDropPercent: segment.minimumDropPercent,
