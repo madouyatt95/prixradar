@@ -461,7 +461,7 @@ export type SocialIngestResponse = {
 };
 
 export async function postSocialPublications(
-  payload: { sourceId: string; scannedAt: string; items: SocialPublicationInput[] },
+  payload: { sourceId: string; scannedAt: string; successful?: boolean; items: SocialPublicationInput[] },
   config: SinkConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SocialIngestResponse> {
@@ -482,4 +482,69 @@ export async function postSocialPublications(
     throw new SinkRequestError("Réponse d’ingestion sociale invalide.", response.status);
   }
   return result as SocialIngestResponse;
+}
+
+export type SocialCollectionPlan = {
+  ok: true;
+  allowed: boolean;
+  code?: string;
+  runId?: string;
+  startedAt?: string;
+  cursorAt?: string;
+  resultLimitPerSource?: number;
+  sources?: Array<{ id: string; name: string; url: string }>;
+  budget?: { usedMicros: number; limitMicros: number; remainingMicros: number; reservedMicros: number };
+};
+
+export async function requestSocialCollectionPlan(
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SocialCollectionPlan> {
+  if (!config.ingestSecret.trim()) throw new SinkConfigurationError("INGEST_SECRET absent: flux sociaux désactivés.");
+  const endpoint = new URL("api/social/plan", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    body: "{}",
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Plan social refusé par PrixRadar (HTTP ${response.status}).`, response.status);
+  const result = await response.json() as SocialCollectionPlan;
+  if (result.ok !== true || typeof result.allowed !== "boolean") {
+    throw new SinkRequestError("Réponse du plan social invalide.", response.status);
+  }
+  if (result.allowed && (!result.runId || !result.startedAt || !result.cursorAt || !Array.isArray(result.sources))) {
+    throw new SinkRequestError("Plan social actif incomplet.", response.status);
+  }
+  return result;
+}
+
+export async function postSocialCollectionCheckpoint(
+  payload: {
+    runId: string;
+    status: "succeeded" | "failed";
+    postsReturned: number;
+    providerRunId?: string | null;
+    usageTotalUsd?: number | null;
+    finishedAt?: string;
+    errorCode?: string | null;
+  },
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean; duplicate: boolean; estimatedCostMicros: number }> {
+  const endpoint = new URL("api/social/checkpoint", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Point de contrôle social refusé par PrixRadar (HTTP ${response.status}).`, response.status);
+  return response.json() as Promise<{ ok: boolean; duplicate: boolean; estimatedCostMicros: number }>;
 }

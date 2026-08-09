@@ -1,4 +1,5 @@
 import { PlaywrightCrawler, ProxyConfiguration } from "crawlee";
+import { Actor } from "apify";
 import { chromium, type Page } from "playwright";
 
 export type FacebookSocialSource = {
@@ -56,6 +57,189 @@ export const FACEBOOK_SOCIAL_SOURCES: readonly FacebookSocialSource[] = [
     url: "https://www.facebook.com/groups/584379244259839/",
   },
 ];
+
+export const FACEBOOK_GROUPS_ACTOR_ID = "apify/facebook-groups-scraper";
+
+type OfficialFacebookPost = Record<string, unknown>;
+
+export type OfficialFacebookRunResult = {
+  providerRunId: string;
+  usageTotalUsd: number | null;
+  finishedAt: string;
+  rawItemsCount: number;
+  results: SocialSourceResult[];
+};
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function cleanString(value: unknown, maximum = 2_048) {
+  return typeof value === "string" ? value.replace(/\r\n?/gu, "\n").trim().slice(0, maximum) : "";
+}
+
+function groupIdFromUrl(value: unknown) {
+  const raw = cleanString(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return /^\/groups\/(\d{6,20})(?:\/|$)/u.exec(url.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function safeHttpsUrl(value: unknown) {
+  const raw = cleanString(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.username || url.password) return null;
+    return url.toString().slice(0, 2_048);
+  } catch {
+    return null;
+  }
+}
+
+function externalOfficialUrl(value: unknown) {
+  const url = safeHttpsUrl(value);
+  if (!url) return null;
+  const host = new URL(url).hostname.toLowerCase().replace(/^www\./u, "");
+  return host === "facebook.com" || host.endsWith(".facebook.com") || host === "fb.watch" ? null : url;
+}
+
+function nestedUrl(value: unknown, keys: readonly string[]): string | null {
+  const item = record(value);
+  if (!item) return null;
+  for (const key of keys) {
+    const direct = safeHttpsUrl(item[key]);
+    if (direct) return direct;
+    const nested = record(item[key]);
+    if (nested) {
+      const candidate = nestedUrl(nested, ["url", "uri", "href", "targetUrl"]);
+      if (candidate) return candidate;
+    }
+  }
+  return null;
+}
+
+function officialImage(value: unknown) {
+  const attachments = Array.isArray(value) ? value : [];
+  for (const attachment of attachments) {
+    const candidate = nestedUrl(attachment, ["image", "photo", "thumbnail", "media", "url", "uri"]);
+    if (!candidate) continue;
+    const host = new URL(candidate).hostname.toLowerCase();
+    if (host.includes("fbcdn") || host.startsWith("scontent")) return candidate;
+  }
+  return null;
+}
+
+function firstExternalTextUrl(text: string) {
+  const matches = text.match(/https:\/\/[^\s<>()]+/gu) ?? [];
+  for (const match of matches) {
+    const url = externalOfficialUrl(match.replace(/[.,;!?]+$/u, ""));
+    if (url) return url;
+  }
+  return null;
+}
+
+export function normalizeOfficialFacebookPost(
+  value: unknown,
+  sources: readonly FacebookSocialSource[],
+): { sourceId: FacebookSocialSource["id"]; publication: SocialPublication } | null {
+  const item = record(value);
+  if (!item) return null;
+  const groupId = groupIdFromUrl(item.facebookUrl)
+    ?? groupIdFromUrl(item.inputUrl)
+    ?? groupIdFromUrl(item.url);
+  const source = sources.find((candidate) => candidate.groupId === groupId);
+  if (!source) return null;
+
+  const rawPublicationUrl = safeHttpsUrl(item.url);
+  if (!rawPublicationUrl) return null;
+  const publicationHost = new URL(rawPublicationUrl).hostname.toLowerCase().replace(/^www\./u, "");
+  if (publicationHost !== "facebook.com" && publicationHost !== "m.facebook.com") return null;
+  const urlId = /\/(?:posts|permalink)\/(\d{5,30})(?:\/|$)/u.exec(new URL(rawPublicationUrl).pathname)?.[1];
+  const rawId = cleanString(item.legacyId, 160) || cleanString(item.id, 160) || urlId || "";
+  const externalId = /^[A-Za-z0-9._:-]{3,160}$/u.test(rawId) ? rawId : urlId;
+  if (!externalId) return null;
+
+  const title = cleanString(item.title, 1_000);
+  const postText = cleanString(item.text, 4_000);
+  const text = [title, postText].filter((part, index, all) => part && all.indexOf(part) === index).join("\n").slice(0, 4_000);
+  if (!text) return null;
+  const publishedAtMs = Date.parse(cleanString(item.time, 64));
+  if (!Number.isFinite(publishedAtMs)) return null;
+  const user = record(item.user);
+  const author = cleanString(user?.name ?? user?.profileName, 160) || source.name;
+  const actionLink = nestedUrl(item.actionLink, ["url", "href", "targetUrl"]);
+  const previewTarget = nestedUrl(item.previewTarget, ["url", "href", "targetUrl"]);
+  const externalUrl = externalOfficialUrl(item.link)
+    ?? externalOfficialUrl(actionLink)
+    ?? externalOfficialUrl(previewTarget)
+    ?? firstExternalTextUrl(text);
+
+  return {
+    sourceId: source.id,
+    publication: {
+      externalId,
+      author,
+      text,
+      publicationUrl: rawPublicationUrl,
+      imageUrl: officialImage(item.attachments),
+      externalUrl,
+      publishedAt: new Date(publishedAtMs).toISOString(),
+    },
+  };
+}
+
+export async function collectOfficialFacebookSources(options: {
+  sources: readonly FacebookSocialSource[];
+  cursorAt: string;
+  resultLimitPerSource: number;
+  timeoutSecs?: number;
+}): Promise<OfficialFacebookRunResult> {
+  if (options.sources.length === 0) throw new Error("Aucun groupe Facebook actif.");
+  const run = await Actor.call(FACEBOOK_GROUPS_ACTOR_ID, {
+    startUrls: options.sources.map((source) => ({ url: source.url })),
+    resultsLimit: Math.max(1, Math.min(100, options.resultLimitPerSource)),
+    viewOption: "CHRONOLOGICAL",
+    onlyPostsNewerThan: options.cursorAt,
+  }, {
+    memory: 1_024,
+    timeout: options.timeoutSecs ?? 180,
+    waitSecs: (options.timeoutSecs ?? 180) + 30,
+  });
+  if (run.status !== "SUCCEEDED") {
+    throw new Error(`L’Actor Facebook s’est terminé avec le statut ${run.status}.`);
+  }
+  const dataset = await Actor.openDataset<OfficialFacebookPost>(run.defaultDatasetId);
+  const data = await dataset.getData({
+    limit: Math.min(1_000, options.sources.length * Math.max(1, options.resultLimitPerSource) + 20),
+    clean: true,
+  });
+  const grouped = new Map<string, Map<string, SocialPublication>>(
+    options.sources.map((source) => [source.id, new Map()]),
+  );
+  for (const raw of data.items) {
+    const normalized = normalizeOfficialFacebookPost(raw, options.sources);
+    if (normalized) grouped.get(normalized.sourceId)?.set(normalized.publication.externalId, normalized.publication);
+  }
+  return {
+    providerRunId: run.id,
+    usageTotalUsd: typeof run.usageTotalUsd === "number" && Number.isFinite(run.usageTotalUsd) ? run.usageTotalUsd : null,
+    finishedAt: run.finishedAt instanceof Date ? run.finishedAt.toISOString() : new Date().toISOString(),
+    rawItemsCount: data.items.length,
+    results: options.sources.map((source) => ({
+      source,
+      publications: [...(grouped.get(source.id)?.values() ?? [])],
+      loadedUrl: source.url,
+      errorCode: null,
+    })),
+  };
+}
 
 type RawFacebookArticle = {
   text: string;

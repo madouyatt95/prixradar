@@ -153,14 +153,20 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-Le mode `social` relève toutes les cinq minutes les publications visibles de la
-liste de groupes Facebook publics déclarée dans `src/social.ts`. Une publication
-conserve son auteur, son heure, son lien original et son éventuel lien marchand,
-mais reste explicitement séparée d’une alerte de prix vérifiée. Cette relève ne
-consomme aucun jeton Keepa. Elle respecte `robots.txt`, ne se connecte à aucun
-compte Facebook et s’arrête si la page publique n’est plus accessible. La source
-X Dealabs est préparée séparément et reste désactivée tant qu’un accès API X
-officiel n’est pas configuré.
+Le mode `social` relève toutes les cinq minutes les nouvelles publications de
+deux groupes Facebook publics via l’Actor officiel Apify
+`apify/facebook-groups-scraper`. Il demande uniquement les posts publiés depuis
+la dernière relève réussie, déduplique avant notification et limite le premier
+rattrapage à dix minutes. Une publication conserve son auteur, son heure, son
+lien original et son éventuel lien marchand, mais reste explicitement séparée
+d’une alerte de prix vérifiée. Cette relève ne consomme aucun jeton Keepa.
+
+Deux autres groupes restent enregistrés mais désactivés pour une activation
+ultérieure. La PWA réserve le coût maximal avant chaque appel, remplace ensuite
+cette réserve par le coût réel remonté par Apify et suspend les nouveaux appels
+avant le plafond mensuel `SOCIAL_MONTHLY_BUDGET_CENTS` (29 $ par défaut). La
+source X Dealabs est préparée séparément et reste désactivée tant qu’un accès API
+X officiel n’est pas configuré.
 
 Il regroupe Amazon France dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un

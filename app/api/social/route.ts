@@ -1,7 +1,8 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, gte, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { socialPublications, socialSources } from "@/db/schema";
+import { socialCollectionRuns, socialPublications, socialSources } from "@/db/schema";
+import { currentMonthStart, socialMonthlyBudgetMicros } from "./server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
     const sourceFilter = platform === "facebook" || platform === "x"
       ? eq(socialSources.platform, platform)
       : undefined;
-    const [sources, items] = await Promise.all([
+    const [sources, items, usage] = await Promise.all([
       database.select().from(socialSources).orderBy(socialSources.platform, socialSources.name),
       database.select({
         id: socialPublications.id,
@@ -46,7 +47,12 @@ export async function GET(request: Request) {
         .where(sourceFilter)
         .orderBy(desc(socialPublications.publishedAt), desc(socialPublications.firstSeenAt))
         .limit(limit),
+      database.select({
+        micros: sql<number>`coalesce(sum(${socialCollectionRuns.estimatedCostMicros}), 0)`,
+      }).from(socialCollectionRuns).where(gte(socialCollectionRuns.startedAt, currentMonthStart())),
     ]);
+    const usedMicros = Math.max(0, Number(usage[0]?.micros ?? 0));
+    const limitMicros = socialMonthlyBudgetMicros();
 
     return Response.json({
       ok: true,
@@ -65,6 +71,11 @@ export async function GET(request: Request) {
       })),
       count: items.length,
       items,
+      collectionBudget: {
+        usedMicros,
+        limitMicros,
+        remainingMicros: Math.max(0, limitMicros - usedMicros),
+      },
     }, {
       headers: { "Cache-Control": "public, max-age=20, stale-while-revalidate=60" },
     });

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "37f2a7af-e82f-4979-8774-150c03978d7f",
-  "prevId": "11cbaf84-2a1a-4a90-8780-3fdcfd3f63dd",
+  "id": "775bdf12-5117-4ca0-ace5-37bdcb86f214",
+  "prevId": "37f2a7af-e82f-4979-8774-150c03978d7f",
   "tables": {
     "alert_feedback": {
       "name": "alert_feedback",
@@ -3832,6 +3832,149 @@
         "sentinel_frontier_duplicates_nonnegative": {
           "name": "sentinel_frontier_duplicates_nonnegative",
           "value": "\"sentinel_frontier\".\"duplicate_count\" >= 0"
+        }
+      }
+    },
+    "social_collection_runs": {
+      "name": "social_collection_runs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'apify_facebook_groups'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'reserved'"
+        },
+        "source_count": {
+          "name": "source_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "posts_returned": {
+          "name": "posts_returned",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "estimated_cost_micros": {
+          "name": "estimated_cost_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cursor_from": {
+          "name": "cursor_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_run_id": {
+          "name": "provider_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "social_collection_runs_started_idx": {
+          "name": "social_collection_runs_started_idx",
+          "columns": [
+            "started_at"
+          ],
+          "isUnique": false
+        },
+        "social_collection_runs_status_started_idx": {
+          "name": "social_collection_runs_status_started_idx",
+          "columns": [
+            "status",
+            "started_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "social_collection_runs_provider_allowed": {
+          "name": "social_collection_runs_provider_allowed",
+          "value": "\"social_collection_runs\".\"provider\" IN ('apify_facebook_groups')"
+        },
+        "social_collection_runs_status_allowed": {
+          "name": "social_collection_runs_status_allowed",
+          "value": "\"social_collection_runs\".\"status\" IN ('reserved', 'succeeded', 'failed')"
+        },
+        "social_collection_runs_sources_positive": {
+          "name": "social_collection_runs_sources_positive",
+          "value": "\"social_collection_runs\".\"source_count\" BETWEEN 1 AND 20"
+        },
+        "social_collection_runs_posts_nonnegative": {
+          "name": "social_collection_runs_posts_nonnegative",
+          "value": "\"social_collection_runs\".\"posts_returned\" >= 0"
+        },
+        "social_collection_runs_cost_nonnegative": {
+          "name": "social_collection_runs_cost_nonnegative",
+          "value": "\"social_collection_runs\".\"estimated_cost_micros\" >= 0"
         }
       }
     },

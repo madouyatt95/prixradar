@@ -19,8 +19,15 @@ import {
 } from "./source-status.js";
 import { deliverObservation, deliverObservationSafely, liveVerifyKeepaObservation } from "./worker.js";
 import { sendDailyDigests, sendProtectionPush, sendSocialPublicationPush } from "./push.js";
-import { postEanScanResult, postFrontierItems, postSocialPublications, privateApiHeaders } from "./sink.js";
-import { collectFacebookSocialSources } from "./social.js";
+import {
+  postEanScanResult,
+  postFrontierItems,
+  postSocialCollectionCheckpoint,
+  postSocialPublications,
+  privateApiHeaders,
+  requestSocialCollectionPlan,
+} from "./sink.js";
+import { collectOfficialFacebookSources, FACEBOOK_SOCIAL_SOURCES } from "./social.js";
 import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
 import { verifyOfferSnapshots } from "./verify.js";
 
@@ -223,25 +230,64 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       if (!config.priceRadarBaseUrl || !config.ingestSecret) {
         throw new Error("Configuration PrixRadar incomplète pour les publications sociales.");
       }
-      const results = await collectFacebookSocialSources({
+      const sinkConfig = {
+        baseUrl: config.priceRadarBaseUrl,
+        ingestSecret: config.ingestSecret,
+        ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
         timeoutMs: config.httpTimeoutMs,
-        proxyUrls: config.proxyUrls,
+      };
+      const plan = await requestSocialCollectionPlan(sinkConfig);
+      if (!plan.allowed) {
+        await Actor.pushData({
+          dataKind: "social-summary",
+          status: "budget-paused",
+          code: plan.code ?? "MONTHLY_BUDGET_REACHED",
+          sourcesChecked: 0,
+          publicationsSeen: 0,
+          publicationsAdded: 0,
+          notificationsSent: 0,
+        });
+        return;
+      }
+      const plannedSources = (plan.sources ?? []).flatMap((candidate) => {
+        const known = FACEBOOK_SOCIAL_SOURCES.find((source) => source.id === candidate.id && source.url === candidate.url);
+        return known ? [known] : [];
       });
+      if (!plan.runId || !plan.startedAt || !plan.cursorAt || plannedSources.length !== plan.sources?.length) {
+        throw new Error("Le plan Facebook contient une source inconnue ou incomplète.");
+      }
+
+      let officialRun: Awaited<ReturnType<typeof collectOfficialFacebookSources>> | null = null;
       let publicationsSeen = 0;
       let publicationsAdded = 0;
       let notificationsSent = 0;
-      for (const result of results) {
+      let ingestFailures = 0;
+      try {
+        officialRun = await collectOfficialFacebookSources({
+          sources: plannedSources,
+          cursorAt: plan.cursorAt,
+          resultLimitPerSource: plan.resultLimitPerSource ?? 20,
+          timeoutSecs: 180,
+        });
+      } catch (error) {
+        await postSocialCollectionCheckpoint({
+          runId: plan.runId,
+          status: "failed",
+          postsReturned: 0,
+          finishedAt: new Date().toISOString(),
+          errorCode: "FACEBOOK_PROVIDER_FAILED",
+        }, sinkConfig).catch(() => undefined);
+        throw error;
+      }
+
+      for (const result of officialRun.results) {
         try {
           const ingested = await postSocialPublications({
             sourceId: result.source.id,
-            scannedAt: new Date().toISOString(),
+            scannedAt: plan.startedAt,
+            successful: true,
             items: result.publications,
-          }, {
-            baseUrl: config.priceRadarBaseUrl,
-            ingestSecret: config.ingestSecret,
-            ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
-            timeoutMs: config.httpTimeoutMs,
-          });
+          }, sinkConfig);
           publicationsSeen += result.publications.length;
           publicationsAdded += ingested.newItems.length;
           if (input.notify === true && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
@@ -267,6 +313,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             errorCode: result.errorCode,
           });
         } catch (error) {
+          ingestFailures += 1;
           await Actor.pushData({
             dataKind: "social-source-failure",
             sourceId: result.source.id,
@@ -276,13 +323,27 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           });
         }
       }
+      const checkpoint = await postSocialCollectionCheckpoint({
+        runId: plan.runId,
+        status: ingestFailures === 0 ? "succeeded" : "failed",
+        postsReturned: officialRun.rawItemsCount,
+        providerRunId: officialRun.providerRunId,
+        usageTotalUsd: officialRun.usageTotalUsd,
+        finishedAt: officialRun.finishedAt,
+        ...(ingestFailures > 0 ? { errorCode: "SOCIAL_INGEST_FAILED" } : {}),
+      }, sinkConfig);
       await Actor.pushData({
         dataKind: "social-summary",
-        sourcesChecked: results.length,
+        status: ingestFailures === 0 ? "succeeded" : "partial-failure",
+        providerRunId: officialRun.providerRunId,
+        sourcesChecked: officialRun.results.length,
         publicationsSeen,
+        rawItemsCharged: officialRun.rawItemsCount,
         publicationsAdded,
         notificationsSent,
+        estimatedCostMicros: checkpoint.estimatedCostMicros,
       });
+      if (ingestFailures > 0) throw new Error(`${ingestFailures} source(s) sociale(s) n’ont pas été enregistrées.`);
       return;
     }
     if (mode === "digest") {

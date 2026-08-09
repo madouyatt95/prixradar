@@ -1074,6 +1074,34 @@ export const socialPublications = sqliteTable(
   ],
 );
 
+export const socialCollectionRuns = sqliteTable(
+  "social_collection_runs",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull().default("apify_facebook_groups"),
+    status: text("status").notNull().default("reserved"),
+    sourceCount: integer("source_count").notNull(),
+    postsReturned: integer("posts_returned").notNull().default(0),
+    estimatedCostMicros: integer("estimated_cost_micros").notNull(),
+    cursorFrom: text("cursor_from").notNull(),
+    providerRunId: text("provider_run_id"),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+    errorCode: text("error_code"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("social_collection_runs_started_idx").on(table.startedAt),
+    index("social_collection_runs_status_started_idx").on(table.status, table.startedAt),
+    check("social_collection_runs_provider_allowed", sql`${table.provider} IN ('apify_facebook_groups')`),
+    check("social_collection_runs_status_allowed", sql`${table.status} IN ('reserved', 'succeeded', 'failed')`),
+    check("social_collection_runs_sources_positive", sql`${table.sourceCount} BETWEEN 1 AND 20`),
+    check("social_collection_runs_posts_nonnegative", sql`${table.postsReturned} >= 0`),
+    check("social_collection_runs_cost_nonnegative", sql`${table.estimatedCostMicros} >= 0`),
+  ],
+);
+
 export const socialNotificationDeliveries = sqliteTable(
   "social_notification_deliveries",
   {

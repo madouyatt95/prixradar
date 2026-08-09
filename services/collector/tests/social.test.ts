@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FACEBOOK_SOCIAL_SOURCES, parseFacebookArticle } from "../src/social.js";
+import { FACEBOOK_SOCIAL_SOURCES, normalizeOfficialFacebookPost, parseFacebookArticle } from "../src/social.js";
 
 test("extrait un post Facebook public avec son lien marchand et son heure", () => {
   const source = FACEBOOK_SOCIAL_SOURCES[0];
@@ -34,4 +34,25 @@ test("refuse un article qui ne prouve pas son identifiant de publication", () =>
     dateTime: null,
     timeLabels: [],
   }, source), null);
+});
+
+test("normalise une publication de l’Actor Facebook officiel", () => {
+  const source = FACEBOOK_SOCIAL_SOURCES[0];
+  assert.ok(source);
+  const item = normalizeOfficialFacebookPost({
+    facebookUrl: source.url,
+    url: `https://www.facebook.com/groups/${source.groupId}/posts/998877665544332/`,
+    legacyId: "998877665544332",
+    time: "2026-08-09T18:03:12.000Z",
+    text: "Nouveau bon plan https://example.com/offre",
+    user: { name: "Sarah Bons Plans" },
+    link: "https://example.com/offre",
+    attachments: [{ photo: { uri: "https://scontent-cdg4-3.xx.fbcdn.net/post.jpg" } }],
+  }, [source]);
+  assert.ok(item);
+  assert.equal(item.sourceId, source.id);
+  assert.equal(item.publication.externalId, "998877665544332");
+  assert.equal(item.publication.author, "Sarah Bons Plans");
+  assert.equal(item.publication.externalUrl, "https://example.com/offre");
+  assert.equal(item.publication.imageUrl, "https://scontent-cdg4-3.xx.fbcdn.net/post.jpg");
 });

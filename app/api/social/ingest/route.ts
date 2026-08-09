@@ -1,8 +1,8 @@
-import { runtimeEnv as env } from "@/lib/runtime-env";
 import { eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { socialPublications, socialSources } from "@/db/schema";
+import { authenticateSocialCollector } from "../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -72,32 +72,6 @@ function parsePublishedAt(value: unknown) {
   return new Date(milliseconds).toISOString();
 }
 
-async function digest(value: string) {
-  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function secretsEqual(received: string, expected: string) {
-  const [left, right] = await Promise.all([digest(received), digest(expected)]);
-  let difference = left.length ^ right.length;
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
-  }
-  return difference === 0;
-}
-
-async function authenticate(request: Request) {
-  const workerSecret = (env as unknown as { INGEST_SECRET?: unknown }).INGEST_SECRET;
-  const expected = typeof workerSecret === "string" && workerSecret.length >= 24
-    ? workerSecret
-    : typeof process.env.INGEST_SECRET === "string" && process.env.INGEST_SECRET.length >= 24
-      ? process.env.INGEST_SECRET
-      : null;
-  if (!expected) return false;
-  const match = /^Bearer ([^\s]{1,512})$/u.exec(request.headers.get("authorization") ?? "");
-  return Boolean(match && await secretsEqual(match[1], expected));
-}
-
 function parseItems(value: unknown, source: typeof socialSources.$inferSelect, scannedAt: string) {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) throw new Error("items doit être une liste courte.");
   const unique = new Map<string, ParsedPublication>();
@@ -126,7 +100,7 @@ function parseItems(value: unknown, source: typeof socialSources.$inferSelect, s
 }
 
 export async function POST(request: Request) {
-  if (!(await authenticate(request))) return json({ ok: false, code: "UNAUTHORIZED" }, 401);
+  if (!(await authenticateSocialCollector(request))) return json({ ok: false, code: "UNAUTHORIZED" }, 401);
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return json({ ok: false, code: "PAYLOAD_TOO_LARGE" }, 413);
 
@@ -151,6 +125,7 @@ export async function POST(request: Request) {
     if (!source || !source.enabled) return json({ ok: false, code: "SOURCE_DISABLED" }, 409);
     const scannedAtMs = Date.parse(typeof body.scannedAt === "string" ? body.scannedAt : "");
     const scannedAt = Number.isFinite(scannedAtMs) ? new Date(scannedAtMs).toISOString() : new Date().toISOString();
+    const successful = body.successful === true;
     const items = parseItems(body.items, source, scannedAt);
     const existing = items.length === 0 ? [] : await database.select({ id: socialPublications.id })
       .from(socialPublications).where(inArray(socialPublications.id, items.map((item) => item.id)));
@@ -173,9 +148,11 @@ export async function POST(request: Request) {
       if (first) await database.batch([first, ...rest]);
     }
     await database.update(socialSources).set({
-      status: items.length > 0 ? "live" : "degraded",
+      status: successful || items.length > 0 ? "live" : "degraded",
       lastAttemptAt: scannedAt,
-      ...(items.length > 0 ? { lastSuccessAt: scannedAt, lastErrorCode: null } : { lastErrorCode: "NO_PUBLICATION_VISIBLE" }),
+      ...(successful || items.length > 0
+        ? { lastSuccessAt: scannedAt, lastErrorCode: null }
+        : { lastErrorCode: "NO_PUBLICATION_VISIBLE" }),
       updatedAt: scannedAt,
     }).where(eq(socialSources.id, source.id));
     const now = Date.now();

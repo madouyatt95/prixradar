@@ -175,6 +175,12 @@ type SocialPublication = {
   publishedAt: string;
 };
 
+type SocialCollectionBudget = {
+  usedMicros: number;
+  limitMicros: number;
+  remainingMicros: number;
+};
+
 type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
 
 type EanOffer = {
@@ -1260,6 +1266,7 @@ export function PriceRadarApp() {
   const [dealabsSignals, setDealabsSignals] = useState<DealabsSignal[]>([]);
   const [socialSources, setSocialSources] = useState<SocialSource[]>([]);
   const [socialPublications, setSocialPublications] = useState<SocialPublication[]>([]);
+  const [socialCollectionBudget, setSocialCollectionBudget] = useState<SocialCollectionBudget | null>(null);
   const [socialLoading, setSocialLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(true);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
@@ -1350,11 +1357,17 @@ export function PriceRadarApp() {
   useEffect(() => {
     let active = true;
     const load = () => fetch("/api/social?limit=60", { headers: { accept: "application/json" } })
-      .then(async (response) => response.ok ? response.json() as Promise<{ sources?: unknown[]; items?: unknown[] }> : { sources: [], items: [] })
+      .then(async (response) => response.ok ? response.json() as Promise<{ sources?: unknown[]; items?: unknown[]; collectionBudget?: unknown }> : { sources: [], items: [], collectionBudget: null })
       .then((payload) => {
         if (!active) return;
         setSocialSources((payload.sources ?? []).map(mapSocialSource).filter((item): item is SocialSource => item !== null));
         setSocialPublications((payload.items ?? []).map(mapSocialPublication).filter((item): item is SocialPublication => item !== null));
+        const budget = record(payload.collectionBudget);
+        setSocialCollectionBudget(budget ? {
+          usedMicros: Math.max(0, finite(budget.usedMicros)),
+          limitMicros: Math.max(0, finite(budget.limitMicros)),
+          remainingMicros: Math.max(0, finite(budget.remainingMicros)),
+        } : null);
       })
       .catch(() => undefined)
       .finally(() => { if (active) setSocialLoading(false); });
@@ -2163,6 +2176,7 @@ export function PriceRadarApp() {
     if (tab === "social") return <SocialFeedView
       sources={socialSources}
       publications={socialPublications}
+      collectionBudget={socialCollectionBudget}
       loading={socialLoading}
       notificationsEnabled={socialNotificationsEnabled}
       notificationState={notificationState}
@@ -2476,6 +2490,7 @@ function PageHeading({
 function SocialFeedView({
   sources,
   publications,
+  collectionBudget,
   loading,
   notificationsEnabled,
   notificationState,
@@ -2483,6 +2498,7 @@ function SocialFeedView({
 }: {
   sources: SocialSource[];
   publications: SocialPublication[];
+  collectionBudget: SocialCollectionBudget | null;
   loading: boolean;
   notificationsEnabled: boolean;
   notificationState: string;
@@ -2491,7 +2507,8 @@ function SocialFeedView({
   const [platform, setPlatform] = useState<"all" | "facebook" | "x">("all");
   const filtered = platform === "all" ? publications : publications.filter((item) => item.platform === platform);
   const facebookSources = sources.filter((source) => source.platform === "facebook");
-  const activeFacebookSources = facebookSources.filter((source) => source.status === "live");
+  const configuredFacebookSources = facebookSources.filter((source) => source.enabled);
+  const activeFacebookSources = configuredFacebookSources.filter((source) => source.status === "live");
   const liveFacebook = activeFacebookSources.length;
   const facebookCadence = liveFacebook > 0
     ? Math.min(...activeFacebookSources.map((source) => source.cadenceMinutes))
@@ -2509,19 +2526,20 @@ function SocialFeedView({
       />
 
       <div className="social-summary">
-        <div><strong>{liveFacebook}/{facebookSources.length || 4}</strong><span>groupes Facebook actifs</span></div>
+        <div><strong>{liveFacebook}/{configuredFacebookSources.length || 2}</strong><span>groupes Facebook suivis</span></div>
         <div><strong>{facebookCadence ? `${facebookCadence} min` : "Pause"}</strong><span>{facebookCadence ? "entre deux passages" : "collecte non activée"}</span></div>
-        <div><strong>0</strong><span>jeton Keepa utilisé</span></div>
+        <div><strong>{new Intl.NumberFormat("fr-FR", { style: "currency", currency: "USD" }).format((collectionBudget?.usedMicros ?? 0) / 1_000_000)}</strong><span>sur {(collectionBudget?.limitMicros ?? 29_000_000) / 1_000_000} $ ce mois</span></div>
       </div>
 
       <section className="social-sources" aria-label="Sources de publications">
         {sources.map((source) => {
-          const live = source.status === "live";
+          const live = source.enabled && source.status === "live";
+          const savedForLater = source.platform === "facebook" && !source.enabled;
           const waiting = source.status === "awaiting_access";
           return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
             <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
-            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Accès public limité" : "Première relève en attente"}</small></span>
-            <i>{live ? "Actif" : waiting ? "En attente" : "En pause"}</i>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Relève momentanément indisponible" : "Première relève en attente"}</small></span>
+            <i>{live ? "Actif" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
           </a>;
         })}
       </section>
@@ -2552,7 +2570,7 @@ function SocialFeedView({
             </footer>
           </article>)}
         </div>
-      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : liveFacebook > 0 ? "Aucune nouvelle publication" : "Collecte Facebook en pause"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les quatre groupes Facebook n’en dépendent pas." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Facebook limite le fil depuis les serveurs cloud. Aucun passage automatique coûteux n’est lancé tant qu’une fréquence n’a pas été validée."}</p></div>}
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : liveFacebook > 0 ? "Aucune nouvelle publication" : "Première relève Facebook en attente"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Deux groupes sont configurés. Les nouvelles publications apparaîtront après le prochain passage automatique."}</p></div>}
     </section>
   );
 }
