@@ -7,6 +7,7 @@ test("le parseur Dealabs borne le flux et sépare température, prix et URL", as
   const source = await readFile(new URL("../lib/dealabs.ts", import.meta.url), "utf8");
   assert.match(source, /MAX_FEED_BYTES = 768 \* 1024/u);
   assert.match(source, /MAX_FEED_ITEMS = 40/u);
+  assert.match(source, /PrixRadar\/0\.11/u);
   assert.match(source, /titleMatch = \/\^\(-\?\\d\+/u);
   assert.match(source, /parseFrenchPrice/u);
   assert.match(source, /parseCoverageProductUrl/u);

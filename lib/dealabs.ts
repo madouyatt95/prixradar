@@ -351,7 +351,10 @@ export async function storeDealabsItems(
 export async function syncDealabsTrend(database: D1Database, options: DealabsSyncOptions = {}) {
   const fetcher = options.fetcher ?? fetch;
   const response = await fetcher(DEALABS_TREND_FEED, {
-    headers: { accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8" },
+    headers: {
+      accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8",
+      "user-agent": "PrixRadar/0.11 (+https://prixradar.madouyatt95.workers.dev)",
+    },
     redirect: "follow",
     signal: AbortSignal.timeout(12_000),
   });
