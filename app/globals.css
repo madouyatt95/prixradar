@@ -3850,6 +3850,29 @@ a {
     padding-left: 13px;
   }
 
+  .metric-row {
+    margin-right: -13px;
+    padding-right: 13px;
+  }
+
+  .detail-actions {
+    margin-right: -13px;
+    margin-left: -13px;
+    padding-right: 13px;
+    padding-left: 13px;
+  }
+
+  .dealabs-momentum {
+    margin-right: -13px;
+    margin-left: -13px;
+    padding-left: 13px;
+  }
+
+  .dealabs-momentum > header,
+  .dealabs-strip {
+    padding-right: 13px;
+  }
+
   .page-heading h1 {
     font-size: 30px;
   }
