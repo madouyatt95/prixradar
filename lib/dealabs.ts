@@ -4,6 +4,7 @@ import { parseCoverageProductUrl } from "./merchant-url";
 import { isPartnerSourceAuthorized } from "./source-registry";
 
 const DEALABS_TREND_FEED = "https://www.dealabs.com/rss/tendance";
+const DEALABS_USER_AGENT = "PrixRadar/0.11 (+https://prixradar.madouyatt95.workers.dev)";
 const MAX_FEED_BYTES = 768 * 1024;
 const MAX_REDIRECT_BYTES = 192 * 1024;
 const MAX_FEED_ITEMS = 40;
@@ -186,7 +187,10 @@ function metaRefreshTarget(body: string) {
 
 async function resolveMerchantProduct(externalId: string, fetcher: typeof fetch): Promise<SignalResolution | null> {
   const response = await fetcher(`https://www.dealabs.com/visit/threadmain/${encodeURIComponent(externalId)}`, {
-    headers: { accept: "text/html,application/xhtml+xml" },
+    headers: {
+      accept: "text/html,application/xhtml+xml",
+      "user-agent": DEALABS_USER_AGENT,
+    },
     redirect: "manual",
     signal: AbortSignal.timeout(8_000),
   });
@@ -353,7 +357,7 @@ export async function syncDealabsTrend(database: D1Database, options: DealabsSyn
   const response = await fetcher(DEALABS_TREND_FEED, {
     headers: {
       accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8",
-      "user-agent": "PrixRadar/0.11 (+https://prixradar.madouyatt95.workers.dev)",
+      "user-agent": DEALABS_USER_AGENT,
     },
     redirect: "follow",
     signal: AbortSignal.timeout(12_000),
