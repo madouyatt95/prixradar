@@ -3,6 +3,20 @@ import { DatabaseSync } from "node:sqlite";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { isDealabsNightPause } from "../lib/dealabs-schedule.ts";
+
+test("Dealabs est suspendu de 1 h à 7 h, heure de Paris, été comme hiver", () => {
+  assert.equal(isDealabsNightPause(new Date("2026-01-09T23:59:00Z")), false);
+  assert.equal(isDealabsNightPause(new Date("2026-01-10T00:00:00Z")), true);
+  assert.equal(isDealabsNightPause(new Date("2026-01-10T05:59:00Z")), true);
+  assert.equal(isDealabsNightPause(new Date("2026-01-10T06:00:00Z")), false);
+
+  assert.equal(isDealabsNightPause(new Date("2026-08-10T22:59:00Z")), false);
+  assert.equal(isDealabsNightPause(new Date("2026-08-10T23:00:00Z")), true);
+  assert.equal(isDealabsNightPause(new Date("2026-08-11T04:59:00Z")), true);
+  assert.equal(isDealabsNightPause(new Date("2026-08-11T05:00:00Z")), false);
+});
+
 test("le parseur Dealabs borne le flux et sépare température, prix et URL", async () => {
   const source = await readFile(new URL("../lib/dealabs.ts", import.meta.url), "utf8");
   assert.match(source, /MAX_FEED_BYTES = 768 \* 1024/u);
@@ -50,6 +64,7 @@ test("le Worker planifie Dealabs et l'interface sépare communauté et confirmat
     readFile(new URL("../app/api/dealabs/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(worker, /syncDealabsTrend/u);
+  assert.match(worker, /isDealabsNightPause\(scheduledAt\)/u);
   assert.match(worker, /async email\(/u);
   assert.match(interfaceSource, /Ça chauffe maintenant/u);
   assert.match(interfaceSource, /Signal communautaire/u);

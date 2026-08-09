@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import PostalMime from "postal-mime";
 import { dealabsItemsFromEmail, storeDealabsItems, syncDealabsTrend } from "@/lib/dealabs";
+import { isDealabsNightPause } from "@/lib/dealabs-schedule";
 import { setRuntimeEnv } from "@/lib/runtime-env";
 
 interface Env {
@@ -55,7 +56,15 @@ const worker = {
   },
 
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
-    void controller;
+    const scheduledAt = new Date(controller.scheduledTime);
+    if (isDealabsNightPause(scheduledAt)) {
+      console.log(JSON.stringify({
+        event: "dealabs_sync_skipped_night_pause",
+        scheduledAt: scheduledAt.toISOString(),
+        timezone: "Europe/Paris",
+      }));
+      return;
+    }
     setRuntimeEnv(env);
     try {
       const result = await syncDealabsTrend(env.DB, {
