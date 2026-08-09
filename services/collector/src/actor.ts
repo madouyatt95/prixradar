@@ -2,7 +2,7 @@ import { Actor } from "apify";
 
 import { connectorForUrl } from "./connectors/index.js";
 import { parseCoverageTargets, type CoverageTarget } from "./coverage-plan.js";
-import { assertSourceScanAuthorized, scanSourceUrl, verifySourceUrl } from "./crawler.js";
+import { assertSourceScanAuthorized, publicWebScanOptions, scanSourceUrl, verifySourceUrl } from "./crawler.js";
 import { isExtremeRetailCandidate, offerDiscountPercent } from "./deal-policy.js";
 import type { CollectorConfig } from "./config.js";
 import { KeepaClient, scanKeepaMarket, verifyKeepaCodeProduct } from "./keepa.js";
@@ -265,11 +265,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       if (source !== "all" && task.source !== source) continue;
       if (seenProductUrls.has(task.url)) continue;
       try {
-        const observation = await verifySourceUrl(task.url, {
+        const observation = await verifySourceUrl(task.url, publicWebScanOptions(task.source, {
           ...scanOptions,
           shadowCart: isPublicWebRetailSource(task.source) ? false : task.shadowCart,
           verifyDelayMs: config.verifyDelayMs,
-        });
+        }));
         if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
         seenProductUrls.add(task.url);
         let protectionPush: unknown = null;
@@ -306,11 +306,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     for (const recheck of plan.rechecks) {
       if (source !== "all" && recheck.source !== source) continue;
       try {
-        const observation = await verifySourceUrl(recheck.url, {
+        const observation = await verifySourceUrl(recheck.url, publicWebScanOptions(recheck.source, {
           ...scanOptions,
           verifyDelayMs: config.verifyDelayMs,
           shadowCart: isPublicWebRetailSource(recheck.source) ? false : input.shadowCart ?? true,
-        });
+        }));
         if (!fixture) await deliverObservation(observation, config, { allowPush: false });
         seenProductUrls.add(recheck.url);
         await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
@@ -336,11 +336,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       for (const product of scan.knownProducts) {
         if (seenProductUrls.has(product.url)) continue;
         try {
-          const observation = await verifySourceUrl(product.url, {
+          const observation = await verifySourceUrl(product.url, publicWebScanOptions(product.source, {
             ...scanOptions,
             shadowCart: !isPublicWebRetailSource(product.source),
             verifyDelayMs: config.verifyDelayMs,
-          });
+          }));
           if (!fixture) await deliverObservation(observation, config, { allowPush: input.notify === true });
           seenProductUrls.add(product.url);
           found.add(`${product.source}:${product.market}:${product.url}`);
@@ -410,14 +410,15 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         continue;
       }
       try {
-        assertSourceScanAuthorized(url, scanOptions);
+        const sourceScanOptions = publicWebScanOptions(connector.source, scanOptions);
+        assertSourceScanAuthorized(url, sourceScanOptions);
         await runReportedSourceAttempt({
           reporter: statusReporter,
           attempt: sourceAttempt(connector.source, connector.market, fixture),
           baseMetrics: { sourceConfigurationId },
           run: async () => {
           const coverageScanOptions = {
-            ...scanOptions,
+            ...sourceScanOptions,
             maxDiscoveredUrls: Math.min(productLimit ?? limit, config.maxDiscoveredUrls),
           };
           if (mode === "discover") {
@@ -498,7 +499,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
                 }
               }
               const observation = await verifySourceUrl(targetUrl, {
-                ...scanOptions,
+                ...sourceScanOptions,
                 verifyDelayMs: config.verifyDelayMs,
                 shadowCart: isPublicWebRetailSource(connector.source) ? false : input.shadowCart ?? mode === "verify",
               });
