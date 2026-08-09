@@ -11,7 +11,7 @@ import {
 import { sellerChannel as resolveSellerChannel, type SellerChannel } from "@/lib/seller-channel";
 import { AdminView } from "./admin-view";
 
-type Tab = "radar" | "watchlist" | "sources" | "admin" | "settings";
+type Tab = "radar" | "social" | "watchlist" | "sources" | "admin" | "settings";
 type Confidence = "Très probable" | "Probable" | "À vérifier";
 type SourceMode = "live" | "fixture";
 type ExperienceLevel = "essential" | "expert";
@@ -148,6 +148,31 @@ type DealabsSignal = {
     alertId: string | null;
     level: "reliable" | "watch" | "confirmed" | "community";
   };
+};
+
+type SocialSource = {
+  id: string;
+  platform: "facebook" | "x";
+  name: string;
+  url: string;
+  enabled: boolean;
+  status: "ready" | "live" | "degraded" | "blocked" | "awaiting_access";
+  cadenceMinutes: number;
+  lastSuccessAt: string | null;
+};
+
+type SocialPublication = {
+  id: string;
+  sourceId: string;
+  platform: "facebook" | "x";
+  sourceName: string;
+  sourceStatus: string;
+  author: string;
+  text: string;
+  publicationUrl: string;
+  imageUrl: string | null;
+  externalUrl: string | null;
+  publishedAt: string;
 };
 
 type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
@@ -617,6 +642,7 @@ for (const alert of ALERTS) {
 
 const NAV_ITEMS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "radar", label: "Radar", icon: "◎" },
+  { id: "social", label: "Flux", icon: "✦" },
   { id: "watchlist", label: "Missions", icon: "◇" },
   { id: "sources", label: "Sources", icon: "⌁" },
   { id: "settings", label: "Réglages", icon: "☷" },
@@ -1120,6 +1146,44 @@ function mapDealabsSignal(value: unknown): DealabsSignal | null {
   };
 }
 
+function mapSocialSource(value: unknown): SocialSource | null {
+  const item = record(value);
+  if (!item || typeof item.id !== "string" || typeof item.name !== "string" || typeof item.url !== "string") return null;
+  if (item.platform !== "facebook" && item.platform !== "x") return null;
+  const status = String(item.status);
+  if (!["ready", "live", "degraded", "blocked", "awaiting_access"].includes(status)) return null;
+  return {
+    id: item.id,
+    platform: item.platform,
+    name: item.name,
+    url: item.url,
+    enabled: item.enabled === true,
+    status: status as SocialSource["status"],
+    cadenceMinutes: Math.max(1, finite(item.cadenceMinutes, 5)),
+    lastSuccessAt: typeof item.lastSuccessAt === "string" ? item.lastSuccessAt : null,
+  };
+}
+
+function mapSocialPublication(value: unknown): SocialPublication | null {
+  const item = record(value);
+  if (!item || typeof item.id !== "string" || typeof item.sourceId !== "string" || typeof item.sourceName !== "string") return null;
+  if (item.platform !== "facebook" && item.platform !== "x") return null;
+  if (typeof item.text !== "string" || typeof item.publicationUrl !== "string" || typeof item.publishedAt !== "string") return null;
+  return {
+    id: item.id,
+    sourceId: item.sourceId,
+    platform: item.platform,
+    sourceName: item.sourceName,
+    sourceStatus: typeof item.sourceStatus === "string" ? item.sourceStatus : "ready",
+    author: typeof item.author === "string" ? item.author : item.sourceName,
+    text: item.text,
+    publicationUrl: item.publicationUrl,
+    imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : null,
+    externalUrl: typeof item.externalUrl === "string" ? item.externalUrl : null,
+    publishedAt: item.publishedAt,
+  };
+}
+
 function mapEanDetection(value: unknown, fallbackGtin: string): EanDetection | null {
   const payload = record(value);
   if (!payload || !["anomaly", "normal", "monitoring"].includes(String(payload.verdict))) return null;
@@ -1194,6 +1258,9 @@ export function PriceRadarApp() {
   const [liveAlerts, setLiveAlerts] = useState<AlertItem[]>([]);
   const [singleCheckSignals, setSingleCheckSignals] = useState<AlertItem[]>([]);
   const [dealabsSignals, setDealabsSignals] = useState<DealabsSignal[]>([]);
+  const [socialSources, setSocialSources] = useState<SocialSource[]>([]);
+  const [socialPublications, setSocialPublications] = useState<SocialPublication[]>([]);
+  const [socialLoading, setSocialLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(true);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
   const [health, setHealth] = useState<HealthCapabilities | null>(null);
@@ -1248,6 +1315,7 @@ export function PriceRadarApp() {
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [affiliateConsent, setAffiliateConsent] = useState(false);
   const [notificationSpeed, setNotificationSpeed] = useState<"instant" | "balanced" | "digest">("balanced");
+  const [socialNotificationsEnabled, setSocialNotificationsEnabled] = useState(false);
   const [radarRules, setRadarRules] = useState<RadarRule[]>([]);
   const [radarQuery, setRadarQuery] = useState("");
   const [radarSaving, setRadarSaving] = useState(false);
@@ -1281,6 +1349,22 @@ export function PriceRadarApp() {
 
   useEffect(() => {
     let active = true;
+    const load = () => fetch("/api/social?limit=60", { headers: { accept: "application/json" } })
+      .then(async (response) => response.ok ? response.json() as Promise<{ sources?: unknown[]; items?: unknown[] }> : { sources: [], items: [] })
+      .then((payload) => {
+        if (!active) return;
+        setSocialSources((payload.sources ?? []).map(mapSocialSource).filter((item): item is SocialSource => item !== null));
+        setSocialPublications((payload.items ?? []).map(mapSocialPublication).filter((item): item is SocialPublication => item !== null));
+      })
+      .catch(() => undefined)
+      .finally(() => { if (active) setSocialLoading(false); });
+    void load();
+    const timer = window.setInterval(() => void load(), 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     const load = () => fetch("/api/dealabs?limit=20", { headers: { accept: "application/json" } })
       .then(async (response) => response.ok ? response.json() as Promise<{ items?: unknown[] }> : { items: [] })
       .then((payload) => {
@@ -1295,8 +1379,8 @@ export function PriceRadarApp() {
 
   useEffect(() => {
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
-    if (requestedTab !== "missions" && requestedTab !== "admin") return;
-    const frame = window.requestAnimationFrame(() => setTab(requestedTab === "admin" ? "admin" : "watchlist"));
+    if (requestedTab !== "missions" && requestedTab !== "admin" && requestedTab !== "social") return;
+    const frame = window.requestAnimationFrame(() => setTab(requestedTab === "admin" ? "admin" : requestedTab === "social" ? "social" : "watchlist"));
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
@@ -1423,6 +1507,7 @@ export function PriceRadarApp() {
         if (preferences.deliveryMode === "home" || preferences.deliveryMode === "pickup" || preferences.deliveryMode === "either") setDeliveryMode(preferences.deliveryMode);
         if (typeof preferences.requireLocationMatch === "boolean") setRequireLocationMatch(preferences.requireLocationMatch);
         if (preferences.notificationSpeed === "instant" || preferences.notificationSpeed === "balanced" || preferences.notificationSpeed === "digest") setNotificationSpeed(preferences.notificationSpeed);
+        if (typeof preferences.socialNotificationsEnabled === "boolean") setSocialNotificationsEnabled(preferences.socialNotificationsEnabled);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -1467,13 +1552,14 @@ export function PriceRadarApp() {
           deliveryMode,
           requireLocationMatch,
           notificationSpeed,
+          socialNotificationsEnabled,
         }),
       }).then((response) => {
         setPreferencesSaveState(response.ok ? "saved" : "error");
       }).catch(() => setPreferencesSaveState("error"));
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [closeExpiredMinutes, deliveryCountry, deliveryMode, experienceLevel, maxAlertAgeMinutes, maxPriceEuros, minDiscount, minimumHistoryPoints, minScore, minSellerScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferredSources, preferencesReady, preset, quietEnd, quietHours, quietStart, requireCartConfirmation, requireExactVariant, requireLocationMatch]);
+  }, [closeExpiredMinutes, deliveryCountry, deliveryMode, experienceLevel, maxAlertAgeMinutes, maxPriceEuros, minDiscount, minimumHistoryPoints, minScore, minSellerScore, notificationSpeed, postalCode, preferredCategories, preferredMarkets, preferredSources, preferencesReady, preset, quietEnd, quietHours, quietStart, requireCartConfirmation, requireExactVariant, requireLocationMatch, socialNotificationsEnabled]);
 
   useEffect(() => {
     fetch("/api/radars", { headers: { accept: "application/json" } })
@@ -1964,7 +2050,7 @@ export function PriceRadarApp() {
   async function requestNotifications() {
     if (!("Notification" in window)) {
       setToast("Les notifications ne sont pas prises en charge ici");
-      return;
+      return false;
     }
     const permission = await Notification.requestPermission();
     setNotificationState(
@@ -2025,6 +2111,21 @@ export function PriceRadarApp() {
         });
       }
       setToast("Notification de test envoyée");
+      return true;
+    }
+    return false;
+  }
+
+  async function toggleSocialNotifications() {
+    if (socialNotificationsEnabled) {
+      setSocialNotificationsEnabled(false);
+      setToast("Notifications des publications désactivées");
+      return;
+    }
+    const ready = await requestNotifications();
+    if (ready) {
+      setSocialNotificationsEnabled(true);
+      setToast("Nouvelles publications activées");
     }
   }
 
@@ -2059,6 +2160,14 @@ export function PriceRadarApp() {
 
   function renderTab() {
     if (tab === "admin") return <AdminView />;
+    if (tab === "social") return <SocialFeedView
+      sources={socialSources}
+      publications={socialPublications}
+      loading={socialLoading}
+      notificationsEnabled={socialNotificationsEnabled}
+      notificationState={notificationState}
+      onToggleNotifications={() => void toggleSocialNotifications()}
+    />;
     if (tab === "watchlist") {
       return (
         <MissionCenterView
@@ -2361,6 +2470,85 @@ function PageHeading({
       </div>
       {action}
     </div>
+  );
+}
+
+function SocialFeedView({
+  sources,
+  publications,
+  loading,
+  notificationsEnabled,
+  notificationState,
+  onToggleNotifications,
+}: {
+  sources: SocialSource[];
+  publications: SocialPublication[];
+  loading: boolean;
+  notificationsEnabled: boolean;
+  notificationState: string;
+  onToggleNotifications: () => void;
+}) {
+  const [platform, setPlatform] = useState<"all" | "facebook" | "x">("all");
+  const filtered = platform === "all" ? publications : publications.filter((item) => item.platform === platform);
+  const liveFacebook = sources.filter((source) => source.platform === "facebook" && source.status === "live").length;
+  return (
+    <section className="social-page">
+      <PageHeading
+        eyebrow="Publications bons plans"
+        title="Vos sources, au même endroit"
+        description="PrixRadar relève les nouvelles publications publiques et vous renvoie toujours vers le post original. Elles sont affichées telles quelles, sans être présentées comme des prix confirmés."
+        action={<button type="button" className={`social-notify-button ${notificationsEnabled ? "is-on" : ""}`} onClick={onToggleNotifications}>
+          <span aria-hidden="true">{notificationsEnabled ? "●" : "○"}</span>
+          {notificationsEnabled ? "Notifications activées" : "Me prévenir"}
+        </button>}
+      />
+
+      <div className="social-summary">
+        <div><strong>{liveFacebook}/{sources.filter((source) => source.platform === "facebook").length || 4}</strong><span>groupes Facebook suivis</span></div>
+        <div><strong>5 min</strong><span>entre deux passages</span></div>
+        <div><strong>0</strong><span>jeton Keepa utilisé</span></div>
+      </div>
+
+      <section className="social-sources" aria-label="Sources de publications">
+        {sources.map((source) => {
+          const live = source.status === "live";
+          const waiting = source.status === "awaiting_access";
+          return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
+            <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Relève momentanément difficile" : "Première relève en attente"}</small></span>
+            <i>{live ? "Actif" : waiting ? "En attente" : "Suivi"}</i>
+          </a>;
+        })}
+      </section>
+
+      <div className="social-feed-head">
+        <div><h2>Dernières publications</h2><p>{notificationsEnabled ? `Vous serez prévenu sur cet appareil · ${notificationState}` : "Activez les notifications pour être prévenu dès la prochaine relève."}</p></div>
+        <div className="social-filters" role="group" aria-label="Filtrer les publications">
+          {(["all", "facebook", "x"] as const).map((value) => <button key={value} type="button" className={platform === value ? "is-active" : ""} onClick={() => setPlatform(value)}>{value === "all" ? "Tout" : value === "facebook" ? "Facebook" : "X"}</button>)}
+        </div>
+      </div>
+
+      {loading ? <div className="social-empty"><span className="skeleton-line" /><span className="skeleton-line short" /><p>Chargement des publications…</p></div> : filtered.length ? (
+        <div className="social-feed">
+          {filtered.map((publication) => <article className="social-card" key={publication.id}>
+            <header>
+              <span className={`social-platform is-${publication.platform}`} aria-hidden="true">{publication.platform === "facebook" ? "f" : "𝕏"}</span>
+              <span><strong>{publication.author}</strong><small>{publication.sourceName} · {relativeTime(publication.publishedAt)}</small></span>
+              <a href={publication.publicationUrl} target="_blank" rel="noreferrer" aria-label="Ouvrir la publication originale">↗</a>
+            </header>
+            {publication.imageUrl ? <span className="social-card-image" role="img" aria-label="Image de la publication" style={{ backgroundImage: `url(${publication.imageUrl})` }} /> : null}
+            <p>{publication.text}</p>
+            <footer>
+              <span>Publication non vérifiée par PrixRadar</span>
+              <span className="social-card-actions">
+                {publication.externalUrl ? <a href={publication.externalUrl} target="_blank" rel="noreferrer">Voir le bon plan</a> : null}
+                <a href={publication.publicationUrl} target="_blank" rel="noreferrer">Voir le post</a>
+              </span>
+            </footer>
+          </article>)}
+        </div>
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : "La première relève est en cours"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les quatre groupes Facebook n’en dépendent pas." : "Les nouvelles publications apparaîtront ici automatiquement après le prochain passage."}</p></div>}
+    </section>
   );
 }
 

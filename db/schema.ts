@@ -929,6 +929,9 @@ export const userPreferences = sqliteTable(
     notificationEnabled: integer("notification_enabled", { mode: "boolean" })
       .notNull()
       .default(true),
+    socialNotificationsEnabled: integer("social_notifications_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
     notificationSpeed: text("notification_speed").notNull().default("balanced"),
     minDiscount: integer("min_discount").notNull().default(20),
     maxPriceCents: integer("max_price_cents"),
@@ -1017,6 +1020,79 @@ export const notificationDeliveries = sqliteTable(
       sql`${table.tier} IN ('urgent', 'personal', 'digest')`
     ),
   ]
+);
+
+export const socialSources = sqliteTable(
+  "social_sources",
+  {
+    id: text("id").primaryKey(),
+    platform: text("platform").notNull(),
+    name: text("name").notNull(),
+    externalId: text("external_id").notNull(),
+    url: text("url").notNull(),
+    collectionMode: text("collection_mode").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    status: text("status").notNull().default("ready"),
+    cadenceMinutes: integer("cadence_minutes").notNull().default(5),
+    lastAttemptAt: text("last_attempt_at"),
+    lastSuccessAt: text("last_success_at"),
+    lastErrorCode: text("last_error_code"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("social_sources_platform_external_unique").on(table.platform, table.externalId),
+    index("social_sources_enabled_status_idx").on(table.enabled, table.status),
+    check("social_sources_platform_allowed", sql`${table.platform} IN ('facebook', 'x')`),
+    check("social_sources_mode_allowed", sql`${table.collectionMode} IN ('public_browser', 'x_api')`),
+    check("social_sources_status_allowed", sql`${table.status} IN ('ready', 'live', 'degraded', 'blocked', 'awaiting_access')`),
+    check("social_sources_cadence_range", sql`${table.cadenceMinutes} BETWEEN 1 AND 1440`),
+  ],
+);
+
+export const socialPublications = sqliteTable(
+  "social_publications",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").notNull().references(() => socialSources.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    author: text("author").notNull(),
+    text: text("text").notNull(),
+    publicationUrl: text("publication_url").notNull(),
+    imageUrl: text("image_url"),
+    externalUrl: text("external_url"),
+    publishedAt: text("published_at").notNull(),
+    firstSeenAt: text("first_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("social_publications_source_external_unique").on(table.sourceId, table.externalId),
+    index("social_publications_published_idx").on(table.publishedAt),
+    index("social_publications_source_published_idx").on(table.sourceId, table.publishedAt),
+  ],
+);
+
+export const socialNotificationDeliveries = sqliteTable(
+  "social_notification_deliveries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    publicationId: text("publication_id").notNull().references(() => socialPublications.id, { onDelete: "cascade" }),
+    subscriptionId: integer("subscription_id").notNull().references(() => pushSubscriptions.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull(),
+    status: text("status").notNull().default("reserved"),
+    dedupeKey: text("dedupe_key").notNull(),
+    attemptedAt: text("attempted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    sentAt: text("sent_at"),
+    errorCode: text("error_code"),
+  },
+  (table) => [
+    uniqueIndex("social_notification_deliveries_dedupe_unique").on(table.dedupeKey),
+    index("social_notification_deliveries_publication_idx").on(table.publicationId, table.attemptedAt),
+    index("social_notification_deliveries_owner_idx").on(table.ownerId, table.attemptedAt),
+    check("social_notification_deliveries_status_allowed", sql`${table.status} IN ('reserved', 'sent', 'failed', 'suppressed')`),
+  ],
 );
 
 export const keepaCache = sqliteTable(

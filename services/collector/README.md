@@ -153,16 +153,26 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-Il regroupe Amazon EU5 dans un Actor toutes les 30 minutes et, lorsque
+Le mode `social` relève toutes les cinq minutes les publications visibles de la
+liste de groupes Facebook publics déclarée dans `src/social.ts`. Une publication
+conserve son auteur, son heure, son lien original et son éventuel lien marchand,
+mais reste explicitement séparée d’une alerte de prix vérifiée. Cette relève ne
+consomme aucun jeton Keepa. Elle respecte `robots.txt`, ne se connecte à aucun
+compte Facebook et s’arrête si la page publique n’est plus accessible. La source
+X Dealabs est préparée séparément et reste désactivée tant qu’un accès API X
+officiel n’est pas configuré.
+
+Il regroupe Amazon France dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
-Actor toutes les 30 minutes. Après vérification du JSON produit, la seule
+Actor toutes les 30 minutes, puis les publications sociales publiques toutes les
+5 minutes. Après vérification du JSON produit, la seule
 commande qui écrit sur Apify est :
 
 ```bash
 npm run provision
 ```
 
-Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les quatre
+Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les cinq
 plannings par nom. Le token Apify n’est pas nécessaire à l’exécution de l’Actor
 et ne doit pas être ajouté à la PWA.
 

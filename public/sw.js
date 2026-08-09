@@ -1,4 +1,4 @@
-const CACHE_NAME = "prixradar-shell-v7";
+const CACHE_NAME = "prixradar-shell-v8";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -111,7 +111,10 @@ self.addEventListener("push", (event) => {
     typeof payload.url === "string" && payload.url.startsWith("/")
       ? payload.url
       : "/";
-  const tier = payload.tier === "urgent" ? "urgent" : payload.tier === "digest" ? "digest" : payload.tier === "protection" ? "protection" : "personal";
+  const tier = payload.tier === "urgent" ? "urgent" : payload.tier === "digest" ? "digest" : payload.tier === "protection" ? "protection" : payload.tier === "social" ? "social" : "personal";
+  const image = typeof payload.imageUrl === "string" && payload.imageUrl.startsWith("https://")
+    ? payload.imageUrl
+    : undefined;
   const badgeCount = Number.isSafeInteger(payload.badgeCount) && payload.badgeCount > 0 ? payload.badgeCount : 1;
 
   event.waitUntil(
@@ -119,6 +122,7 @@ self.addEventListener("push", (event) => {
       body,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
+      ...(image ? { image } : {}),
       tag: `prixradar-${tier}-${alertId}`,
       renotify: tier === "urgent" || tier === "protection",
       data: { url, tier },

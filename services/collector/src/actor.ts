@@ -18,8 +18,9 @@ import {
   SourceStatusReporter,
 } from "./source-status.js";
 import { deliverObservation, deliverObservationSafely, liveVerifyKeepaObservation } from "./worker.js";
-import { sendDailyDigests, sendProtectionPush } from "./push.js";
-import { postEanScanResult, postFrontierItems, privateApiHeaders } from "./sink.js";
+import { sendDailyDigests, sendProtectionPush, sendSocialPublicationPush } from "./push.js";
+import { postEanScanResult, postFrontierItems, postSocialPublications, privateApiHeaders } from "./sink.js";
+import { collectFacebookSocialSources } from "./social.js";
 import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
 import { verifyOfferSnapshots } from "./verify.js";
 
@@ -28,7 +29,7 @@ interface ActorInput {
   market?: Market;
   markets?: Market[];
   urls?: Array<string | { url: string }>;
-  mode?: "discover" | "verify" | "full" | "fixture" | "digest";
+  mode?: "discover" | "verify" | "full" | "fixture" | "digest" | "social";
   notify?: boolean;
   browserFallback?: boolean;
   limit?: number;
@@ -218,6 +219,72 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const statusReporter = new SourceStatusReporter(config);
     const input = (await Actor.getInput<ActorInput>()) ?? {};
     const mode = input.mode ?? "full";
+    if (mode === "social") {
+      if (!config.priceRadarBaseUrl || !config.ingestSecret) {
+        throw new Error("Configuration PrixRadar incomplète pour les publications sociales.");
+      }
+      const results = await collectFacebookSocialSources({
+        timeoutMs: config.httpTimeoutMs,
+        proxyUrls: config.proxyUrls,
+      });
+      let publicationsSeen = 0;
+      let publicationsAdded = 0;
+      let notificationsSent = 0;
+      for (const result of results) {
+        try {
+          const ingested = await postSocialPublications({
+            sourceId: result.source.id,
+            scannedAt: new Date().toISOString(),
+            items: result.publications,
+          }, {
+            baseUrl: config.priceRadarBaseUrl,
+            ingestSecret: config.ingestSecret,
+            ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+            timeoutMs: config.httpTimeoutMs,
+          });
+          publicationsSeen += result.publications.length;
+          publicationsAdded += ingested.newItems.length;
+          if (input.notify === true && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
+            for (const publication of ingested.newItems.filter((item) => item.notificationEligible)) {
+              const pushed = await sendSocialPublicationPush(publication.id, {
+                baseUrl: config.priceRadarBaseUrl,
+                deliverySecret: config.pushDeliverySecret,
+                ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+                vapidSubject: config.vapidSubject,
+                vapidPublicKey: config.vapidPublicKey,
+                vapidPrivateKey: config.vapidPrivateKey,
+                timeoutMs: config.httpTimeoutMs,
+              });
+              notificationsSent += pushed.sent;
+            }
+          }
+          await Actor.pushData({
+            dataKind: "social-source",
+            sourceId: result.source.id,
+            sourceName: result.source.name,
+            publicationsSeen: result.publications.length,
+            publicationsAdded: ingested.newItems.length,
+            errorCode: result.errorCode,
+          });
+        } catch (error) {
+          await Actor.pushData({
+            dataKind: "social-source-failure",
+            sourceId: result.source.id,
+            sourceName: result.source.name,
+            errorCode: result.errorCode ?? "SOCIAL_INGEST_FAILED",
+            error: error instanceof Error ? error.message.slice(0, 200) : "Erreur sociale inconnue",
+          });
+        }
+      }
+      await Actor.pushData({
+        dataKind: "social-summary",
+        sourcesChecked: results.length,
+        publicationsSeen,
+        publicationsAdded,
+        notificationsSent,
+      });
+      return;
+    }
     if (mode === "digest") {
       if (!config.priceRadarBaseUrl || !config.pushDeliverySecret || !config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
         throw new Error("Configuration push incomplète pour le résumé quotidien.");

@@ -175,7 +175,7 @@ test("keeps the mobile header clear of the iPhone safe area", async () => {
   assert.match(styles, /min-height:\s*calc\(64px \+ var\(--safe-top\)\)/);
   assert.match(styles, /padding:\s*calc\(10px \+ var\(--safe-top\)\)/);
   const serviceWorker = await source("../public/sw.js");
-  assert.match(serviceWorker, /prixradar-shell-v7/);
+  assert.match(serviceWorker, /prixradar-shell-v8/);
   assert.match(serviceWorker, /cacheableNavigation/);
   assert.doesNotMatch(serviceWorker, /cache\.put\("\/"/);
 });

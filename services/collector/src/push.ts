@@ -48,6 +48,15 @@ interface ProtectionTarget extends PushSubscriptionTarget {
   url: string;
 }
 
+interface SocialTarget extends PushSubscriptionTarget {
+  notificationId: number;
+  publicationId: string;
+  title: string;
+  body: string;
+  url: string;
+  imageUrl: string | null;
+}
+
 type DeliveryAction =
   | { action: "reserve"; alertId: string; subscriptionId: number; tier?: "urgent" | "personal" | "digest"; alertLevel?: "reliable" | "watch" }
   | { action: "complete"; reservationId: number; status: "sent" | "failed"; errorCode?: string };
@@ -463,6 +472,60 @@ export async function sendProtectionPush(
       summary.sent += 1;
     } catch (error) {
       await protectedJson(config, endpoint, { method: "POST", body: JSON.stringify({ notificationId: target.notificationId, status: "failed", errorCode: deliveryErrorCode(error) }) }, fetchImpl).catch(() => undefined);
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+export async function sendSocialPublicationPush(
+  publicationId: string,
+  config: PushConfig,
+  dependencies: { fetchImpl?: typeof fetch; sendNotification?: typeof webPush.sendNotification } = {},
+): Promise<PushDeliverySummary> {
+  if (!config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
+    throw new SinkConfigurationError("Clés VAPID absentes: notifications sociales désactivées.");
+  }
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  if (!dependencies.sendNotification) configureVapid(config);
+  const endpoint = apiEndpoint(config.baseUrl, "api/push/social");
+  endpoint.searchParams.set("publicationId", publicationId);
+  const response = await protectedJson<{ ok: boolean; targets?: SocialTarget[] }>(config, endpoint, { method: "GET" }, fetchImpl);
+  const targets = Array.isArray(response.targets)
+    ? response.targets.filter((target): target is SocialTarget => validTarget(target)
+      && Number.isSafeInteger(target.notificationId)
+      && target.notificationId > 0
+      && typeof target.publicationId === "string"
+      && typeof target.title === "string"
+      && typeof target.body === "string"
+      && typeof target.url === "string")
+    : [];
+  const summary: PushDeliverySummary = { eligible: targets.length > 0, targets: targets.length, reserved: targets.length, sent: 0, failed: 0 };
+  for (const target of targets) {
+    const payload = JSON.stringify({
+      alertId: target.publicationId,
+      title: target.title,
+      body: target.body,
+      url: `/?tab=social&publication=${encodeURIComponent(target.publicationId)}`,
+      externalUrl: target.url,
+      imageUrl: target.imageUrl,
+      tier: "social",
+      badgeCount: 1,
+    });
+    try {
+      await (dependencies.sendNotification ?? webPush.sendNotification)(normalizedSubscription(target), payload, {
+        TTL: 21_600,
+        urgency: "normal",
+        topic: pushTopic(`social-${publicationId}`),
+        ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm" ? { contentEncoding: target.contentEncoding } : {}),
+      });
+      await protectedJson(config, endpoint, { method: "POST", body: JSON.stringify({ notificationId: target.notificationId, status: "sent" }) }, fetchImpl);
+      summary.sent += 1;
+    } catch (error) {
+      await protectedJson(config, endpoint, {
+        method: "POST",
+        body: JSON.stringify({ notificationId: target.notificationId, status: "failed", errorCode: deliveryErrorCode(error) }),
+      }, fetchImpl).catch(() => undefined);
       summary.failed += 1;
     }
   }

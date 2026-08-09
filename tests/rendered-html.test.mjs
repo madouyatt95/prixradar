@@ -23,10 +23,11 @@ test("ships the complete PrixRadar application shell", async () => {
   assert.match(application, /JD Sports/);
   assert.match(application, /Navigation principale/);
   const publicNavigation = application.slice(application.indexOf("const NAV_ITEMS"), application.indexOf("const MARKET_OPTIONS"));
-  assert.equal(publicNavigation.match(/^\s*\{ id: "/gm)?.length, 4);
+  assert.equal(publicNavigation.match(/^\s*\{ id: "/gm)?.length, 5);
+  assert.match(publicNavigation, /id: "social", label: "Flux"/);
   assert.doesNotMatch(publicNavigation, /Pilotage|admin/);
   const mobileNavigationStyles = styles.slice(styles.lastIndexOf("  .mobile-nav {"), styles.lastIndexOf("  .page-heading {"));
-  assert.match(mobileNavigationStyles, /grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(mobileNavigationStyles, /grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
   assert.match(mobileNavigationStyles, /bottom:\s*max\(8px, var\(--safe-bottom\)\)/);
   assert.doesNotMatch(
     `${page}${layout}${application}`,

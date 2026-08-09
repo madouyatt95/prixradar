@@ -33,6 +33,7 @@ const DEFAULT_PREFERENCES = {
   quietStart: "22:00",
   quietEnd: "08:00",
   notificationEnabled: true,
+  socialNotificationsEnabled: false,
   notificationSpeed: "balanced",
   minDiscount: 20,
   maxPriceCents: null,
@@ -59,6 +60,7 @@ const EDITABLE_FIELDS = new Set([
   "quietStart",
   "quietEnd",
   "notificationEnabled",
+  "socialNotificationsEnabled",
   "notificationSpeed",
   "minDiscount",
   "maxPriceCents",
@@ -85,6 +87,7 @@ type PreferencesPatch = {
   quietStart?: string;
   quietEnd?: string;
   notificationEnabled?: boolean;
+  socialNotificationsEnabled?: boolean;
   notificationSpeed?: "instant" | "balanced" | "digest";
   minDiscount?: number;
   maxPriceCents?: number | null;
@@ -133,6 +136,7 @@ function serializePreferences(
     quietEnd: value.quietEnd,
     timezone: value.timezone,
     notificationEnabled: value.notificationEnabled,
+    socialNotificationsEnabled: value.socialNotificationsEnabled,
     notificationSpeed: value.notificationSpeed,
     minDiscount: value.minDiscount,
     maxPriceCents: value.maxPriceCents,
@@ -219,7 +223,7 @@ function parsePatch(body: Record<string, unknown>) {
     patch.maxPriceCents = body.maxPriceCents as number | null;
   }
 
-  for (const field of ["quietHours", "notificationEnabled", "requireLocationMatch", "requireExactVariant", "requireCartConfirmation"] as const) {
+  for (const field of ["quietHours", "notificationEnabled", "socialNotificationsEnabled", "requireLocationMatch", "requireExactVariant", "requireCartConfirmation"] as const) {
     if (body[field] !== undefined) {
       if (typeof body[field] !== "boolean") {
         throw new Error(`${field} doit être un booléen.`);

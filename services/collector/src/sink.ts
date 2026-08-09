@@ -443,3 +443,43 @@ export async function postEanScanResult(
   if (!response.ok) throw new SinkRequestError(`Résultat EAN refusé par PrixRadar (HTTP ${response.status}).`, response.status);
   return response.json() as Promise<{ ok: boolean }>;
 }
+
+export type SocialPublicationInput = {
+  externalId: string;
+  author: string;
+  text: string;
+  publicationUrl: string;
+  imageUrl: string | null;
+  externalUrl: string | null;
+  publishedAt: string;
+};
+
+export type SocialIngestResponse = {
+  ok: boolean;
+  accepted: number;
+  newItems: Array<{ id: string; sourceId: string; notificationEligible: boolean }>;
+};
+
+export async function postSocialPublications(
+  payload: { sourceId: string; scannedAt: string; items: SocialPublicationInput[] },
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SocialIngestResponse> {
+  if (!config.ingestSecret.trim()) throw new SinkConfigurationError("INGEST_SECRET absent: flux sociaux désactivés.");
+  const endpoint = new URL("api/social/ingest", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    body: JSON.stringify({ ...payload, items: payload.items.slice(0, 40) }),
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Publications sociales refusées par PrixRadar (HTTP ${response.status}).`, response.status);
+  const result = await response.json() as Partial<SocialIngestResponse>;
+  if (result.ok !== true || !Number.isSafeInteger(result.accepted) || !Array.isArray(result.newItems)) {
+    throw new SinkRequestError("Réponse d’ingestion sociale invalide.", response.status);
+  }
+  return result as SocialIngestResponse;
+}

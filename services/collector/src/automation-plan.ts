@@ -79,6 +79,21 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       },
     });
   schedules.push({
+    name: "prixradar-social-publications-5min",
+    definition: {
+      ...common,
+      name: "prixradar-social-publications-5min",
+      title: "PrixRadar · Publications bons plans · 5 min",
+      description: "Relève les nouvelles publications visibles des sources sociales publiques et prévient les utilisateurs abonnés.",
+      cronExpression: "*/5 * * * *",
+      actions: [actorAction(actorId, {
+        mode: "social",
+        notify: true,
+        browserFallback: true,
+      }, 1_024)],
+    },
+  });
+  schedules.push({
     name: "prixradar-connectors-daily",
     definition: {
       ...common,
