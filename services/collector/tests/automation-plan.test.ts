@@ -21,6 +21,7 @@ test("concentre le forfait Keepa API 20 sur Amazon France", () => {
   assert.equal(input.verifyAmazonPage, false);
   assert.equal(input.useRemoteCoverage, false);
   assert.equal(input.useRemoteDiscovery, false);
+  assert.equal(input.processEanScans, true);
 });
 
 test("récupère la couverture distante et teste les connecteurs chaque jour", () => {
