@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { KEEPA_MARKETS, KeepaApiError, KeepaClient, keepaOffer, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
+import { KEEPA_MARKETS, KeepaApiError, KeepaClient, isExcludedAmazonProduct, keepaOffer, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
 
 test("déclare exactement les cinq marchés Amazon Europe couverts", () => {
   assert.deepEqual(Object.fromEntries(Object.entries(KEEPA_MARKETS).map(([market, config]) => [market, config.domainId])), {
@@ -13,7 +13,7 @@ test("conserve une Buy Box tierce en la distinguant d'Amazon", () => {
   const snapshot = keepaOffer({
     asin: "B012345678", market: "FR", title: "Produit marketplace", brand: null, model: null, gtin: null,
     currentMinor: 5_000, referenceMinor: 10_000, observedAt: "2026-08-08T20:00:00.000Z", imageUrl: null,
-    buyBoxIsAmazon: false, buyBoxIsFba: true, buyBoxSellerId: "A1MARKETPLACE", history: [],
+    buyBoxIsAmazon: false, buyBoxIsFba: true, buyBoxSellerId: "A1MARKETPLACE", history: [], categoryPath: ["High-Tech"], productGroup: "Electronics",
   });
   assert.equal(snapshot.seller, "Vendeur tiers Amazon · A1MARKETPLACE");
   assert.equal(snapshot.sellerTrusted, false);
@@ -48,6 +48,8 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
           asin: "B012345678",
           title: "Produit Keepa Fixture",
           brand: "Fixture",
+          categoryTree: [{ catId: 172282, name: "High-Tech" }],
+          productGroup: "Electronics",
           stats: {
             current: [5000, -1, -1, -1, 9000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 5000],
             avg90: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10000],
@@ -90,6 +92,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   );
   assert.equal(client.quota.tokensLeft, 10);
   assert.deepEqual(dealSelection.includeCategories, [172282]);
+  assert.deepEqual(dealSelection.excludeCategories, [301061, 301062]);
   assert.deepEqual(dealSelection.priceTypes, [18]);
   assert.deepEqual(dealSelection.deltaPercentRange, [30, 100]);
   assert.equal(dealSelection.deltaRange, undefined);
@@ -108,6 +111,13 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(merged.verification.status, "confirmed");
   assert.equal(merged.offer.shipping?.amountMinor, 0);
   assert.equal(merged.historicalPrices?.length, 6);
+});
+
+test("exclut par défaut les livres, la musique et l'art mural des résultats Amazon", () => {
+  assert.equal(isExcludedAmazonProduct({ title: "Roman", categoryPath: ["Livres"], productGroup: "Book" }, ["books"]), true);
+  assert.equal(isExcludedAmazonProduct({ title: "Album", categoryPath: ["CD et Vinyles"], productGroup: "Music" }, ["music"]), true);
+  assert.equal(isExcludedAmazonProduct({ title: "Décoration", categoryPath: ["Décoration murale", "Tableaux"], productGroup: "Home" }, ["wall_art"]), true);
+  assert.equal(isExcludedAmazonProduct({ title: "Casque audio", categoryPath: ["High-Tech", "Audio"], productGroup: "Electronics" }, ["books", "music", "wall_art"]), false);
 });
 
 test("résout un EAN en ASIN avec le paramètre Keepa code et conserve le GTIN", async () => {
