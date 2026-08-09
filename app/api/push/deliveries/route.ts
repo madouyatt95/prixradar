@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 
 import { getDb } from "../../../../db";
 import { evidenceBoolean, evidenceEligible, evidenceNumber, evidenceWatchEligible } from "../../../../lib/alert-evidence";
@@ -21,6 +21,7 @@ export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 16 * 1024;
 const GONE_CODES = new Set(["PUSH_404", "PUSH_410"]);
+const PUSH_RETRY_COOLDOWN_MS = 5 * 60_000;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -288,10 +289,36 @@ async function reserve(body: UnknownRecord) {
   }
 
   const [existing] = await database
-    .select({ id: notificationDeliveries.id, status: notificationDeliveries.status })
+    .select({
+      id: notificationDeliveries.id,
+      status: notificationDeliveries.status,
+      attemptedAt: notificationDeliveries.attemptedAt,
+    })
     .from(notificationDeliveries)
     .where(eq(notificationDeliveries.dedupeKey, dedupeKey))
     .limit(1);
+  const retryBefore = new Date(now.getTime() - PUSH_RETRY_COOLDOWN_MS).toISOString();
+  if (existing?.status === "failed" && existing.attemptedAt <= retryBefore) {
+    const attemptedAt = new Date(now).toISOString();
+    const [retried] = await database
+      .update(notificationDeliveries)
+      .set({ status: "reserved", attemptedAt, sentAt: null, errorCode: null })
+      .where(and(
+        eq(notificationDeliveries.id, existing.id),
+        eq(notificationDeliveries.status, "failed"),
+        lte(notificationDeliveries.attemptedAt, retryBefore),
+      ))
+      .returning({ id: notificationDeliveries.id });
+    if (retried) {
+      return serverJson({
+        ok: true,
+        reserved: true,
+        duplicate: false,
+        retry: true,
+        reservationId: retried.id,
+      }, 201);
+    }
+  }
   return serverJson({
     ok: true,
     reserved: false,
