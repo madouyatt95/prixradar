@@ -297,7 +297,7 @@ async function reserve(body: UnknownRecord) {
     .from(notificationDeliveries)
     .where(eq(notificationDeliveries.dedupeKey, dedupeKey))
     .limit(1);
-  const retryBefore = new Date(now.getTime() - PUSH_RETRY_COOLDOWN_MS).toISOString();
+  const retryBefore = new Date(now - PUSH_RETRY_COOLDOWN_MS).toISOString();
   if (existing?.status === "failed" && existing.attemptedAt <= retryBefore) {
     const attemptedAt = new Date(now).toISOString();
     const [retried] = await database
