@@ -53,6 +53,8 @@ test("keeps push preferences durable and private APIs out of caches", async () =
   assert.match(targetRoute, /lte\(userPreferences\.minScore, score\)/);
   assert.doesNotMatch(targetRoute, /ownerId:/);
   assert.match(deliveriesRoute, /dedupeKey/);
+  assert.match(deliveriesRoute, /PUSH_RETRY_COOLDOWN_MS/);
+  assert.match(deliveriesRoute, /existing\?\.status === "failed"/);
   assert.match(deliveriesRoute, /exactVariantConfirmed: evidenceBoolean\(alert\.evidenceJson, "exactVariant"\) === true/);
   assert.doesNotMatch(deliveriesRoute, /exactVariantConfirmed:[^\n]+variantConfidence/);
   assert.doesNotMatch(digestsRoute, /exactVariantConfirmed:[^\n]+variantConfidence/);
