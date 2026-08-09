@@ -375,6 +375,15 @@ async function scanBrowser(url: string, options: ScanOptions): Promise<ScanResul
     },
     requestHandler: async ({ page, request, response }) => {
       await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined);
+      const requestedConnector = connectorForUrl(url);
+      const requestedPath = new URL(url).pathname;
+      const requestedProductPage = requestedConnector.productPathPatterns.some((pattern) => pattern.test(requestedPath));
+      if (requestedConnector.source === "jd_sports" && !requestedProductPage) {
+        await page.locator(".itemContainer[data-productsku]").first().waitFor({
+          state: "attached",
+          timeout: Math.min(options.timeoutMs ?? 15_000, 8_000),
+        }).catch(() => undefined);
+      }
       const loadedUrl = request.loadedUrl ?? page.url() ?? request.url;
       const analyzed = analyzeHtml(await page.content(), url, loadedUrl, "browser", response?.status() ?? null, options);
       if (options.shadowCart && analyzed.offers[0]) {
