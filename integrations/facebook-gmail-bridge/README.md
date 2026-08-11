@@ -12,8 +12,9 @@ copie aucun cookie et ne lance aucun Actor public du Store Apify.
    uniquement de 07:30 à 15:00, heure de Paris.
 3. Seuls les liens de publication appartenant aux deux identifiants de groupe
    autorisés sont transmis à `/api/social/ingest`.
-4. L'Actor personnel Creator démarre en mode `social-dispatch` et livre le Push
-   PWA. Il ne scrape pas Facebook.
+4. PrixRadar démarre l'Actor personnel Creator en mode `social-dispatch` et
+   livre le Push PWA. Il ne scrape pas Facebook et le token Apify ne quitte pas
+   Cloudflare.
 
 Les e-mails de plus de 45 minutes sont ignorés. Les identifiants de publication
 et les livraisons Push sont dédupliqués côté PrixRadar.
@@ -22,20 +23,18 @@ et les livraisons Push sont dédupliqués côté PrixRadar.
 
 Créer un projet sur `script.google.com`, ajouter `Code.gs` et activer l'affichage
 du fichier manifeste afin de remplacer `appsscript.json`. Dans **Paramètres du
-projet > Propriétés du script**, créer les quatre propriétés suivantes sans les
+projet > Propriétés du script**, créer les deux propriétés suivantes sans les
 écrire dans le code :
 
 | Propriété | Valeur |
 | --- | --- |
 | `PRIXRADAR_BASE_URL` | `https://prixradar.madouyatt95.workers.dev` |
-| `PRIXRADAR_INGEST_SECRET` | secret privé déjà installé côté Cloudflare |
-| `APIFY_TOKEN` | token privé du compte Creator |
-| `APIFY_ACTOR_ID` | identifiant de l'Actor personnel PrixRadar |
+| `PRIXRADAR_INGEST_SECRET` | secret privé dédié au relais, installé aussi côté Cloudflare |
 
 Exécuter ensuite `setupPrixRadarFacebookBridge`, accepter les autorisations
 Gmail demandées, puis exécuter `testPrixRadarFacebookBridge`. La fonction de
-test ne lit et ne publie aucun e-mail ; elle vérifie seulement PrixRadar, Apify
-et la présence du déclencheur.
+test ne lit et ne publie aucun e-mail ; elle vérifie seulement PrixRadar et la
+présence du déclencheur.
 
 Pour une recette de bout en bout, activer **Toutes les publications** et les
 notifications par e-mail sur les deux groupes Facebook, attendre un nouvel
@@ -45,7 +44,7 @@ pas encore eu lieu.
 ## Sécurité
 
 - les secrets vivent dans les propriétés privées du script ;
-- le token Apify est envoyé dans l'en-tête `Authorization`, jamais dans l'URL ;
+- le token Apify reste exclusivement dans les secrets Cloudflare ;
 - seuls les expéditeurs `facebookmail.com` et les deux groupes explicitement
   autorisés sont acceptés ;
 - une erreur réseau laisse l'e-mail non traité pour permettre une nouvelle

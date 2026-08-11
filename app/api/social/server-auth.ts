@@ -16,14 +16,14 @@ async function secretsEqual(received: string, expected: string) {
 
 export async function authenticateSocialCollector(request: Request) {
   const workerSecret = (env as unknown as { INGEST_SECRET?: unknown }).INGEST_SECRET;
-  const expected = typeof workerSecret === "string" && workerSecret.length >= 24
-    ? workerSecret
-    : typeof process.env.INGEST_SECRET === "string" && process.env.INGEST_SECRET.length >= 24
-      ? process.env.INGEST_SECRET
-      : null;
-  if (!expected) return false;
+  const relaySecret = (env as unknown as { FACEBOOK_RELAY_SECRET?: unknown }).FACEBOOK_RELAY_SECRET;
+  const expected = [
+    typeof workerSecret === "string" ? workerSecret : process.env.INGEST_SECRET,
+    typeof relaySecret === "string" ? relaySecret : process.env.FACEBOOK_RELAY_SECRET,
+  ].filter((value): value is string => typeof value === "string" && value.length >= 24);
+  if (expected.length === 0) return false;
   const match = /^Bearer ([^\s]{1,512})$/u.exec(request.headers.get("authorization") ?? "");
-  return Boolean(match && await secretsEqual(match[1], expected));
+  return Boolean(match && (await Promise.all(expected.map((secret) => secretsEqual(match[1], secret)))).some(Boolean));
 }
 
 export function socialMonthlyBudgetMicros() {

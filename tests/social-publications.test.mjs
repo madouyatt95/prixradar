@@ -27,10 +27,12 @@ test("la migration active le relais email des deux groupes prioritaires", async 
 });
 
 test("l’interface sépare clairement publications sociales et alertes de prix", async () => {
-  const [interfaceSource, serviceWorker, actor] = await Promise.all([
+  const [interfaceSource, serviceWorker, actor, ingestRoute, gmailBridge] = await Promise.all([
     readFile(new URL("../app/components/price-radar-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../services/collector/src/actor.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/social/ingest/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../integrations/facebook-gmail-bridge/Code.gs", import.meta.url), "utf8"),
   ]);
   assert.match(interfaceSource, /Publication non vérifiée par PrixRadar/u);
   assert.match(interfaceSource, /plage de réception quotidienne/u);
@@ -41,4 +43,7 @@ test("l’interface sépare clairement publications sociales et alertes de prix"
   assert.doesNotMatch(actor, /collectOfficialFacebookSources/u);
   assert.match(actor, /requestSocialCollectionPlan/u);
   assert.match(actor, /sendSocialPublicationPush/u);
+  assert.match(ingestRoute, /SOCIAL_DISPATCH_ACTOR_ID/u);
+  assert.match(ingestRoute, /Authorization: `Bearer \$\{token\}`/u);
+  assert.doesNotMatch(gmailBridge, /APIFY_TOKEN/u);
 });

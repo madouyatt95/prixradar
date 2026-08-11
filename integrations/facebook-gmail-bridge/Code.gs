@@ -4,8 +4,6 @@
  * Secrets à définir dans Paramètres du projet > Propriétés du script :
  * - PRIXRADAR_BASE_URL
  * - PRIXRADAR_INGEST_SECRET
- * - APIFY_TOKEN
- * - APIFY_ACTOR_ID
  */
 
 const PRIXRADAR_TIMEZONE = "Europe/Paris";
@@ -50,16 +48,7 @@ function testPrixRadarFacebookBridge() {
     throw new Error("PrixRadar ne repond pas correctement (HTTP " + prixRadar.getResponseCode() + ").");
   }
 
-  const actor = UrlFetchApp.fetch("https://api.apify.com/v2/acts/" + encodeURIComponent(config.actorId), {
-    method: "get",
-    muteHttpExceptions: true,
-    headers: { Authorization: "Bearer " + config.apifyToken, Accept: "application/json" },
-  });
-  if (actor.getResponseCode() < 200 || actor.getResponseCode() >= 300) {
-    throw new Error("L'Actor personnel Apify est inaccessible (HTTP " + actor.getResponseCode() + ").");
-  }
-
-  return { ok: true, prixRadar: true, actor: true, triggerInstalled: hasRelayTrigger_() };
+  return { ok: true, prixRadar: true, triggerInstalled: hasRelayTrigger_() };
 }
 
 function relayFacebookEmails() {
@@ -132,10 +121,6 @@ function relayFacebookEmails_(forceWindow) {
     newItems += Array.isArray(result.newItems) ? result.newItems.length : 0;
   });
 
-  // L'Actor personnel ne collecte pas Facebook : il livre uniquement les Push
-  // des publications que PrixRadar vient d'accepter. Les doublons sont bloqués
-  // de façon atomique par l'API Push.
-  if (accepted > 0) startNotificationActor_(config);
   relevantThreads.forEach(function (thread) { thread.addLabel(processedLabel); });
 
   return {
@@ -146,7 +131,7 @@ function relayFacebookEmails_(forceWindow) {
     reviewThreads: reviewThreads,
     accepted: accepted,
     newItems: newItems,
-    actorStarted: accepted > 0,
+    notificationDispatchRequested: accepted > 0,
   };
 }
 
@@ -269,29 +254,13 @@ function ingestPublications_(config, sourceId, items) {
   return body;
 }
 
-function startNotificationActor_(config) {
-  const response = UrlFetchApp.fetch("https://api.apify.com/v2/acts/" + encodeURIComponent(config.actorId) + "/runs?waitForFinish=0", {
-    method: "post",
-    contentType: "application/json",
-    muteHttpExceptions: true,
-    headers: { Authorization: "Bearer " + config.apifyToken, Accept: "application/json" },
-    payload: JSON.stringify({ mode: "social-dispatch", notify: true }),
-  });
-  const code = response.getResponseCode();
-  if (code < 200 || code >= 300) throw new Error("Demarrage de l'Actor refuse (HTTP " + code + ").");
-}
-
 function readConfiguration_() {
   const properties = PropertiesService.getScriptProperties();
   const baseUrl = String(properties.getProperty("PRIXRADAR_BASE_URL") || "").trim().replace(/\/+$/, "");
   const ingestSecret = String(properties.getProperty("PRIXRADAR_INGEST_SECRET") || "").trim();
-  const apifyToken = String(properties.getProperty("APIFY_TOKEN") || "").trim();
-  const actorId = String(properties.getProperty("APIFY_ACTOR_ID") || "").trim();
   if (!/^https:\/\/[^/]+$/i.test(baseUrl)) throw new Error("PRIXRADAR_BASE_URL est absent ou invalide.");
   if (ingestSecret.length < 24) throw new Error("PRIXRADAR_INGEST_SECRET est absent ou invalide.");
-  if (apifyToken.length < 24) throw new Error("APIFY_TOKEN est absent ou invalide.");
-  if (!/^[A-Za-z0-9_-]{5,80}$/.test(actorId)) throw new Error("APIFY_ACTOR_ID est absent ou invalide.");
-  return { baseUrl: baseUrl, ingestSecret: ingestSecret, apifyToken: apifyToken, actorId: actorId };
+  return { baseUrl: baseUrl, ingestSecret: ingestSecret };
 }
 
 function isRelayWindow_(now) {

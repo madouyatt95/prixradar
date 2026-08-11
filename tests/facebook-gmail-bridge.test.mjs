@@ -56,12 +56,9 @@ test("le relais refuse un groupe non autorisé et les faux expéditeurs", async 
   assert.equal(context.isFacebookSender_("pirate@facebookmail.com.example.org"), false);
 });
 
-test("le manifeste limite les droits à Gmail, aux appels HTTPS et au déclencheur", async () => {
+test("le manifeste utilise le fuseau Paris et laisse Apps Script déduire les droits nécessaires", async () => {
   const manifest = JSON.parse(await readFile(new URL("../integrations/facebook-gmail-bridge/appsscript.json", import.meta.url), "utf8"));
-  assert.deepEqual(manifest.oauthScopes.sort(), [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/script.external_request",
-    "https://www.googleapis.com/auth/script.scriptapp",
-  ]);
   assert.equal(manifest.timeZone, "Europe/Paris");
+  assert.equal(manifest.runtimeVersion, "V8");
+  assert.equal("oauthScopes" in manifest, false);
 });
