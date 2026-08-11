@@ -78,14 +78,14 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         }, 1_024)],
       },
     });
-  schedules.push({
-    name: "prixradar-social-publications-5min",
+  const socialSchedule = (name: string, title: string, cronExpression: string): AutomationSchedule => ({
+    name,
     definition: {
       ...common,
-      name: "prixradar-social-publications-5min",
-      title: "PrixRadar · Publications bons plans · 5 min",
-      description: "Relève les nouvelles publications visibles des sources sociales publiques et prévient les utilisateurs abonnés.",
-      cronExpression: "*/5 * * * *",
+      name,
+      title,
+      description: "Relève toutes les quinze minutes les nouvelles publications visibles des groupes Facebook publics actifs.",
+      cronExpression,
       actions: [actorAction(actorId, {
         mode: "social",
         notify: true,
@@ -93,6 +93,11 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       }, 1_024)],
     },
   });
+  schedules.push(
+    socialSchedule("prixradar-facebook-7h30-7h45", "PrixRadar Facebook · 7h30–7h45", "30,45 7 * * *"),
+    socialSchedule("prixradar-facebook-8h-14h45", "PrixRadar Facebook · 8h–14h45", "*/15 8-14 * * *"),
+    socialSchedule("prixradar-facebook-15h", "PrixRadar Facebook · 15h", "0 15 * * *"),
+  );
   schedules.push({
     name: "prixradar-connectors-daily",
     definition: {
