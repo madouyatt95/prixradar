@@ -82,9 +82,10 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
     name,
     definition: {
       ...common,
+      isEnabled: false,
       name,
       title,
-      description: "Relève toutes les quinze minutes les nouvelles publications visibles des groupes Facebook publics actifs.",
+      description: "Conservé sans exécution : Facebook bloque l’exploration directe et le forfait Creator exclut l’Actor public dédié.",
       cronExpression,
       actions: [actorAction(actorId, {
         mode: "social",
