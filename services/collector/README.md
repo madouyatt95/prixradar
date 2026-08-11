@@ -169,15 +169,16 @@ configuré.
 
 Il regroupe Amazon France dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
-Actor toutes les 30 minutes, puis les publications sociales publiques toutes les
-15 minutes entre 7 h 30 et 15 h. Après vérification du JSON produit, la seule
-commande qui écrit sur Apify est :
+Actor toutes les 30 minutes. Les trois programmations Facebook restent déclarées
+dans le plan pour pouvoir être réactivées plus tard, mais elles sont créées à
+l’état désactivé et ne lancent aucun passage. Après vérification du JSON produit,
+la seule commande qui écrit sur Apify est :
 
 ```bash
 npm run provision
 ```
 
-Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les cinq
+Elle exige `APIFY_TOKEN` et `APIFY_ACTOR_ID`, puis crée ou met à jour les sept
 plannings par nom. Le token Apify n’est pas nécessaire à l’exécution de l’Actor
 et ne doit pas être ajouté à la PWA.
 
