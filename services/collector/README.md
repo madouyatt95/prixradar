@@ -153,25 +153,29 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-Le mode `social` relève toutes les cinq minutes les nouvelles publications de
-deux groupes Facebook publics via l’Actor officiel Apify
-`apify/facebook-groups-scraper`. Il demande uniquement les posts publiés depuis
-la dernière relève réussie, déduplique avant notification et limite le premier
-rattrapage à dix minutes. Une publication conserve son auteur, son heure, son
-lien original et son éventuel lien marchand, mais reste explicitement séparée
-d’une alerte de prix vérifiée. Cette relève ne consomme aucun jeton Keepa.
+Le mode `social` utilise exclusivement le collecteur Playwright intégré à
+`yatta/prixradar` : aucun Actor tiers du Store n’est appelé. Il relève toutes
+les quinze minutes, de 7 h 30 à 15 h (Europe/Paris), les nouvelles publications
+visibles de deux groupes Facebook publics. Le navigateur respecte `robots.txt`,
+utilise le proxy résidentiel Apify en France lorsque l’Actor tourne sur la
+plateforme et bloque les images, polices, médias et feuilles de style afin de
+limiter le trafic. Il demande uniquement les posts publiés depuis la dernière
+relève réussie, déduplique avant notification et limite le premier rattrapage à
+dix minutes. Une publication conserve son auteur, son heure, son lien original
+et son éventuel lien marchand, mais reste explicitement séparée d’une alerte de
+prix vérifiée. Cette relève ne consomme aucun jeton Keepa.
 
 Deux autres groupes restent enregistrés mais désactivés pour une activation
-ultérieure. La PWA réserve le coût maximal avant chaque appel, remplace ensuite
-cette réserve par le coût réel remonté par Apify et suspend les nouveaux appels
-avant le plafond mensuel `SOCIAL_MONTHLY_BUDGET_CENTS` (29 $ par défaut). La
-source X Dealabs est préparée séparément et reste désactivée tant qu’un accès API
-X officiel n’est pas configuré.
+ultérieure. La PWA réserve 0,02 $ par passage, affine cette estimation d’après la
+durée du collecteur et suspend les nouveaux appels avant le plafond mensuel
+`SOCIAL_MONTHLY_BUDGET_CENTS` (29 $ par défaut). La source X Dealabs est préparée
+séparément et reste désactivée tant qu’un accès API X officiel n’est pas
+configuré.
 
 Il regroupe Amazon France dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
 Actor toutes les 30 minutes, puis les publications sociales publiques toutes les
-5 minutes. Après vérification du JSON produit, la seule
+15 minutes entre 7 h 30 et 15 h. Après vérification du JSON produit, la seule
 commande qui écrit sur Apify est :
 
 ```bash
