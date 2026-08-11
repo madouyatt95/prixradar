@@ -57,7 +57,7 @@ export async function GET(request: Request) {
     return Response.json({
       ok: true,
       generatedAt: new Date().toISOString(),
-      cadenceMinutes: 5,
+      cadenceMinutes: 15,
       sources: sources.map((source) => ({
         id: source.id,
         platform: source.platform,
