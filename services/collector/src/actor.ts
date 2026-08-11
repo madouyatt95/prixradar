@@ -27,7 +27,7 @@ import {
   privateApiHeaders,
   requestSocialCollectionPlan,
 } from "./sink.js";
-import { collectOfficialFacebookSources, FACEBOOK_SOCIAL_SOURCES } from "./social.js";
+import { collectFacebookSocialSources, FACEBOOK_SOCIAL_SOURCES } from "./social.js";
 import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
 import { verifyOfferSnapshots } from "./verify.js";
 
@@ -221,6 +221,14 @@ function inputMarkets(input: ActorInput): Market[] {
   return [...new Set(normalized.length > 0 ? normalized : ["FR"] as Market[])];
 }
 
+function estimatedPersonalSocialRunUsd(startedAtMilliseconds: number) {
+  const elapsedHours = Math.max(0, Date.now() - startedAtMilliseconds) / 3_600_000;
+  const memoryGigabytes = Math.max(0.25, (Actor.getEnv().memoryMbytes ?? 1_024) / 1_024);
+  const computeUsd = elapsedHours * memoryGigabytes * 0.2;
+  // Includes a conservative allowance for the small, resource-filtered residential proxy transfer.
+  return Math.round(Math.max(0.02, computeUsd + 0.015) * 1_000_000) / 1_000_000;
+}
+
 export async function runActor(config: CollectorConfig): Promise<void> {
   await Actor.main(async () => {
     const statusReporter = new SourceStatusReporter(config);
@@ -257,35 +265,41 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         throw new Error("Le plan Facebook contient une source inconnue ou incomplète.");
       }
 
-      let officialRun: Awaited<ReturnType<typeof collectOfficialFacebookSources>> | null = null;
+      const collectionStartedAt = Date.now();
+      let socialResults: Awaited<ReturnType<typeof collectFacebookSocialSources>> = [];
       let publicationsSeen = 0;
       let publicationsAdded = 0;
       let notificationsSent = 0;
       let ingestFailures = 0;
       try {
-        officialRun = await collectOfficialFacebookSources({
+        socialResults = await collectFacebookSocialSources({
           sources: plannedSources,
           cursorAt: plan.cursorAt,
           resultLimitPerSource: plan.resultLimitPerSource ?? 20,
-          timeoutSecs: 180,
+          timeoutMs: 120_000,
+          proxyUrls: config.proxyUrls,
         });
       } catch (error) {
         await postSocialCollectionCheckpoint({
           runId: plan.runId,
           status: "failed",
           postsReturned: 0,
+          providerRunId: Actor.getEnv().actorRunId,
+          usageTotalUsd: estimatedPersonalSocialRunUsd(collectionStartedAt),
           finishedAt: new Date().toISOString(),
-          errorCode: "FACEBOOK_PROVIDER_FAILED",
+          errorCode: "FACEBOOK_COLLECTOR_FAILED",
         }, sinkConfig).catch(() => undefined);
         throw error;
       }
 
-      for (const result of officialRun.results) {
+      let collectionFailures = 0;
+      for (const result of socialResults) {
+        if (result.errorCode) collectionFailures += 1;
         try {
           const ingested = await postSocialPublications({
             sourceId: result.source.id,
             scannedAt: plan.startedAt,
-            successful: true,
+            successful: result.errorCode === null,
             items: result.publications,
           }, sinkConfig);
           publicationsSeen += result.publications.length;
@@ -323,27 +337,33 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           });
         }
       }
+      const allSourcesFailed = collectionFailures === socialResults.length;
       const checkpoint = await postSocialCollectionCheckpoint({
         runId: plan.runId,
-        status: ingestFailures === 0 ? "succeeded" : "failed",
-        postsReturned: officialRun.rawItemsCount,
-        providerRunId: officialRun.providerRunId,
-        usageTotalUsd: officialRun.usageTotalUsd,
-        finishedAt: officialRun.finishedAt,
-        ...(ingestFailures > 0 ? { errorCode: "SOCIAL_INGEST_FAILED" } : {}),
+        status: ingestFailures === 0 && !allSourcesFailed ? "succeeded" : "failed",
+        postsReturned: publicationsSeen,
+        providerRunId: Actor.getEnv().actorRunId,
+        usageTotalUsd: estimatedPersonalSocialRunUsd(collectionStartedAt),
+        finishedAt: new Date().toISOString(),
+        ...(ingestFailures > 0
+          ? { errorCode: "SOCIAL_INGEST_FAILED" }
+          : allSourcesFailed
+            ? { errorCode: "FACEBOOK_ALL_SOURCES_FAILED" }
+            : {}),
       }, sinkConfig);
       await Actor.pushData({
         dataKind: "social-summary",
-        status: ingestFailures === 0 ? "succeeded" : "partial-failure",
-        providerRunId: officialRun.providerRunId,
-        sourcesChecked: officialRun.results.length,
+        status: ingestFailures === 0 && collectionFailures === 0 ? "succeeded" : allSourcesFailed ? "failed" : "partial-failure",
+        providerRunId: Actor.getEnv().actorRunId,
+        sourcesChecked: socialResults.length,
+        sourceFailures: collectionFailures,
         publicationsSeen,
-        rawItemsCharged: officialRun.rawItemsCount,
         publicationsAdded,
         notificationsSent,
         estimatedCostMicros: checkpoint.estimatedCostMicros,
       });
       if (ingestFailures > 0) throw new Error(`${ingestFailures} source(s) sociale(s) n’ont pas été enregistrées.`);
+      if (allSourcesFailed) throw new Error("Toutes les sources Facebook publiques sont temporairement indisponibles.");
       return;
     }
     if (mode === "digest") {

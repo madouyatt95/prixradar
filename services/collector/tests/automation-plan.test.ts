@@ -26,24 +26,30 @@ test("concentre le forfait Keepa API 20 sur Amazon France", () => {
 
 test("récupère la couverture distante et teste les connecteurs chaque jour", () => {
   const remotePlan = buildAutomationPlan("actor", []);
-  assert.equal(remotePlan.length, 5);
+  assert.equal(remotePlan.length, 7);
   const remoteAction = remotePlan[1]?.definition.actions?.[0];
   if (!remoteAction || remoteAction.type !== "RUN_ACTOR") assert.fail("Action retail attendue");
   const remoteInput = JSON.parse(remoteAction.runInput?.body ?? "{}") as Record<string, unknown>;
   assert.equal(remoteInput.useRemoteCoverage, true);
   assert.equal(remoteInput.scanAmazon, false);
   const plan = buildAutomationPlan("actor", ["https://www.boulanger.com/c/electromenager"]);
-  assert.equal(plan.length, 5);
+  assert.equal(plan.length, 7);
   assert.equal(plan[1]?.definition.cronExpression, "7,37 * * * *");
-  assert.equal(plan[2]?.definition.cronExpression, "*/5 * * * *");
-  const socialAction = plan[2]?.definition.actions?.[0];
-  if (!socialAction || socialAction.type !== "RUN_ACTOR") assert.fail("Action sociale attendue");
-  const socialInput = JSON.parse(socialAction.runInput?.body ?? "{}") as Record<string, unknown>;
-  assert.equal(socialInput.mode, "social");
-  assert.equal(socialInput.notify, true);
-  assert.equal(plan[3]?.definition.cronExpression, "17 6 * * *");
-  assert.equal(plan[4]?.definition.cronExpression, "7 18 * * *");
-  const digestAction = plan[4]?.definition.actions?.[0];
+  assert.deepEqual(plan.slice(2, 5).map((schedule) => [schedule.name, schedule.definition.cronExpression]), [
+    ["prixradar-facebook-7h30-7h45", "30,45 7 * * *"],
+    ["prixradar-facebook-8h-14h45", "*/15 8-14 * * *"],
+    ["prixradar-facebook-15h", "0 15 * * *"],
+  ]);
+  for (const socialSchedule of plan.slice(2, 5)) {
+    const socialAction = socialSchedule.definition.actions?.[0];
+    if (!socialAction || socialAction.type !== "RUN_ACTOR") assert.fail("Action sociale attendue");
+    const socialInput = JSON.parse(socialAction.runInput?.body ?? "{}") as Record<string, unknown>;
+    assert.equal(socialInput.mode, "social");
+    assert.equal(socialInput.notify, true);
+  }
+  assert.equal(plan[5]?.definition.cronExpression, "17 6 * * *");
+  assert.equal(plan[6]?.definition.cronExpression, "7 18 * * *");
+  const digestAction = plan[6]?.definition.actions?.[0];
   if (!digestAction || digestAction.type !== "RUN_ACTOR") assert.fail("Action digest attendue");
   assert.equal(JSON.parse(digestAction.runInput?.body ?? "{}").mode, "digest");
 });

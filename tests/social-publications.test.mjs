@@ -12,6 +12,7 @@ test("la migration active deux groupes Facebook et garde les autres prêts pour 
     for (const name of names) database.exec(await readFile(new URL(name, migrationsRoot), "utf8"));
     assert.equal(database.prepare("SELECT count(*) AS count FROM social_sources WHERE platform='facebook' AND enabled=1").get().count, 2);
     assert.equal(database.prepare("SELECT count(*) AS count FROM social_sources WHERE platform='facebook' AND enabled=0").get().count, 2);
+    assert.equal(database.prepare("SELECT count(*) AS count FROM social_sources WHERE platform='facebook' AND cadence_minutes=15").get().count, 4);
     assert.equal(database.prepare("SELECT status FROM social_sources WHERE id='x:dealabs'").get().status, "awaiting_access");
     assert.equal(database.prepare("SELECT count(*) AS count FROM social_collection_runs").get().count, 0);
     assert.equal(database.prepare("SELECT social_notifications_enabled FROM user_preferences LIMIT 1").get(), undefined);
@@ -34,7 +35,8 @@ test("l’interface sépare clairement publications sociales et alertes de prix"
   assert.match(interfaceSource, /ce mois/u);
   assert.match(interfaceSource, /label: "Flux"/u);
   assert.match(serviceWorker, /payload\.tier === "social"/u);
-  assert.match(actor, /collectOfficialFacebookSources/u);
+  assert.match(actor, /collectFacebookSocialSources/u);
+  assert.doesNotMatch(actor, /collectOfficialFacebookSources/u);
   assert.match(actor, /requestSocialCollectionPlan/u);
   assert.match(actor, /sendSocialPublicationPush/u);
 });

@@ -1033,7 +1033,7 @@ export const socialSources = sqliteTable(
     collectionMode: text("collection_mode").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     status: text("status").notNull().default("ready"),
-    cadenceMinutes: integer("cadence_minutes").notNull().default(5),
+    cadenceMinutes: integer("cadence_minutes").notNull().default(15),
     lastAttemptAt: text("last_attempt_at"),
     lastSuccessAt: text("last_success_at"),
     lastErrorCode: text("last_error_code"),

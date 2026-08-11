@@ -11,8 +11,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const RESULT_LIMIT_PER_SOURCE = 20;
-const ACTOR_START_MICROS = 1_000;
-const CONSERVATIVE_POST_WITH_DATE_FILTER_MICROS = 7_000;
+const PERSONAL_ACTOR_RUN_RESERVATION_MICROS = 20_000;
 const INITIAL_LOOKBACK_MS = 10 * 60_000;
 
 function json(body: unknown, status = 200) {
@@ -43,8 +42,7 @@ export async function POST(request: Request) {
     }).from(socialCollectionRuns).where(gte(socialCollectionRuns.startedAt, currentMonthStart(now)));
     const usedMicros = Math.max(0, Number(usage?.micros ?? 0));
     const limitMicros = socialMonthlyBudgetMicros();
-    const reservedMicros = ACTOR_START_MICROS
-      + sources.length * RESULT_LIMIT_PER_SOURCE * CONSERVATIVE_POST_WITH_DATE_FILTER_MICROS;
+    const reservedMicros = PERSONAL_ACTOR_RUN_RESERVATION_MICROS;
     const remainingMicros = Math.max(0, limitMicros - usedMicros);
 
     if (remainingMicros < reservedMicros) {
