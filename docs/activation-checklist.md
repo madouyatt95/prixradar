@@ -38,9 +38,12 @@ Ajouter aux variables serveur du Site :
 - `CF_ACCESS_AUD`, l'audience de l'application Cloudflare Access
 - `ALERT_DELIVERY_MODE=shadow` pendant la recette
 - `AUTHORIZED_PARTNER_SOURCES` vide tant qu’aucun accès explicite n’est validé pour Castorama, Conforama ou Rue du Commerce
+- `FACEBOOK_GMAIL_USER`, avec l'adresse du Gmail dédié
+- `FACEBOOK_GMAIL_APP_PASSWORD`, avec un mot de passe d'application Google de 16 caractères et jamais le mot de passe normal
+- `FACEBOOK_RELAY_SECRET`, avec un quatrième secret aléatoire d'au moins 24 caractères
 
 Après redéploiement, `/api/health` doit répondre sans révéler les valeurs et
-afficher les capacités correspondantes à `true`.
+afficher les capacités correspondantes à `true`, notamment `facebookMailbox`.
 
 Dans Cloudflare Zero Trust, créer une application Access **Self-hosted** sur
 `https://votre-domaine/api/admin/*`, autoriser seulement les e-mails voulus et
@@ -156,7 +159,7 @@ Le parcours de recette est :
 9. lancer le contrôle public :
 
 Avant la recette fonctionnelle, appliquer toutes les migrations D1 dans l’ordre,
-jusqu’à `0011`. La migration `0008` élargit les contraintes aux six nouvelles
+jusqu’à `0019`. La migration `0008` élargit les contraintes aux six nouvelles
 enseignes en recopiant chaque ligne existante ; elle ne les active pas. Tester
 ensuite : création d'un radar en langage naturel, scan/saisie EAN, bouton
 « Vérifier maintenant », verdict d'achat et réception du résumé quotidien. La

@@ -153,6 +153,7 @@ export async function POST(request: Request) {
     const existing = items.length === 0 ? [] : await database.select({ id: socialPublications.id })
       .from(socialPublications).where(inArray(socialPublications.id, items.map((item) => item.id)));
     const existingIds = new Set(existing.map((item) => item.id));
+    const newPublications = items.filter((item) => !existingIds.has(item.id));
     if (items.length > 0) {
       const statements = items.map((item) => database.insert(socialPublications).values(item).onConflictDoUpdate({
         target: socialPublications.id,
@@ -179,14 +180,14 @@ export async function POST(request: Request) {
       updatedAt: scannedAt,
     }).where(eq(socialSources.id, source.id));
     const now = Date.now();
-    const newItems = items.filter((item) => !existingIds.has(item.id)).map((item) => ({
+    const newItems = newPublications.map((item) => ({
       id: item.id,
       sourceId: source.id,
       notificationEligible: now - Date.parse(item.publishedAt) <= RECENT_NOTIFICATION_MS,
     }));
     let notificationDispatch: { requested: boolean; started: boolean };
     try {
-      notificationDispatch = await startSocialDispatch(items);
+      notificationDispatch = await startSocialDispatch(newPublications);
     } catch (error) {
       const message = error instanceof Error ? error.message : "APIFY_DISPATCH_FAILED";
       console.error(JSON.stringify({ event: "social_dispatch_failed", sourceId, error: message.slice(0, 80) }));

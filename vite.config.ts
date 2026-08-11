@@ -24,9 +24,9 @@ const localBindingConfig = {
   name: "prixradar",
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  compatibility_date: "2026-07-21",
+  compatibility_date: "2026-08-11",
   triggers: {
-    crons: ["*/5 * * * *"],
+    crons: ["* * * * *"],
   },
   vars: {
     // Keep the administration cost center aligned with the active Keepa API 20 plan.

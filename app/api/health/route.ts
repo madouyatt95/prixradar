@@ -16,6 +16,7 @@ export async function GET() {
   let database = false;
   let dealabsLastSyncAt: string | null = null;
   let socialLastSyncAt: string | null = null;
+  let facebookMailboxLastProcessedAt: string | null = null;
 
   try {
     const result = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
@@ -24,6 +25,8 @@ export async function GET() {
     dealabsLastSyncAt = dealabs?.lastSeenAt ?? null;
     const social = await env.DB.prepare("SELECT last_success_at AS lastSuccessAt FROM social_sources WHERE enabled=1 AND platform='facebook' ORDER BY last_success_at DESC LIMIT 1").first<{ lastSuccessAt: string }>();
     socialLastSyncAt = social?.lastSuccessAt ?? null;
+    const mailbox = await env.DB.prepare("SELECT processed_at AS processedAt FROM facebook_email_receipts WHERE status='processed' ORDER BY processed_at DESC LIMIT 1").first<{ processedAt: string }>();
+    facebookMailboxLastProcessedAt = mailbox?.processedAt ?? null;
   } catch {
     try {
       const result = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
@@ -58,9 +61,14 @@ export async function GET() {
       affiliateLinks: configured("AMAZON_ASSOCIATE_TAG"),
       dealabsTrend: dealabsAgeMs >= 0 && dealabsAgeMs <= 15 * 60_000,
       socialPublications: socialAgeMs >= 0 && socialAgeMs <= 15 * 60_000,
+      facebookMailbox:
+        configured("FACEBOOK_GMAIL_USER") &&
+        configured("FACEBOOK_GMAIL_APP_PASSWORD") &&
+        configured("FACEBOOK_RELAY_SECRET"),
     },
     dealabsLastSyncAt,
     socialLastSyncAt,
+    facebookMailboxLastProcessedAt,
   };
 
   return Response.json(body, {

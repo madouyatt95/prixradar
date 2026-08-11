@@ -4,11 +4,16 @@ Ce relais transforme les notifications officielles que Facebook envoie dans
 Gmail en publications PrixRadar. Il ne se connecte pas au compte Facebook, ne
 copie aucun cookie et ne lance aucun Actor public du Store Apify.
 
+La méthode recommandée est désormais le lecteur Gmail direct intégré au Worker
+Cloudflare. Elle remplace la fenêtre d'autorisation Apps Script qui peut rester
+bloquée avec plusieurs comptes Google. Apps Script est conservé uniquement
+comme solution de secours.
+
 ## Fonctionnement
 
 1. Facebook envoie un e-mail pour une nouvelle publication des deux groupes
    suivis.
-2. Google Apps Script vérifie les nouveaux e-mails toutes les cinq minutes,
+2. Le Worker Cloudflare vérifie les nouveaux e-mails toutes les minutes,
    uniquement de 07:30 à 15:00, heure de Paris.
 3. Seuls les liens de publication appartenant aux deux identifiants de groupe
    autorisés sont transmis à `/api/social/ingest`.
@@ -19,7 +24,23 @@ copie aucun cookie et ne lance aucun Actor public du Store Apify.
 Les e-mails de plus de 45 minutes sont ignorés. Les identifiants de publication
 et les livraisons Push sont dédupliqués côté PrixRadar.
 
-## Installation unique
+## Installation recommandée : Cloudflare + mot de passe d'application
+
+1. Sur le Gmail dédié, activer la validation Google en deux étapes.
+2. Créer un mot de passe d'application nommé `PrixRadar Cloudflare`.
+3. Installer dans les secrets du Worker, sans les écrire dans Git :
+
+| Secret | Valeur |
+| --- | --- |
+| `FACEBOOK_GMAIL_USER` | adresse du Gmail dédié |
+| `FACEBOOK_GMAIL_APP_PASSWORD` | mot de passe d'application Google de 16 caractères |
+| `FACEBOOK_RELAY_SECRET` | secret aléatoire d'au moins 24 caractères |
+
+Le mot de passe normal du compte Google ne doit jamais être utilisé. Aucun
+ordinateur ne reste allumé et aucune fenêtre OAuth Apps Script n'est nécessaire.
+La migration `0019_facebook_gmail_imap.sql` doit être appliquée avant l'activation.
+
+## Solution de secours : Apps Script
 
 Créer un projet sur `script.google.com`, ajouter `Code.gs` et activer l'affichage
 du fichier manifeste afin de remplacer `appsscript.json`. Dans **Paramètres du

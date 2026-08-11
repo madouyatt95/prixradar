@@ -26,12 +26,12 @@ function setupPrixRadarFacebookBridge() {
 
   ScriptApp.newTrigger("relayFacebookEmails")
     .timeBased()
-    .everyMinutes(5)
+    .everyMinutes(1)
     .create();
 
   return {
     ok: true,
-    cadenceMinutes: 5,
+    cadenceMinutes: 1,
     activeWindow: "07:30-15:00 Europe/Paris",
     groups: Object.keys(PRIXRADAR_ACTIVE_GROUPS).length,
   };
