@@ -85,10 +85,10 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       isEnabled: false,
       name,
       title,
-      description: "Conservé sans exécution : Facebook bloque l’exploration directe et le forfait Creator exclut l’Actor public dédié.",
+      description: "Conservé sans exécution planifiée : le relais Gmail déclenche cet Actor personnel seulement lorsqu’un nouveau post arrive.",
       cronExpression,
       actions: [actorAction(actorId, {
-        mode: "social",
+        mode: "social-dispatch",
         notify: true,
         browserFallback: true,
       }, 1_024)],
