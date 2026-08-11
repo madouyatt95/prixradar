@@ -175,12 +175,6 @@ type SocialPublication = {
   publishedAt: string;
 };
 
-type SocialCollectionBudget = {
-  usedMicros: number;
-  limitMicros: number;
-  remainingMicros: number;
-};
-
 type InspectionState = { status: "pending" | "processing" | "completed" | "failed"; message: string; id?: string };
 
 type EanOffer = {
@@ -1266,7 +1260,6 @@ export function PriceRadarApp() {
   const [dealabsSignals, setDealabsSignals] = useState<DealabsSignal[]>([]);
   const [socialSources, setSocialSources] = useState<SocialSource[]>([]);
   const [socialPublications, setSocialPublications] = useState<SocialPublication[]>([]);
-  const [socialCollectionBudget, setSocialCollectionBudget] = useState<SocialCollectionBudget | null>(null);
   const [socialLoading, setSocialLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(true);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
@@ -1357,17 +1350,11 @@ export function PriceRadarApp() {
   useEffect(() => {
     let active = true;
     const load = () => fetch("/api/social?limit=60", { headers: { accept: "application/json" } })
-      .then(async (response) => response.ok ? response.json() as Promise<{ sources?: unknown[]; items?: unknown[]; collectionBudget?: unknown }> : { sources: [], items: [], collectionBudget: null })
+      .then(async (response) => response.ok ? response.json() as Promise<{ sources?: unknown[]; items?: unknown[] }> : { sources: [], items: [] })
       .then((payload) => {
         if (!active) return;
         setSocialSources((payload.sources ?? []).map(mapSocialSource).filter((item): item is SocialSource => item !== null));
         setSocialPublications((payload.items ?? []).map(mapSocialPublication).filter((item): item is SocialPublication => item !== null));
-        const budget = record(payload.collectionBudget);
-        setSocialCollectionBudget(budget ? {
-          usedMicros: Math.max(0, finite(budget.usedMicros)),
-          limitMicros: Math.max(0, finite(budget.limitMicros)),
-          remainingMicros: Math.max(0, finite(budget.remainingMicros)),
-        } : null);
       })
       .catch(() => undefined)
       .finally(() => { if (active) setSocialLoading(false); });
@@ -2176,7 +2163,6 @@ export function PriceRadarApp() {
     if (tab === "social") return <SocialFeedView
       sources={socialSources}
       publications={socialPublications}
-      collectionBudget={socialCollectionBudget}
       loading={socialLoading}
       notificationsEnabled={socialNotificationsEnabled}
       notificationState={notificationState}
@@ -2490,7 +2476,6 @@ function PageHeading({
 function SocialFeedView({
   sources,
   publications,
-  collectionBudget,
   loading,
   notificationsEnabled,
   notificationState,
@@ -2498,7 +2483,6 @@ function SocialFeedView({
 }: {
   sources: SocialSource[];
   publications: SocialPublication[];
-  collectionBudget: SocialCollectionBudget | null;
   loading: boolean;
   notificationsEnabled: boolean;
   notificationState: string;
@@ -2513,15 +2497,15 @@ function SocialFeedView({
   const facebookUnavailable = facebookSources.length > 0
     && configuredFacebookSources.length === 0
     && facebookSources.every((source) => source.status === "blocked");
-  const facebookCadence = liveFacebook > 0
-    ? Math.min(...activeFacebookSources.map((source) => source.cadenceMinutes))
+  const facebookCadence = configuredFacebookSources.length > 0
+    ? Math.min(...configuredFacebookSources.map((source) => source.cadenceMinutes))
     : null;
   return (
     <section className="social-page">
       <PageHeading
         eyebrow="Publications bons plans"
         title="Vos sources, au même endroit"
-        description="PrixRadar relève les nouvelles publications publiques et vous renvoie toujours vers le post original. Elles sont affichées telles quelles, sans être présentées comme des prix confirmés."
+        description="Le relais Gmail Facebook transmet les nouvelles publications à PrixRadar et vous renvoie toujours vers le post original. Elles sont affichées telles quelles, sans être présentées comme des prix confirmés."
         action={<button type="button" className={`social-notify-button ${notificationsEnabled ? "is-on" : ""}`} onClick={onToggleNotifications} disabled={facebookUnavailable}>
           <span aria-hidden="true">{notificationsEnabled ? "●" : "○"}</span>
           {facebookUnavailable ? "Relève suspendue" : notificationsEnabled ? "Notifications activées" : "Me prévenir"}
@@ -2529,9 +2513,9 @@ function SocialFeedView({
       />
 
       <div className="social-summary">
-        <div><strong>{liveFacebook}/{configuredFacebookSources.length || 2}</strong><span>groupes Facebook suivis</span></div>
-        <div><strong>{facebookCadence ? `${facebookCadence} min` : "Pause"}</strong><span>{facebookCadence ? "entre deux passages" : "collecte non activée"}</span></div>
-        <div><strong>{new Intl.NumberFormat("fr-FR", { style: "currency", currency: "USD" }).format((collectionBudget?.usedMicros ?? 0) / 1_000_000)}</strong><span>sur {(collectionBudget?.limitMicros ?? 29_000_000) / 1_000_000} $ ce mois</span></div>
+        <div><strong>{configuredFacebookSources.length}/2</strong><span>groupes Facebook suivis</span></div>
+        <div><strong>{facebookCadence ? `${facebookCadence} min` : "Pause"}</strong><span>{facebookCadence ? "entre deux vérifications" : "recherche non activée"}</span></div>
+        <div><strong>7 h 30–15 h</strong><span>plage de réception quotidienne</span></div>
       </div>
 
       <section className="social-sources" aria-label="Sources de publications">
@@ -2540,10 +2524,11 @@ function SocialFeedView({
           const savedForLater = source.platform === "facebook" && !source.enabled;
           const waiting = source.status === "awaiting_access";
           const blocked = source.status === "blocked";
+          const ready = source.enabled && source.status === "ready";
           return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
             <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
-            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : blocked ? "Facebook bloque la relève automatique" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Relève momentanément indisponible" : "Première relève en attente"}</small></span>
-            <i>{live ? "Actif" : blocked ? "Suspendu" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière publication reçue ${relativeTime(source.lastSuccessAt)}` : ready ? "Relais prêt · première publication attendue" : blocked ? "Facebook bloque la relève automatique" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Réception momentanément indisponible" : "Première publication en attente"}</small></span>
+            <i>{live ? "Actif" : ready ? "Prêt" : blocked ? "Suspendu" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
           </a>;
         })}
       </section>
@@ -2574,7 +2559,7 @@ function SocialFeedView({
             </footer>
           </article>)}
         </div>
-      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Relève Facebook suspendue" : liveFacebook > 0 ? "Aucune nouvelle publication" : "Première relève Facebook en attente"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook bloque actuellement la relève automatique. Vos groupes restent enregistrés sans passage payant inutile." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Deux groupes sont configurés. Les nouvelles publications apparaîtront après le prochain passage automatique."}</p></div>}
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Réception Facebook suspendue" : liveFacebook > 0 ? "Aucune nouvelle publication" : "En attente de la première publication"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook bloque actuellement la relève automatique. Vos groupes restent enregistrés sans passage payant inutile." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Les deux groupes sont prêts. Le prochain e-mail Facebook reçu entre 7 h 30 et 15 h apparaîtra ici automatiquement."}</p></div>}
     </section>
   );
 }

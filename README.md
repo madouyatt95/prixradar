@@ -32,6 +32,7 @@ présenter une remise comme une « erreur certaine ».
 | Portefeuille d’économies | actif | prix réellement payé, référence, économie suivie, montant potentiellement récupérable et journal d’événements |
 | Détecteur EAN autonome | actif côté application | Caméra Barcode Detector/ZXing, radar exact et file D1 ; recherche Amazon EU5 lorsque Keepa et le collecteur planifié sont activés |
 | Tendance Dealabs | actif sur Cloudflare | flux RSS public « tendance » toutes les 5 min, vitesse de chauffe, dédoublonnage et vérification prioritaire du lien marchand |
+| Publications Facebook | relais prêt à activer | e-mails officiels Facebook lus par Apps Script toutes les 5 min de 07:30 à 15:00 ; deux groupes autorisés, puis Push par l’Actor personnel Creator |
 | Vérification immédiate | actif | file prioritaire durable consommée par l'Actor, résultat conservé |
 | Score « Acheter maintenant » | actif | décision séparée du score d'anomalie, cinq facteurs explicables |
 | Intelligence autonome | actif | panier fantôme, empreinte variante, indice interne, origine, vendeur et durée probable |
@@ -118,6 +119,9 @@ du bouclier après achat.
 La migration `0013` ajoute les signaux communautaires Dealabs et leur historique
 de température. Ils restent séparés des alertes de prix tant que le marchand
 n’a pas été contrôlé par PrixRadar.
+La migration `0018` active les deux groupes Facebook prioritaires pour le relais
+Gmail. Le code et les instructions d’installation sont dans
+`integrations/facebook-gmail-bridge/` ; aucun cookie Facebook n’est stocké.
 
 ## Configuration utilisateur
 

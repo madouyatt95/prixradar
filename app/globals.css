@@ -3318,6 +3318,7 @@ a {
 .social-source small { margin-top: 3px; color: var(--muted); font-size: 8px; }
 .social-source > i { padding: 4px 7px; border-radius: 999px; color: #746945; background: #f6edcf; font-size: 7px; font-style: normal; font-weight: 850; }
 .social-source.is-live > i { color: #247258; background: #dff3e9; }
+.social-source.is-ready > i { color: #247258; background: #dff3e9; }
 .social-source.is-awaiting_access { opacity: .72; }
 
 .social-platform {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ingestIdempotencyKey, postObservation, postSignalObservation, toAlertIngestEnvelope } from "../src/sink.js";
+import { ingestIdempotencyKey, postObservation, postSignalObservation, recentSocialPublicationIds, toAlertIngestEnvelope } from "../src/sink.js";
 import type { VerifiedObservation } from "../src/types.js";
 
 function observation(fixture = false): VerifiedObservation {
@@ -164,4 +164,26 @@ test("les erreurs publiques ne contiennent aucun secret", async () => {
       return true;
     },
   );
+});
+
+test("la livraison Facebook ne retient que les nouvelles publications valides", async () => {
+  const now = Date.now();
+  let authorization = "";
+  const ids = await recentSocialPublicationIds({
+    baseUrl: "https://prixradar.example",
+    ingestSecret: "social-ingest-secret-test",
+  }, async (_input, init) => {
+    authorization = new Headers(init?.headers).get("authorization") ?? "";
+    return Response.json({
+      ok: true,
+      items: [
+        { id: "facebook:848306336465354:123456789", firstSeenAt: new Date(now - 5 * 60_000).toISOString() },
+        { id: "facebook:848306336465354:123456789", firstSeenAt: new Date(now - 4 * 60_000).toISOString() },
+        { id: "facebook:584379244259839:987654321", firstSeenAt: new Date(now - 16 * 60_000).toISOString() },
+        { id: "x:dealabs:123456789", firstSeenAt: new Date(now - 2 * 60_000).toISOString() },
+      ],
+    });
+  });
+  assert.equal(authorization, "Bearer social-ingest-secret-test");
+  assert.deepEqual(ids, ["facebook:848306336465354:123456789"]);
 });

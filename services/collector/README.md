@@ -153,26 +153,26 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-Le mode `social` contient un collecteur Playwright interne et n’appelle aucun
-Actor tiers du Store. Il respecte `robots.txt`, qui interdit actuellement la
-relève directe des groupes Facebook configurés. Le forfait Creator interdit en
-outre l’Actor public Facebook maintenu par Apify. Les programmations Facebook
-sont donc désactivées : les quatre groupes restent enregistrés, sans passage
-payant inutile, jusqu’à l’arrivée d’une voie autorisée et testée. Cette suspension
-ne consomme aucun jeton Keepa.
+La relève directe avec Playwright reste bloquée par `robots.txt` et le forfait
+Creator n’autorise pas l’Actor Facebook public du Store. PrixRadar passe donc par
+les notifications officielles « toutes les publications » envoyées par Facebook
+dans Gmail. Le relais dans `integrations/facebook-gmail-bridge/` vérifie la boîte
+toutes les cinq minutes entre 07:30 et 15:00, ingère seulement les deux groupes
+prioritaires et déclenche l’Actor personnel en mode `social-dispatch`. Cet Actor
+ne scrape pas Facebook : il livre uniquement les Push PWA déjà préparés par
+PrixRadar. Aucun cookie Facebook n’est copié et aucun jeton Keepa n’est consommé.
 
-La PWA conserve un plafond mensuel pour une éventuelle reprise et bloque les
-nouveaux appels avant ce plafond
-`SOCIAL_MONTHLY_BUDGET_CENTS` (29 $ par défaut). La source X Dealabs est préparée
-séparément et reste désactivée tant qu’un accès API X officiel n’est pas
-configuré.
+Les trois anciennes programmations Facebook restent désactivées sur Apify : le
+relais Gmail déclenche l’Actor à la demande, seulement après réception d’un e-mail
+récent. La source X Dealabs est préparée séparément et reste désactivée tant qu’un
+accès API X officiel n’est pas configuré.
 
 Il regroupe Amazon France dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
-Actor toutes les 30 minutes. Les trois programmations Facebook restent déclarées
-dans le plan pour pouvoir être réactivées plus tard, mais elles sont créées à
-l’état désactivé et ne lancent aucun passage. Après vérification du JSON produit,
-la seule commande qui écrit sur Apify est :
+Actor toutes les 30 minutes. Les trois anciennes programmations Facebook restent
+déclarées pour audit mais désactivées ; le relais Gmail démarre directement le
+mode `social-dispatch`. Après vérification du JSON produit, la seule commande qui
+écrit les programmations sur Apify est :
 
 ```bash
 npm run provision

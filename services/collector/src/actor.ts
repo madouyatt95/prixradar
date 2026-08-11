@@ -22,6 +22,7 @@ import { sendDailyDigests, sendProtectionPush, sendSocialPublicationPush } from 
 import {
   postEanScanResult,
   postFrontierItems,
+  recentSocialPublicationIds,
   postSocialCollectionCheckpoint,
   postSocialPublications,
   privateApiHeaders,
@@ -36,7 +37,7 @@ interface ActorInput {
   market?: Market;
   markets?: Market[];
   urls?: Array<string | { url: string }>;
-  mode?: "discover" | "verify" | "full" | "fixture" | "digest" | "social";
+  mode?: "discover" | "verify" | "full" | "fixture" | "digest" | "social" | "social-dispatch";
   notify?: boolean;
   browserFallback?: boolean;
   limit?: number;
@@ -234,6 +235,46 @@ export async function runActor(config: CollectorConfig): Promise<void> {
     const statusReporter = new SourceStatusReporter(config);
     const input = (await Actor.getInput<ActorInput>()) ?? {};
     const mode = input.mode ?? "full";
+    if (mode === "social-dispatch") {
+      if (!config.priceRadarBaseUrl || !config.ingestSecret || !config.pushDeliverySecret
+        || !config.vapidSubject || !config.vapidPublicKey || !config.vapidPrivateKey) {
+        throw new Error("Configuration PrixRadar incomplète pour les notifications Facebook relayées.");
+      }
+      const publicationIds = await recentSocialPublicationIds({
+        baseUrl: config.priceRadarBaseUrl,
+        ingestSecret: config.ingestSecret,
+        ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+        timeoutMs: config.httpTimeoutMs,
+      });
+      let targets = 0;
+      let sent = 0;
+      let failed = 0;
+      if (input.notify === true) {
+        for (const publicationId of publicationIds) {
+          const result = await sendSocialPublicationPush(publicationId, {
+            baseUrl: config.priceRadarBaseUrl,
+            deliverySecret: config.pushDeliverySecret,
+            ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+            vapidSubject: config.vapidSubject,
+            vapidPublicKey: config.vapidPublicKey,
+            vapidPrivateKey: config.vapidPrivateKey,
+            timeoutMs: config.httpTimeoutMs,
+          });
+          targets += result.targets;
+          sent += result.sent;
+          failed += result.failed;
+        }
+      }
+      await Actor.pushData({
+        dataKind: "social-dispatch",
+        publicationsChecked: publicationIds.length,
+        notificationsRequested: input.notify === true,
+        targets,
+        sent,
+        failed,
+      });
+      return;
+    }
     if (mode === "social") {
       if (!config.priceRadarBaseUrl || !config.ingestSecret) {
         throw new Error("Configuration PrixRadar incomplète pour les publications sociales.");

@@ -460,6 +460,37 @@ export type SocialIngestResponse = {
   newItems: Array<{ id: string; sourceId: string; notificationEligible: boolean }>;
 };
 
+export async function recentSocialPublicationIds(
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
+  if (!config.ingestSecret.trim()) throw new SinkConfigurationError("INGEST_SECRET absent: notifications sociales désactivées.");
+  const endpoint = new URL("api/social?platform=facebook&limit=40", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Flux Facebook indisponible (HTTP ${response.status}).`, response.status);
+  const payload = await response.json() as { ok?: unknown; items?: unknown };
+  if (payload.ok !== true || !Array.isArray(payload.items)) {
+    throw new SinkRequestError("Réponse du flux Facebook invalide.", response.status);
+  }
+  const now = Date.now();
+  const recentWindowMs = 15 * 60_000;
+  return [...new Set(payload.items.flatMap((candidate): string[] => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const item = candidate as Record<string, unknown>;
+    const id = typeof item.id === "string" ? item.id : "";
+    const firstSeenAt = typeof item.firstSeenAt === "string" ? Date.parse(item.firstSeenAt) : Number.NaN;
+    if (!/^facebook:\d{6,20}:[A-Za-z0-9._:-]{3,160}$/u.test(id)) return [];
+    if (!Number.isFinite(firstSeenAt) || firstSeenAt > now + 60_000 || now - firstSeenAt > recentWindowMs) return [];
+    return [id];
+  }))];
+}
+
 export async function postSocialPublications(
   payload: { sourceId: string; scannedAt: string; successful?: boolean; items: SocialPublicationInput[] },
   config: SinkConfig,
