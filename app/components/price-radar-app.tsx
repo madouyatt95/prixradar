@@ -2510,6 +2510,9 @@ function SocialFeedView({
   const configuredFacebookSources = facebookSources.filter((source) => source.enabled);
   const activeFacebookSources = configuredFacebookSources.filter((source) => source.status === "live");
   const liveFacebook = activeFacebookSources.length;
+  const facebookUnavailable = facebookSources.length > 0
+    && configuredFacebookSources.length === 0
+    && facebookSources.every((source) => source.status === "blocked");
   const facebookCadence = liveFacebook > 0
     ? Math.min(...activeFacebookSources.map((source) => source.cadenceMinutes))
     : null;
@@ -2519,9 +2522,9 @@ function SocialFeedView({
         eyebrow="Publications bons plans"
         title="Vos sources, au même endroit"
         description="PrixRadar relève les nouvelles publications publiques et vous renvoie toujours vers le post original. Elles sont affichées telles quelles, sans être présentées comme des prix confirmés."
-        action={<button type="button" className={`social-notify-button ${notificationsEnabled ? "is-on" : ""}`} onClick={onToggleNotifications}>
+        action={<button type="button" className={`social-notify-button ${notificationsEnabled ? "is-on" : ""}`} onClick={onToggleNotifications} disabled={facebookUnavailable}>
           <span aria-hidden="true">{notificationsEnabled ? "●" : "○"}</span>
-          {notificationsEnabled ? "Notifications activées" : "Me prévenir"}
+          {facebookUnavailable ? "Relève suspendue" : notificationsEnabled ? "Notifications activées" : "Me prévenir"}
         </button>}
       />
 
@@ -2536,10 +2539,11 @@ function SocialFeedView({
           const live = source.enabled && source.status === "live";
           const savedForLater = source.platform === "facebook" && !source.enabled;
           const waiting = source.status === "awaiting_access";
+          const blocked = source.status === "blocked";
           return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
             <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
-            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Relève momentanément indisponible" : "Première relève en attente"}</small></span>
-            <i>{live ? "Actif" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière relève ${relativeTime(source.lastSuccessAt)}` : blocked ? "Facebook bloque la relève automatique" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Relève momentanément indisponible" : "Première relève en attente"}</small></span>
+            <i>{live ? "Actif" : blocked ? "Suspendu" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
           </a>;
         })}
       </section>
@@ -2570,7 +2574,7 @@ function SocialFeedView({
             </footer>
           </article>)}
         </div>
-      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : liveFacebook > 0 ? "Aucune nouvelle publication" : "Première relève Facebook en attente"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Deux groupes sont configurés. Les nouvelles publications apparaîtront après le prochain passage automatique."}</p></div>}
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Relève Facebook suspendue" : liveFacebook > 0 ? "Aucune nouvelle publication" : "Première relève Facebook en attente"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook bloque actuellement la relève automatique. Vos groupes restent enregistrés sans passage payant inutile." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Deux groupes sont configurés. Les nouvelles publications apparaîtront après le prochain passage automatique."}</p></div>}
     </section>
   );
 }

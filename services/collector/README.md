@@ -153,21 +153,16 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-Le mode `social` utilise exclusivement le collecteur Playwright intégré à
-`yatta/prixradar` : aucun Actor tiers du Store n’est appelé. Il relève toutes
-les quinze minutes, de 7 h 30 à 15 h (Europe/Paris), les nouvelles publications
-visibles de deux groupes Facebook publics. Le navigateur respecte `robots.txt`,
-utilise le proxy résidentiel Apify en France lorsque l’Actor tourne sur la
-plateforme et bloque les images, polices, médias et feuilles de style afin de
-limiter le trafic. Il demande uniquement les posts publiés depuis la dernière
-relève réussie, déduplique avant notification et limite le premier rattrapage à
-dix minutes. Une publication conserve son auteur, son heure, son lien original
-et son éventuel lien marchand, mais reste explicitement séparée d’une alerte de
-prix vérifiée. Cette relève ne consomme aucun jeton Keepa.
+Le mode `social` contient un collecteur Playwright interne et n’appelle aucun
+Actor tiers du Store. Il respecte `robots.txt`, qui interdit actuellement la
+relève directe des groupes Facebook configurés. Le forfait Creator interdit en
+outre l’Actor public Facebook maintenu par Apify. Les programmations Facebook
+sont donc désactivées : les quatre groupes restent enregistrés, sans passage
+payant inutile, jusqu’à l’arrivée d’une voie autorisée et testée. Cette suspension
+ne consomme aucun jeton Keepa.
 
-Deux autres groupes restent enregistrés mais désactivés pour une activation
-ultérieure. La PWA réserve 0,02 $ par passage, affine cette estimation d’après la
-durée du collecteur et suspend les nouveaux appels avant le plafond mensuel
+La PWA conserve un plafond mensuel pour une éventuelle reprise et bloque les
+nouveaux appels avant ce plafond
 `SOCIAL_MONTHLY_BUDGET_CENTS` (29 $ par défaut). La source X Dealabs est préparée
 séparément et reste désactivée tant qu’un accès API X officiel n’est pas
 configuré.
