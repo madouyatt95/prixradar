@@ -44,11 +44,11 @@
     "mode": {
       "title": "Mode",
       "type": "string",
-      "description": "Choisit entre découverte, vérification, parcours complet, publications sociales, résumé personnel ou test local sans ingestion.",
+      "description": "Choisit entre découverte, vérification, parcours complet, collecte sociale historique, envoi des publications relayées, résumé personnel ou test local sans ingestion.",
       "editor": "select",
       "default": "full",
-      "enum": ["discover", "verify", "full", "social", "digest", "fixture"],
-      "enumTitles": ["Découverte seule", "Vérification", "Complet", "Publications sociales", "Résumé quotidien", "Fixture sans notification"]
+      "enum": ["discover", "verify", "full", "social", "social-dispatch", "digest", "fixture"],
+      "enumTitles": ["Découverte seule", "Vérification", "Complet", "Collecte sociale historique", "Notifier les publications relayées", "Résumé quotidien", "Fixture sans notification"]
     },
     "notify": {
       "title": "Autoriser les notifications",
