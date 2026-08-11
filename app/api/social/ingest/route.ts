@@ -2,6 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { socialPublications, socialSources } from "@/db/schema";
+import { runtimeEnv as env } from "@/lib/runtime-env";
 import { authenticateSocialCollector } from "../server-auth";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_ITEMS = 40;
 const RECENT_NOTIFICATION_MS = 15 * 60_000;
+const SOCIAL_DISPATCH_ACTOR_ID = "RMEtDZ7FHln6nd5nO";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -99,6 +101,27 @@ function parseItems(value: unknown, source: typeof socialSources.$inferSelect, s
   return [...unique.values()];
 }
 
+async function startSocialDispatch(items: ParsedPublication[]) {
+  const now = Date.now();
+  if (!items.some((item) => now - Date.parse(item.publishedAt) <= RECENT_NOTIFICATION_MS)) {
+    return { requested: false, started: false };
+  }
+  const binding = (env as unknown as { APIFY_TOKEN?: unknown }).APIFY_TOKEN;
+  const token = typeof binding === "string" ? binding : process.env.APIFY_TOKEN;
+  if (typeof token !== "string" || token.length < 24) throw new Error("APIFY_TOKEN_MISSING");
+  const response = await fetch(`https://api.apify.com/v2/acts/${SOCIAL_DISPATCH_ACTOR_ID}/runs?waitForFinish=0`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode: "social-dispatch", notify: true }),
+  });
+  if (!response.ok) throw new Error(`APIFY_DISPATCH_${response.status}`);
+  return { requested: true, started: true };
+}
+
 export async function POST(request: Request) {
   if (!(await authenticateSocialCollector(request))) return json({ ok: false, code: "UNAUTHORIZED" }, 401);
   const declared = Number(request.headers.get("content-length") ?? "0");
@@ -161,7 +184,15 @@ export async function POST(request: Request) {
       sourceId: source.id,
       notificationEligible: now - Date.parse(item.publishedAt) <= RECENT_NOTIFICATION_MS,
     }));
-    return json({ ok: true, accepted: items.length, newItems }, 202);
+    let notificationDispatch: { requested: boolean; started: boolean };
+    try {
+      notificationDispatch = await startSocialDispatch(items);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "APIFY_DISPATCH_FAILED";
+      console.error(JSON.stringify({ event: "social_dispatch_failed", sourceId, error: message.slice(0, 80) }));
+      return json({ ok: false, code: "SOCIAL_DISPATCH_FAILED", accepted: items.length, newItems }, 502);
+    }
+    return json({ ok: true, accepted: items.length, newItems, notificationDispatch }, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (/invalide|obligatoire|période|liste/u.test(message)) return json({ ok: false, code: "INVALID_PUBLICATION", error: message }, 422);
