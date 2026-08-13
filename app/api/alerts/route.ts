@@ -380,7 +380,7 @@ export async function GET(request: Request) {
     minScore = boundedInteger(
       url.searchParams.get("minScore"),
       "minScore",
-      view === "single_check" ? 0 : 45,
+      view === "single_check" ? 0 : 35,
       0,
       100,
     );
