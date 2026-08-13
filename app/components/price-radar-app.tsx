@@ -2505,7 +2505,7 @@ function SocialFeedView({
       <PageHeading
         eyebrow="Publications bons plans"
         title="Vos sources, au même endroit"
-        description="PrixRadar vérifie automatiquement les deux groupes publics toutes les 15 minutes entre 7 h 30 et 15 h. Le relais Gmail reste actif en secours ; Facebook peut néanmoins limiter temporairement l’accès public."
+        description="PrixRadar affiche les notifications officielles que Facebook envoie réellement par e-mail pour vos deux groupes suivis. Facebook ne fournit plus d’accès automatique complet aux groupes tiers : cette source reste complémentaire."
         action={<button type="button" className={`social-notify-button ${notificationsEnabled ? "is-on" : ""}`} onClick={onToggleNotifications} disabled={facebookUnavailable}>
           <span aria-hidden="true">{notificationsEnabled ? "●" : "○"}</span>
           {facebookUnavailable ? "Relève suspendue" : notificationsEnabled ? "Notifications activées" : "Me prévenir"}
@@ -2514,7 +2514,7 @@ function SocialFeedView({
 
       <div className="social-summary">
         <div><strong>{configuredFacebookSources.length}/2</strong><span>groupes Facebook suivis</span></div>
-        <div><strong>{facebookCadence ? "15 min" : "Pause"}</strong><span>{facebookCadence ? "entre deux passages automatiques" : "recherche non activée"}</span></div>
+        <div><strong>{facebookCadence ? "1 min" : "Pause"}</strong><span>{facebookCadence ? "entre deux lectures de la boîte e-mail" : "réception non activée"}</span></div>
         <div><strong>7 h 30–15 h</strong><span>plage de réception quotidienne</span></div>
       </div>
 
@@ -2527,7 +2527,7 @@ function SocialFeedView({
           const ready = source.enabled && source.status === "ready";
           return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
             <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
-            <span><strong>{source.name}</strong><small>{live ? `Dernière publication reçue ${relativeTime(source.lastSuccessAt)}` : ready ? "Passage automatique prêt · e-mail en secours" : blocked ? "Facebook bloque la relève automatique" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Réception momentanément indisponible" : "Premier passage en attente"}</small></span>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière publication reçue ${relativeTime(source.lastSuccessAt)}` : ready ? "Notifications e-mail suivies · couverture partielle" : blocked ? "Facebook n’a envoyé aucune notification exploitable" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Réception momentanément indisponible" : "Première notification en attente"}</small></span>
             <i>{live ? "Actif" : ready ? "Prêt" : blocked ? "Suspendu" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
           </a>;
         })}
@@ -2559,7 +2559,7 @@ function SocialFeedView({
             </footer>
           </article>)}
         </div>
-      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Réception Facebook suspendue" : liveFacebook > 0 ? "Aucune nouvelle publication reçue" : "En attente du premier passage automatique"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook bloque actuellement la relève automatique. Vos groupes restent enregistrés sans passage payant inutile." : liveFacebook > 0 ? "Le prochain passage vérifiera les groupes publics ; le relais Gmail complète la couverture lorsqu’un e-mail arrive." : "PrixRadar vérifiera les deux groupes publics toutes les 15 minutes entre 7 h 30 et 15 h, puis affichera ici uniquement les nouvelles publications."}</p></div>}
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Aucune notification Facebook exploitable" : liveFacebook > 0 ? "Aucune nouvelle publication reçue" : "En attente du premier e-mail Facebook"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook ne donne plus d’accès automatique complet aux groupes tiers. PrixRadar relève uniquement les e-mails officiels reçus, sans passage Apify inutile." : liveFacebook > 0 ? "La boîte dédiée est relue chaque minute entre 7 h 30 et 15 h ; seules les notifications réellement envoyées par Facebook peuvent apparaître." : "Activez « Toutes les publications » dans Facebook. Dès qu’un e-mail officiel arrive entre 7 h 30 et 15 h, PrixRadar le relève en moins de quelques minutes."}</p></div>}
     </section>
   );
 }
