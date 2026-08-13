@@ -2,7 +2,7 @@ import { desc, eq, gte, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { socialCollectionRuns, socialPublications, socialSources } from "@/db/schema";
-import { currentMonthStart, socialMonthlyBudgetMicros } from "./server-auth";
+import { authenticateSocialCollector, currentMonthStart, socialMonthlyBudgetMicros } from "./server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +13,23 @@ function boundedLimit(value: string | null) {
   return parsed >= 1 && parsed <= 60 ? parsed : null;
 }
 
+function boundedOffset(value: string | null) {
+  if (value === null) return 0;
+  if (!/^\d{1,5}$/u.test(value)) return null;
+  const parsed = Number(value);
+  return parsed >= 0 && parsed <= 20_000 ? parsed : null;
+}
+
 export async function GET(request: Request) {
+  const privateRequest = request.headers.has("authorization");
+  if (privateRequest && !(await authenticateSocialCollector(request))) {
+    return Response.json({ ok: false, code: "UNAUTHORIZED" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+  }
   const search = new URL(request.url).searchParams;
   const limit = boundedLimit(search.get("limit"));
+  const offset = boundedOffset(search.get("offset"));
   const platform = search.get("platform")?.trim().toLowerCase() ?? "";
-  if (limit === null || (platform !== "" && platform !== "facebook" && platform !== "x")) {
+  if (limit === null || offset === null || (platform !== "" && platform !== "facebook" && platform !== "x")) {
     return Response.json({ ok: false, error: "Filtre invalide." }, { status: 400 });
   }
 
@@ -46,7 +58,8 @@ export async function GET(request: Request) {
         .innerJoin(socialSources, eq(socialSources.id, socialPublications.sourceId))
         .where(sourceFilter)
         .orderBy(desc(socialPublications.publishedAt), desc(socialPublications.firstSeenAt))
-        .limit(limit),
+        .limit(limit)
+        .offset(offset),
       database.select({
         micros: sql<number>`coalesce(sum(${socialCollectionRuns.estimatedCostMicros}), 0)`,
       }).from(socialCollectionRuns).where(gte(socialCollectionRuns.startedAt, currentMonthStart())),
@@ -77,7 +90,7 @@ export async function GET(request: Request) {
         remainingMicros: Math.max(0, limitMicros - usedMicros),
       },
     }, {
-      headers: { "Cache-Control": "public, max-age=20, stale-while-revalidate=60" },
+      headers: { "Cache-Control": privateRequest ? "no-store" : "public, max-age=20, stale-while-revalidate=60" },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
