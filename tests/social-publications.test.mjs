@@ -37,7 +37,7 @@ test("l’interface sépare clairement publications sociales et alertes de prix"
   assert.match(interfaceSource, /Publication non vérifiée par PrixRadar/u);
   assert.match(interfaceSource, /plage de réception quotidienne/u);
   assert.match(interfaceSource, /label: "Flux"/u);
-  assert.match(interfaceSource, /toutes les 15 minutes entre 7 h 30 et 15 h/ui);
+  assert.match(interfaceSource, /relue chaque minute entre 7 h 30 et 15 h/ui);
   assert.match(serviceWorker, /payload\.tier === "social"/u);
   assert.match(actor, /collectFacebookSocialSources/u);
   assert.doesNotMatch(actor, /collectOfficialFacebookSources/u);

@@ -54,7 +54,7 @@ test("le lecteur accepte seulement Facebook et les deux groupes autorisés", () 
 
   const delayedWithoutCanonicalPostLink = parseFacebookEmailContent({
     from: "notification@facebookmail.com",
-    subject: "Lucie a publié dans Bons plans courses et reductions - Melina",
+    subject: "Lucie a publié dans Bons plans courses et réductions · Mélina",
     text: "Nouvelle publication à découvrir dans le groupe",
     html: '<a href="https://www.facebook.com/n/?notif_t=group_activity">Voir la publication</a>',
     date: new Date("2026-08-11T04:30:00.000Z"),
@@ -62,6 +62,22 @@ test("le lecteur accepte seulement Facebook et les deux groupes autorisés", () 
   assert.equal(delayedWithoutCanonicalPostLink?.sourceId, "facebook:584379244259839");
   assert.match(delayedWithoutCanonicalPostLink?.externalId ?? "", /^mail-[a-f0-9]{8}$/u);
   assert.equal(delayedWithoutCanonicalPostLink?.publicationUrl, "https://www.facebook.com/groups/584379244259839/");
+
+  for (const subject of [
+    "Jean a commenté votre publication dans Bons plans courses et réductions · Mélina",
+    "Lucie a réagi à votre publication dans SARAH - Les Addicts Des Bons Plans",
+    "Paul a publié un commentaire dans SARAH - Les Addicts Des Bons Plans",
+    "Paul replied to a post in SARAH - Les Addicts Des Bons Plans",
+  ]) {
+    const interaction = parseFacebookEmailContent({
+      from: "notification@facebookmail.com",
+      subject,
+      text: "Une personne a interagi avec le post.",
+      html: '<a href="https://www.facebook.com/groups/584379244259839/posts/123456789/">Voir</a>',
+      date: new Date("2026-08-11T08:00:00.000Z"),
+    }, now);
+    assert.equal(interaction, null, subject);
+  }
 });
 
 test("la déduplication Gmail bloque le retraitement du même UID", async () => {
@@ -86,16 +102,23 @@ test("la déduplication Gmail bloque le retraitement du même UID", async () => 
 });
 
 test("Cloudflare relève Gmail chaque minute sans exposer de secret", async () => {
-  const [worker, config, route, example] = await Promise.all([
+  const [worker, config, route, pushRoute, actor, example] = await Promise.all([
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/social/ingest/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/push/social/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../services/collector/src/actor.ts", import.meta.url), "utf8"),
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
   assert.match(worker, /pollFacebookGmail/u);
   assert.match(worker, /isFacebookRelayWindow\(scheduledAt\)/u);
   assert.match(config, /crons: \["\* \* \* \* \*"\]/u);
-  assert.match(route, /startSocialDispatch\(newPublications\)/u);
+  assert.match(route, /startSocialDispatch\(database, newPublications\)/u);
+  assert.match(route, /RECENT_NOTIFICATION_MS = 6 \* 60 \* 60_000/u);
+  assert.doesNotMatch(route, /startSocialDispatch\(items\)/u);
+  assert.match(pushRoute, /eq\(socialNotificationDeliveries\.status, "failed"\)/u);
+  const socialCollectionBranch = actor.slice(actor.indexOf('if (mode === "social")'), actor.indexOf('if (mode === "digest")'));
+  assert.doesNotMatch(socialCollectionBranch, /sendSocialPublicationPush\(/u);
   assert.match(example, /FACEBOOK_GMAIL_APP_PASSWORD=\n/u);
   assert.doesNotMatch(worker, /prixradar\d+@gmail\.com/u);
   assert.doesNotMatch(worker, /FACEBOOK_GMAIL_APP_PASSWORD\s*[:=]\s*["'][^"']+/u);
