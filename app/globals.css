@@ -1877,6 +1877,12 @@ a {
   font-weight: 650;
 }
 
+.source-identity .source-result-note {
+  max-width: 520px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .source-identity h3 {
   font-size: 12px;
 }
