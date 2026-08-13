@@ -89,6 +89,22 @@ function normalizeText(value: string) {
   return value.replace(/\s+/gu, " ").trim();
 }
 
+function normalizeGroupIdentity(value: string) {
+  return normalizeText(value.normalize("NFKD").replace(/\p{M}+/gu, ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
+}
+
+function isNewPublicationNotification(subject: string) {
+  const normalized = normalizeGroupIdentity(repeatedlyDecode(subject));
+  if (!normalized) return false;
+  if (/\b(?:commentaire|commentaires|reaction|reactions|(?:a|ont) (?:commente|repondu|reagi|aime|mentionne)|commented|replied|reacted|liked|mentioned|new comment)\b/iu.test(normalized)) {
+    return false;
+  }
+  return /\b(?:(?:a|ont) (?:publie|partage)(?: une publication)?|(?:a|ont) ajoute une (?:nouvelle )?publication|nouvelle publication|nouveau(?:x)? posts?|new posts?|posted in|posted to|shared a post)\b/iu.test(normalized);
+}
+
 function fallbackExternalId(value: string) {
   let hash = 2_166_136_261;
   for (const character of value) {
@@ -99,9 +115,9 @@ function fallbackExternalId(value: string) {
 }
 
 function activeGroupFromContent(decodedContent: string) {
-  const normalized = decodedContent.toLowerCase();
+  const normalized = normalizeGroupIdentity(decodedContent);
   return Object.entries(ACTIVE_FACEBOOK_GROUPS).find(([groupId, name]) => (
-    normalized.includes(groupId) || normalized.includes(name.toLowerCase())
+    normalized.includes(groupId) || normalized.includes(normalizeGroupIdentity(name))
   ))?.[0] ?? null;
 }
 
@@ -178,9 +194,9 @@ function externalUrl(decodedContent: string) {
 }
 
 export function mentionsActiveFacebookGroup(content: string) {
-  const decoded = repeatedlyDecode(content).toLowerCase();
+  const decoded = normalizeGroupIdentity(repeatedlyDecode(content));
   return Object.entries(ACTIVE_FACEBOOK_GROUPS).some(([groupId, name]) => (
-    decoded.includes(groupId) || decoded.includes(name.toLowerCase())
+    decoded.includes(groupId) || decoded.includes(normalizeGroupIdentity(name))
   ));
 }
 
@@ -189,6 +205,7 @@ export function parseFacebookEmailContent(
   now = new Date(),
 ): FacebookEmailPublication | null {
   if (!trustedFacebookSender(input.from)) return null;
+  if (!isNewPublicationNotification(input.subject)) return null;
   const messageTime = input.date.getTime();
   const age = now.getTime() - messageTime;
   if (!Number.isFinite(messageTime) || age < -60_000 || age > FACEBOOK_EMAIL_MAX_AGE_MS) return null;
