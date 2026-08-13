@@ -67,6 +67,7 @@ const CART_PROBE_STATUSES = new Set(["confirmed", "product_page", "blocked", "un
 const FULFILLMENT_TYPES = new Set(["direct", "platform", "merchant", "unknown"]);
 const VERIFICATION_SCOPES = new Set(["product_page", "category_listing"]);
 const REFERENCE_PRICE_SOURCES = new Set(["merchant_page", "keepa_average", "keepa_list", "unknown"]);
+const JD_LISTING_WATCH_MIN_SCORE = 35;
 
 type Source = ActiveSourceId;
 type UnknownRecord = Record<string, unknown>;
@@ -885,7 +886,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     && publicDealPolicyEligible
     && identifiedSeller
     && parsed.sellerTrusted
-    && evaluation.score >= 45
+    && evaluation.score >= JD_LISTING_WATCH_MIN_SCORE
     && evaluation.discountPercent >= 70
     && evaluation.checks.liveSource
     && evaluation.checks.materialDiscount
