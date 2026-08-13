@@ -79,6 +79,14 @@ type RemoteEanScan = {
 type ActorCoverageTarget = Omit<CoverageTarget, "sourceConfigurationId"> & { sourceConfigurationId: string | null };
 type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: RemoteDiscoverySegment[]; rechecks: RemoteRecheck[]; priorityTasks: RemotePriority[]; eanScans: RemoteEanScan[] };
 
+export function shouldIncludeRemoteTasks(source: RetailSource | "all", fixture: boolean): boolean {
+  return !fixture && source !== "jd_sports";
+}
+
+export function shouldPersistFrontier(source: RetailSource): boolean {
+  return source !== "jd_sports";
+}
+
 function amazonExcludedFamilies(value: unknown): AmazonExcludedFamily[] {
   if (!Array.isArray(value)) return [...DEFAULT_AMAZON_EXCLUDED_FAMILIES];
   const allowed = new Set<AmazonExcludedFamily>(["books", "music", "media", "wall_art"]);
@@ -459,7 +467,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       || input.useRemoteDiscovery === true
       || input.processEanScans === true;
     const plan = usesRemotePlan
-      ? await remotePlan(config, { source, includeEanScans: input.processEanScans === true, includeTasks: !fixture })
+      ? await remotePlan(config, {
+          source,
+          includeEanScans: input.processEanScans === true,
+          includeTasks: shouldIncludeRemoteTasks(source, fixture),
+        })
       : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
     const rawCoverageTargets: ActorCoverageTarget[] = configuredUrls.length > 0
       ? configuredUrls.map((url) => ({ url, sourceConfigurationId: null, productLimit: null }))
@@ -674,7 +686,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           if (mode === "discover") {
             const result = await scanSourceUrl(url, coverageScanOptions);
             await Actor.pushData({ dataKind: "discovery", fixture, ...result });
-            if (!fixture && config.priceRadarBaseUrl && config.ingestSecret) {
+            if (!fixture && shouldPersistFrontier(connector.source) && config.priceRadarBaseUrl && config.ingestSecret) {
               await postFrontierItems(result.discoveredUrls.map((productUrl) => ({
                 url: productUrl,
                 discoveredFrom: result.loadedUrl,
@@ -699,7 +711,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             };
           }
           const initialScan = mode === "full" ? await scanSourceUrl(url, coverageScanOptions) : null;
-          if (initialScan && !fixture && config.priceRadarBaseUrl && config.ingestSecret && initialScan.discoveredUrls.length > 0) {
+          if (initialScan && !fixture && shouldPersistFrontier(connector.source) && config.priceRadarBaseUrl && config.ingestSecret && initialScan.discoveredUrls.length > 0) {
             await postFrontierItems(initialScan.discoveredUrls.map((productUrl) => ({
               url: productUrl,
               discoveredFrom: initialScan.loadedUrl,
