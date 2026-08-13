@@ -1,7 +1,7 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { socialPublications, socialSources } from "@/db/schema";
+import { socialDispatchLeases, socialPublications, socialSources } from "@/db/schema";
 import { runtimeEnv as env } from "@/lib/runtime-env";
 import { authenticateSocialCollector } from "../server-auth";
 
@@ -9,8 +9,13 @@ export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_ITEMS = 40;
-const RECENT_NOTIFICATION_MS = 15 * 60_000;
+// Facebook may batch emails or send them before the 07:30 relay window. Keep
+// the same six-hour recovery horizon as the Gmail readers so these official
+// notifications can still be delivered when polling resumes.
+const RECENT_NOTIFICATION_MS = 6 * 60 * 60_000;
 const SOCIAL_DISPATCH_ACTOR_ID = "RMEtDZ7FHln6nd5nO";
+const SOCIAL_DISPATCH_LEASE_ID = "facebook-push";
+const SOCIAL_DISPATCH_LEASE_MS = 60_000;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -101,25 +106,48 @@ function parseItems(value: unknown, source: typeof socialSources.$inferSelect, s
   return [...unique.values()];
 }
 
-async function startSocialDispatch(items: ParsedPublication[]) {
+async function startSocialDispatch(database: ReturnType<typeof getDb>, items: ParsedPublication[]) {
   const now = Date.now();
   if (!items.some((item) => now - Date.parse(item.publishedAt) <= RECENT_NOTIFICATION_MS)) {
     return { requested: false, started: false };
   }
+  const attemptedAt = new Date(now).toISOString();
+  const attemptId = crypto.randomUUID();
+  const leaseExpiresAt = new Date(now + SOCIAL_DISPATCH_LEASE_MS).toISOString();
+  const [lease] = await database.insert(socialDispatchLeases).values({
+    id: SOCIAL_DISPATCH_LEASE_ID,
+    attemptId,
+    leaseExpiresAt,
+    updatedAt: attemptedAt,
+  }).onConflictDoUpdate({
+    target: socialDispatchLeases.id,
+    set: { attemptId, leaseExpiresAt, updatedAt: attemptedAt },
+    setWhere: lte(socialDispatchLeases.leaseExpiresAt, attemptedAt),
+  }).returning({ attemptId: socialDispatchLeases.attemptId });
+  if (lease?.attemptId !== attemptId) return { requested: true, started: false };
+
   const binding = (env as unknown as { APIFY_TOKEN?: unknown }).APIFY_TOKEN;
   const token = typeof binding === "string" ? binding : process.env.APIFY_TOKEN;
-  if (typeof token !== "string" || token.length < 24) throw new Error("APIFY_TOKEN_MISSING");
-  const response = await fetch(`https://api.apify.com/v2/acts/${SOCIAL_DISPATCH_ACTOR_ID}/runs?waitForFinish=0`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ mode: "social-dispatch", notify: true }),
-  });
-  if (!response.ok) throw new Error(`APIFY_DISPATCH_${response.status}`);
-  return { requested: true, started: true };
+  try {
+    if (typeof token !== "string" || token.length < 24) throw new Error("APIFY_TOKEN_MISSING");
+    const response = await fetch(`https://api.apify.com/v2/acts/${SOCIAL_DISPATCH_ACTOR_ID}/runs?waitForFinish=0`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mode: "social-dispatch", notify: true }),
+    });
+    if (!response.ok) throw new Error(`APIFY_DISPATCH_${response.status}`);
+    return { requested: true, started: true };
+  } catch (error) {
+    await database.delete(socialDispatchLeases).where(and(
+      eq(socialDispatchLeases.id, SOCIAL_DISPATCH_LEASE_ID),
+      eq(socialDispatchLeases.attemptId, attemptId),
+    )).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function POST(request: Request) {
@@ -149,6 +177,10 @@ export async function POST(request: Request) {
     const scannedAtMs = Date.parse(typeof body.scannedAt === "string" ? body.scannedAt : "");
     const scannedAt = Number.isFinite(scannedAtMs) ? new Date(scannedAtMs).toISOString() : new Date().toISOString();
     const successful = body.successful === true;
+    if (body.notify !== undefined && typeof body.notify !== "boolean") {
+      return json({ ok: false, code: "INVALID_NOTIFICATION_OPTION" }, 400);
+    }
+    const notify = body.notify !== false;
     const items = parseItems(body.items, source, scannedAt);
     const existing = items.length === 0 ? [] : await database.select({ id: socialPublications.id })
       .from(socialPublications).where(inArray(socialPublications.id, items.map((item) => item.id)));
@@ -171,14 +203,6 @@ export async function POST(request: Request) {
       const [first, ...rest] = statements;
       if (first) await database.batch([first, ...rest]);
     }
-    await database.update(socialSources).set({
-      status: successful || items.length > 0 ? "live" : "degraded",
-      lastAttemptAt: scannedAt,
-      ...(successful || items.length > 0
-        ? { lastSuccessAt: scannedAt, lastErrorCode: null }
-        : { lastErrorCode: "NO_PUBLICATION_VISIBLE" }),
-      updatedAt: scannedAt,
-    }).where(eq(socialSources.id, source.id));
     const now = Date.now();
     const newItems = newPublications.map((item) => ({
       id: item.id,
@@ -187,12 +211,31 @@ export async function POST(request: Request) {
     }));
     let notificationDispatch: { requested: boolean; started: boolean };
     try {
-      notificationDispatch = await startSocialDispatch(newPublications);
+      // Only a genuinely new recent item may start an immediate Actor. A short
+      // D1 lease coalesces concurrent Gmail readers; the quarter-hour safety net
+      // catches any delivery missed after the insert.
+      notificationDispatch = notify
+        ? await startSocialDispatch(database, newPublications)
+        : { requested: false, started: false };
     } catch (error) {
       const message = error instanceof Error ? error.message : "APIFY_DISPATCH_FAILED";
+      await database.update(socialSources).set({
+        status: "degraded",
+        lastAttemptAt: scannedAt,
+        lastErrorCode: "SOCIAL_DISPATCH_FAILED",
+        updatedAt: scannedAt,
+      }).where(eq(socialSources.id, source.id));
       console.error(JSON.stringify({ event: "social_dispatch_failed", sourceId, error: message.slice(0, 80) }));
       return json({ ok: false, code: "SOCIAL_DISPATCH_FAILED", accepted: items.length, newItems }, 502);
     }
+    await database.update(socialSources).set({
+      status: successful || items.length > 0 ? "live" : "degraded",
+      lastAttemptAt: scannedAt,
+      ...(successful || items.length > 0
+        ? { lastSuccessAt: scannedAt, lastErrorCode: null }
+        : { lastErrorCode: "NO_PUBLICATION_VISIBLE" }),
+      updatedAt: scannedAt,
+    }).where(eq(socialSources.id, source.id));
     return json({ ok: true, accepted: items.length, newItems, notificationDispatch }, 202);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
