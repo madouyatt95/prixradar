@@ -573,7 +573,11 @@ export async function GET(request: Request) {
         history.get(row.id),
         row.canonicalProductId ? comparisons.get(row.canonicalProductId) : undefined,
       ))
-      .filter((item) => view === "single_check" || item.priceInsight.classification !== "normal_price");
+      .filter((item) =>
+        view === "single_check"
+        || item.source === "jd_sports"
+        || item.priceInsight.classification !== "normal_price"
+      );
 
     return json(
       {
