@@ -153,26 +153,24 @@ Le plan d’automatisation est lisible sans compte ni clé :
 npm run plan
 ```
 
-La relève directe avec Playwright reste bloquée par `robots.txt` et le forfait
-Creator n’autorise pas l’Actor Facebook public du Store. PrixRadar passe donc par
-les notifications officielles « toutes les publications » envoyées par Facebook
-dans Gmail. Le relais dans `integrations/facebook-gmail-bridge/` vérifie la boîte
-toutes les cinq minutes entre 07:30 et 15:00, ingère seulement les deux groupes
-prioritaires et déclenche l’Actor personnel en mode `social-dispatch`. Cet Actor
-ne scrape pas Facebook : il livre uniquement les Push PWA déjà préparés par
-PrixRadar. Aucun cookie Facebook n’est copié et aucun jeton Keepa n’est consommé.
+Le forfait Creator est exploité par l’Actor personnel PrixRadar, sans Actor du
+Store : il relève les deux groupes publics actifs toutes les quinze minutes entre
+07:30 et 15:00. Il respecte `robots.txt`, ne copie aucun cookie Facebook et peut
+signaler une page bloquée plutôt que d’inventer une publication. Le relais Gmail
+dans `integrations/facebook-gmail-bridge/` reste un second canal : quand Facebook
+envoie effectivement une notification officielle, il l’ingère puis déclenche le
+mode `social-dispatch`. Aucun de ces deux canaux ne consomme de jeton Keepa.
 
-Les trois anciennes programmations Facebook restent désactivées sur Apify : le
-relais Gmail déclenche l’Actor à la demande, seulement après réception d’un e-mail
-récent. La source X Dealabs est préparée séparément et reste désactivée tant qu’un
-accès API X officiel n’est pas configuré.
+La source X Dealabs est préparée séparément et reste désactivée tant qu’un accès
+API X officiel n’est pas configuré.
 
 Il regroupe Amazon France dans un Actor toutes les 30 minutes et, lorsque
 `PRIXRADAR_RETAIL_URLS` est renseigné, les pages de départ françaises dans un
-Actor toutes les 30 minutes. Les trois anciennes programmations Facebook restent
-déclarées pour audit mais désactivées ; le relais Gmail démarre directement le
-mode `social-dispatch`. Après vérification du JSON produit, la seule commande qui
-écrit les programmations sur Apify est :
+Actor toutes les 30 minutes. Les trois programmations Facebook couvrent 07:30,
+07:45, chaque quart d’heure de 08:00 à 14:45, puis 15:00 en mode `social`. Le
+relais Gmail peut déclencher en complément le mode `social-dispatch`. Après
+vérification du JSON produit, la seule commande qui écrit les programmations sur
+Apify est :
 
 ```bash
 npm run provision

@@ -82,13 +82,12 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
     name,
     definition: {
       ...common,
-      isEnabled: false,
       name,
       title,
-      description: "Conservé sans exécution planifiée : le relais Gmail déclenche cet Actor personnel seulement lorsqu’un nouveau post arrive.",
+      description: "Relève les deux groupes Facebook publics actifs toutes les 15 minutes dans la plage 7 h 30–15 h ; Gmail reste un secours.",
       cronExpression,
       actions: [actorAction(actorId, {
-        mode: "social-dispatch",
+        mode: "social",
         notify: true,
         browserFallback: true,
       }, 1_024)],

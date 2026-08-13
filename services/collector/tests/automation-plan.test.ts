@@ -41,11 +41,11 @@ test("récupère la couverture distante et teste les connecteurs chaque jour", (
     ["prixradar-facebook-15h", "0 15 * * *"],
   ]);
   for (const socialSchedule of plan.slice(2, 5)) {
-    assert.equal(socialSchedule.definition.isEnabled, false);
+    assert.equal(socialSchedule.definition.isEnabled, true);
     const socialAction = socialSchedule.definition.actions?.[0];
     if (!socialAction || socialAction.type !== "RUN_ACTOR") assert.fail("Action sociale attendue");
     const socialInput = JSON.parse(socialAction.runInput?.body ?? "{}") as Record<string, unknown>;
-    assert.equal(socialInput.mode, "social-dispatch");
+    assert.equal(socialInput.mode, "social");
     assert.equal(socialInput.notify, true);
   }
   assert.equal(plan[5]?.definition.cronExpression, "17 6 * * *");
