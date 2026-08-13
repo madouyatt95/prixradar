@@ -246,7 +246,10 @@ export async function GET(request: Request) {
           eq(recheckRequests.status, "pending"),
         ));
     }
-    const inspectionLimit = requestedSource === "amazon" ? 5 : 10;
+    // JD category runs must spend their short Apify window on promotion pages.
+    // Old product-detail inspections can each consume a full HTTP timeout and
+    // previously prevented the category coverage from ever starting.
+    const inspectionLimit = requestedSource === "amazon" ? 5 : requestedSource === "jd_sports" ? 0 : 10;
     const uniqueInspections = [...new Map(pendingInspections.map((row) => [
       `${row.source}:${row.market}:${row.url}`,
       row,
