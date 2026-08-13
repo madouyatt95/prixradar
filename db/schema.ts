@@ -1111,7 +1111,9 @@ export const socialNotificationDeliveries = sqliteTable(
     ownerId: text("owner_id").notNull(),
     status: text("status").notNull().default("reserved"),
     dedupeKey: text("dedupe_key").notNull(),
+    attemptId: text("attempt_id").notNull().default(""),
     attemptedAt: text("attempted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    leaseExpiresAt: text("lease_expires_at"),
     sentAt: text("sent_at"),
     errorCode: text("error_code"),
   },
@@ -1119,8 +1121,20 @@ export const socialNotificationDeliveries = sqliteTable(
     uniqueIndex("social_notification_deliveries_dedupe_unique").on(table.dedupeKey),
     index("social_notification_deliveries_publication_idx").on(table.publicationId, table.attemptedAt),
     index("social_notification_deliveries_owner_idx").on(table.ownerId, table.attemptedAt),
+    index("social_notification_deliveries_status_lease_idx").on(table.status, table.leaseExpiresAt),
     check("social_notification_deliveries_status_allowed", sql`${table.status} IN ('reserved', 'sent', 'failed', 'suppressed')`),
   ],
+);
+
+export const socialDispatchLeases = sqliteTable(
+  "social_dispatch_leases",
+  {
+    id: text("id").primaryKey(),
+    attemptId: text("attempt_id").notNull(),
+    leaseExpiresAt: text("lease_expires_at").notNull(),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("social_dispatch_leases_expiry_idx").on(table.leaseExpiresAt)],
 );
 
 export const keepaCache = sqliteTable(
