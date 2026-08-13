@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
@@ -14,6 +14,8 @@ import { isQuietNow } from "../quiet-hours";
 export const dynamic = "force-dynamic";
 
 const GONE_CODES = new Set(["PUSH_404", "PUSH_410"]);
+const SOCIAL_DELIVERY_LEASE_MS = 15 * 60_000;
+const ATTEMPT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -25,6 +27,14 @@ function validPublicationId(value: string | null) {
 
 function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function deliveryLease(now = Date.now()) {
+  return {
+    attemptId: crypto.randomUUID(),
+    attemptedAt: new Date(now).toISOString(),
+    leaseExpiresAt: new Date(now + SOCIAL_DELIVERY_LEASE_MS).toISOString(),
+  };
 }
 
 async function body(request: Request) {
@@ -84,15 +94,50 @@ export async function GET(request: Request) {
     for (const subscription of subscriptions) {
       const dedupeKey = `${publication.id}:${subscription.id}:web_push`;
       const quiet = isQuietNow(subscription);
-      const [reservation] = await database.insert(socialNotificationDeliveries).values({
+      const initialLease = deliveryLease();
+      let [reservation] = await database.insert(socialNotificationDeliveries).values({
         publicationId: publication.id,
         subscriptionId: subscription.id,
         ownerId: subscription.ownerId,
         status: quiet ? "suppressed" : "reserved",
         dedupeKey,
+        attemptId: quiet ? "" : initialLease.attemptId,
+        attemptedAt: initialLease.attemptedAt,
+        leaseExpiresAt: quiet ? null : initialLease.leaseExpiresAt,
         errorCode: quiet ? "QUIET_HOURS" : null,
       }).onConflictDoNothing({ target: socialNotificationDeliveries.dedupeKey })
-        .returning({ id: socialNotificationDeliveries.id });
+        .returning({ id: socialNotificationDeliveries.id, attemptId: socialNotificationDeliveries.attemptId });
+      if (!reservation && !quiet) {
+        const retryLease = deliveryLease();
+        [reservation] = await database.update(socialNotificationDeliveries).set({
+          status: "reserved",
+          attemptId: retryLease.attemptId,
+          attemptedAt: retryLease.attemptedAt,
+          leaseExpiresAt: retryLease.leaseExpiresAt,
+          sentAt: null,
+          errorCode: null,
+        }).where(and(
+          eq(socialNotificationDeliveries.dedupeKey, dedupeKey),
+          eq(socialNotificationDeliveries.status, "failed"),
+        )).returning({ id: socialNotificationDeliveries.id, attemptId: socialNotificationDeliveries.attemptId });
+        if (!reservation) {
+          [reservation] = await database.update(socialNotificationDeliveries).set({
+            status: "reserved",
+            attemptId: retryLease.attemptId,
+            attemptedAt: retryLease.attemptedAt,
+            leaseExpiresAt: retryLease.leaseExpiresAt,
+            sentAt: null,
+            errorCode: null,
+          }).where(and(
+            eq(socialNotificationDeliveries.dedupeKey, dedupeKey),
+            eq(socialNotificationDeliveries.status, "reserved"),
+            or(
+              isNull(socialNotificationDeliveries.leaseExpiresAt),
+              lte(socialNotificationDeliveries.leaseExpiresAt, retryLease.attemptedAt),
+            ),
+          )).returning({ id: socialNotificationDeliveries.id, attemptId: socialNotificationDeliveries.attemptId });
+        }
+      }
       if (!reservation || quiet) continue;
       targets.push({
         id: subscription.id,
@@ -100,6 +145,7 @@ export async function GET(request: Request) {
         keys: { p256dh: subscription.p256dh, auth: subscription.auth },
         contentEncoding: subscription.contentEncoding,
         notificationId: reservation.id,
+        attemptId: reservation.attemptId,
         publicationId: publication.id,
         title: `${publication.platform === "facebook" ? "Facebook" : "X"} · ${publication.sourceName}`,
         body: publication.text.replace(/\s+/gu, " ").slice(0, 180),
@@ -121,7 +167,9 @@ export async function POST(request: Request) {
   const authentication = await authorizePushDelivery(request);
   if (!authentication.ok) return authentication.response;
   const value = await body(request);
-  if (!value || !Number.isSafeInteger(value.notificationId) || Number(value.notificationId) < 1 || (value.status !== "sent" && value.status !== "failed")) {
+  if (!value || !Number.isSafeInteger(value.notificationId) || Number(value.notificationId) < 1
+    || typeof value.attemptId !== "string" || !ATTEMPT_ID_PATTERN.test(value.attemptId)
+    || (value.status !== "sent" && value.status !== "failed")) {
     return serverJson({ ok: false, code: "invalid_completion" }, 400);
   }
   const errorCode = typeof value.errorCode === "string" && /^[A-Z0-9_]{3,80}$/u.test(value.errorCode) ? value.errorCode : null;
@@ -130,19 +178,18 @@ export async function POST(request: Request) {
   try {
     const database = getDb();
     const notificationId = Number(value.notificationId);
-    const [delivery] = await database.select({ subscriptionId: socialNotificationDeliveries.subscriptionId })
-      .from(socialNotificationDeliveries)
-      .where(and(
-        eq(socialNotificationDeliveries.id, notificationId),
-        eq(socialNotificationDeliveries.status, "reserved"),
-      )).limit(1);
-    if (!delivery) return serverJson({ ok: false, code: "notification_unavailable" }, 409);
     const now = new Date().toISOString();
-    await database.update(socialNotificationDeliveries).set({
+    const [delivery] = await database.update(socialNotificationDeliveries).set({
       status: value.status,
       sentAt: value.status === "sent" ? now : null,
       errorCode,
-    }).where(eq(socialNotificationDeliveries.id, notificationId));
+      leaseExpiresAt: null,
+    }).where(and(
+      eq(socialNotificationDeliveries.id, notificationId),
+      eq(socialNotificationDeliveries.status, "reserved"),
+      eq(socialNotificationDeliveries.attemptId, value.attemptId),
+    )).returning({ subscriptionId: socialNotificationDeliveries.subscriptionId });
+    if (!delivery) return serverJson({ ok: false, code: "notification_unavailable" }, 409);
     if (errorCode && GONE_CODES.has(errorCode)) {
       await database.update(pushSubscriptions).set({ enabled: false, updatedAt: now })
         .where(eq(pushSubscriptions.id, delivery.subscriptionId));
