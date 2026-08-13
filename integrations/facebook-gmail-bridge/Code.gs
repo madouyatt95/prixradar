@@ -9,7 +9,11 @@
 const PRIXRADAR_TIMEZONE = "Europe/Paris";
 const PRIXRADAR_PROCESSED_LABEL = "PrixRadar/Facebook traite";
 const PRIXRADAR_REVIEW_LABEL = "PrixRadar/Facebook a verifier";
-const PRIXRADAR_MAX_MESSAGE_AGE_MINUTES = 45;
+const PRIXRADAR_PROCESSED_MESSAGES_PROPERTY = "PRIXRADAR_FACEBOOK_MESSAGE_IDS";
+const PRIXRADAR_MAX_MESSAGE_AGE_MINUTES = 6 * 60;
+const PRIXRADAR_MAX_TRACKED_MESSAGES = 200;
+const PRIXRADAR_SEARCH_PAGE_SIZE = 100;
+const PRIXRADAR_INGEST_BATCH_SIZE = 40;
 const PRIXRADAR_ACTIVE_GROUPS = Object.freeze({
   "848306336465354": "SARAH - Les Addicts Des Bons Plans",
   "584379244259839": "Bons plans courses et reductions - Melina",
@@ -64,84 +68,157 @@ function relayFacebookEmails_(forceWindow) {
     return { ok: true, skipped: "outside_active_window" };
   }
 
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) {
+    return { ok: true, skipped: "relay_already_running" };
+  }
+
+  try {
+    return relayFacebookEmailsLocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function relayFacebookEmailsLocked_() {
   const config = readConfiguration_();
   const processedLabel = getOrCreateLabel_(PRIXRADAR_PROCESSED_LABEL);
   const reviewLabel = getOrCreateLabel_(PRIXRADAR_REVIEW_LABEL);
-  const query = "from:(facebookmail.com) newer_than:2d -label:\"" + PRIXRADAR_PROCESSED_LABEL + "\"";
-  const threads = GmailApp.search(query, 0, 50);
+  // A Gmail label applies to the whole conversation. It must not be excluded
+  // from the query: Facebook can append a new notification to an already
+  // labelled conversation. Message IDs provide the real idempotency boundary.
+  const query = "from:(facebookmail.com) newer_than:1d";
+  const processedMessages = readProcessedMessages_();
   const parsedBySource = {};
-  const relevantThreads = [];
+  let scannedThreads = 0;
+  let relevantThreads = 0;
   let ignoredThreads = 0;
   let reviewThreads = 0;
+  let searchStart = 0;
 
-  threads.forEach(function (thread) {
-    let relevant = false;
-    let needsReview = false;
+  while (true) {
+    const threads = GmailApp.search(query, searchStart, PRIXRADAR_SEARCH_PAGE_SIZE);
+    if (threads.length === 0) break;
+    scannedThreads += threads.length;
 
-    thread.getMessages().forEach(function (message) {
-      if (!isFacebookSender_(message.getFrom())) return;
-      const age = Date.now() - message.getDate().getTime();
-      if (age < -60 * 1000 || age > PRIXRADAR_MAX_MESSAGE_AGE_MINUTES * 60 * 1000) return;
+    threads.forEach(function (thread) {
+      let relevant = false;
+      let needsReview = false;
 
-      const subject = message.getSubject() || "";
-      const plainBody = message.getPlainBody() || "";
-      const htmlBody = message.getBody() || "";
-      const parsed = parseFacebookEmailContent_(subject, plainBody, htmlBody, message.getDate());
-      if (parsed) {
-        relevant = true;
-        if (!parsedBySource[parsed.sourceId]) parsedBySource[parsed.sourceId] = {};
-        parsedBySource[parsed.sourceId][parsed.externalId] = parsed;
-      } else if (mentionsActiveGroup_(subject + "\n" + plainBody + "\n" + htmlBody)) {
-        needsReview = true;
+      thread.getMessages().forEach(function (message) {
+        const messageId = String(message.getId() || "");
+        if (messageId && processedMessages[messageId]) return;
+        if (!isFacebookSender_(message.getFrom())) return;
+        const age = Date.now() - message.getDate().getTime();
+        if (age < -60 * 1000 || age > PRIXRADAR_MAX_MESSAGE_AGE_MINUTES * 60 * 1000) {
+          if (messageId) processedMessages[messageId] = Date.now();
+          return;
+        }
+
+        const subject = message.getSubject() || "";
+        const plainBody = message.getPlainBody() || "";
+        const htmlBody = message.getBody() || "";
+        const parsed = parseFacebookEmailContent_(subject, plainBody, htmlBody, message.getDate());
+        if (parsed) {
+          relevant = true;
+          if (!parsedBySource[parsed.sourceId]) parsedBySource[parsed.sourceId] = {};
+          if (!parsedBySource[parsed.sourceId][parsed.externalId]) {
+            parsedBySource[parsed.sourceId][parsed.externalId] = {
+              publication: parsed,
+              messageIds: {},
+              threads: [],
+            };
+          }
+          const pending = parsedBySource[parsed.sourceId][parsed.externalId];
+          if (messageId) pending.messageIds[messageId] = true;
+          if (pending.threads.indexOf(thread) < 0) pending.threads.push(thread);
+        } else if (mentionsActiveGroup_(subject + "\n" + plainBody + "\n" + htmlBody)) {
+          needsReview = true;
+        }
+        if (!parsed && messageId) processedMessages[messageId] = Date.now();
+      });
+
+      if (needsReview) {
+        thread.addLabel(reviewLabel);
+        reviewThreads += 1;
       }
+      if (relevant) {
+        relevantThreads += 1;
+        return;
+      }
+      if (!needsReview) {
+        ignoredThreads += 1;
+      }
+      thread.addLabel(processedLabel);
     });
 
-    if (relevant) {
-      relevantThreads.push(thread);
-      return;
-    }
-    if (needsReview) {
-      thread.addLabel(reviewLabel);
-      reviewThreads += 1;
-    } else {
-      ignoredThreads += 1;
-    }
-    thread.addLabel(processedLabel);
-  });
+    // Ignored/review receipts are independent from the network and can be
+    // checkpointed after every page. Relevant messages remain pending.
+    writeProcessedMessages_(processedMessages);
+    searchStart += threads.length;
+    if (threads.length < PRIXRADAR_SEARCH_PAGE_SIZE) break;
+  }
 
   let accepted = 0;
   let newItems = 0;
+  let notificationDispatchRequested = false;
+  let notificationDispatchStarted = false;
   const sourceIds = Object.keys(parsedBySource);
   sourceIds.forEach(function (sourceId) {
-    const items = Object.keys(parsedBySource[sourceId]).map(function (externalId) {
+    const pending = Object.keys(parsedBySource[sourceId]).map(function (externalId) {
       return parsedBySource[sourceId][externalId];
-    }).slice(0, 40);
-    const result = ingestPublications_(config, sourceId, items);
-    accepted += Number(result.accepted || 0);
-    newItems += Array.isArray(result.newItems) ? result.newItems.length : 0;
-  });
+    });
+    for (let offset = 0; offset < pending.length; offset += PRIXRADAR_INGEST_BATCH_SIZE) {
+      const batch = pending.slice(offset, offset + PRIXRADAR_INGEST_BATCH_SIZE);
+      const items = batch.map(function (entry) { return entry.publication; });
+      const result = ingestPublications_(config, sourceId, items);
+      const batchAccepted = Number(result.accepted || 0);
+      if (batchAccepted !== items.length) {
+        throw new Error("Ingestion PrixRadar partielle (" + batchAccepted + "/" + items.length + ").");
+      }
+      accepted += batchAccepted;
+      newItems += Array.isArray(result.newItems) ? result.newItems.length : 0;
+      notificationDispatchRequested = notificationDispatchRequested || Boolean(result.notificationDispatch && result.notificationDispatch.requested);
+      notificationDispatchStarted = notificationDispatchStarted || Boolean(result.notificationDispatch && result.notificationDispatch.started);
 
-  relevantThreads.forEach(function (thread) { thread.addLabel(processedLabel); });
+      batch.forEach(function (entry) {
+        Object.keys(entry.messageIds).forEach(function (messageId) {
+          processedMessages[messageId] = Date.now();
+        });
+      });
+      // Commit each successful batch before moving to another source. A later
+      // outage therefore retries only the messages that were not accepted.
+      writeProcessedMessages_(processedMessages);
+      batch.forEach(function (entry) {
+        entry.threads.forEach(function (thread) { thread.addLabel(processedLabel); });
+      });
+    }
+  });
 
   return {
     ok: true,
-    scannedThreads: threads.length,
-    relevantThreads: relevantThreads.length,
+    scannedThreads: scannedThreads,
+    relevantThreads: relevantThreads,
     ignoredThreads: ignoredThreads,
     reviewThreads: reviewThreads,
     accepted: accepted,
     newItems: newItems,
-    notificationDispatchRequested: accepted > 0,
+    notificationDispatchRequested: notificationDispatchRequested,
+    notificationDispatchStarted: notificationDispatchStarted,
   };
 }
 
 function parseFacebookEmailContent_(subject, plainBody, htmlBody, messageDate) {
+  if (!isNewPublicationNotification_(subject)) return null;
   const combined = repeatedlyDecode_(String(subject || "") + "\n" + String(plainBody || "") + "\n" + String(htmlBody || ""));
-  const publication = extractFacebookPublication_(combined);
-  if (!publication || !PRIXRADAR_ACTIVE_GROUPS[publication.groupId]) return null;
-
   const publishedAt = messageDate instanceof Date ? messageDate : new Date(messageDate);
   if (!Number.isFinite(publishedAt.getTime())) return null;
+  const publication = extractFacebookPublication_(
+    combined,
+    String(subject || "") + "|" + publishedAt.toISOString() + "|" + String(plainBody || "").slice(0, 500),
+  );
+  if (!publication || !PRIXRADAR_ACTIVE_GROUPS[publication.groupId]) return null;
+
   const author = extractAuthor_(String(subject || ""));
   const text = extractPostText_(String(subject || ""), String(plainBody || ""));
 
@@ -157,18 +234,59 @@ function parseFacebookEmailContent_(subject, plainBody, htmlBody, messageDate) {
   };
 }
 
-function extractFacebookPublication_(decodedContent) {
+function extractFacebookPublication_(decodedContent, fallbackSeed) {
   const normalized = decodeHtmlEntities_(decodedContent).replace(/\\\//g, "/");
   const absolute = /https?:\/\/(?:www\.|m\.)?facebook\.com\/groups\/(\d{6,20})\/(?:posts|permalink)\/([A-Za-z0-9._:-]{3,160})/i.exec(normalized);
   const relative = /(?:^|[\s"'=])(\/groups\/(\d{6,20})\/(?:posts|permalink)\/([A-Za-z0-9._:-]{3,160}))/i.exec(normalized);
-  const groupId = absolute ? absolute[1] : relative ? relative[2] : null;
-  const postId = absolute ? absolute[2] : relative ? relative[3] : null;
-  if (!groupId || !postId) return null;
+  const queryPost = /(?:story_fbid|fbid|multi_permalinks)=([A-Za-z0-9._:-]{3,160})/i.exec(normalized);
+  const groupId = absolute ? absolute[1] : relative ? relative[2] : activeGroupFromContent_(normalized);
+  const rawPostId = absolute ? absolute[2] : relative ? relative[3] : queryPost ? queryPost[1] : null;
+  if (!groupId || !PRIXRADAR_ACTIVE_GROUPS[groupId]) return null;
+  const postId = rawPostId ? rawPostId.replace(/[?&#/].*$/g, "") : fallbackExternalId_(fallbackSeed);
   return {
     groupId: groupId,
-    postId: postId.replace(/[?&#/].*$/g, ""),
-    url: "https://www.facebook.com/groups/" + groupId + "/posts/" + postId.replace(/[?&#/].*$/g, "") + "/",
+    postId: postId,
+    url: rawPostId
+      ? "https://www.facebook.com/groups/" + groupId + "/posts/" + postId + "/"
+      : "https://www.facebook.com/groups/" + groupId + "/",
   };
+}
+
+function normalizeGroupIdentity_(value) {
+  return normalizeText_(String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isNewPublicationNotification_(subject) {
+  const normalized = normalizeGroupIdentity_(repeatedlyDecode_(String(subject || "")));
+  if (!normalized) return false;
+  if (/\b(?:commentaire|commentaires|reaction|reactions|(?:a|ont) (?:commente|repondu|reagi|aime|mentionne)|commented|replied|reacted|liked|mentioned|new comment)\b/i.test(normalized)) {
+    return false;
+  }
+  return /\b(?:(?:a|ont) (?:publie|partage)(?: une publication)?|(?:a|ont) ajoute une (?:nouvelle )?publication|nouvelle publication|nouveau(?:x)? posts?|new posts?|posted in|posted to|shared a post)\b/i.test(normalized);
+}
+
+function activeGroupFromContent_(content) {
+  const normalized = normalizeGroupIdentity_(content);
+  const groupIds = Object.keys(PRIXRADAR_ACTIVE_GROUPS);
+  for (let index = 0; index < groupIds.length; index += 1) {
+    const groupId = groupIds[index];
+    if (normalized.indexOf(groupId) >= 0
+      || normalized.indexOf(normalizeGroupIdentity_(PRIXRADAR_ACTIVE_GROUPS[groupId])) >= 0) return groupId;
+  }
+  return null;
+}
+
+function fallbackExternalId_(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (const character of text) {
+    hash ^= character.codePointAt(0) || 0;
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return "mail-" + hash.toString(16).padStart(8, "0");
 }
 
 function extractAuthor_(subject) {
@@ -218,10 +336,7 @@ function extractExternalUrl_(decodedContent) {
 }
 
 function mentionsActiveGroup_(content) {
-  const decoded = repeatedlyDecode_(String(content || ""));
-  return Object.keys(PRIXRADAR_ACTIVE_GROUPS).some(function (groupId) {
-    return decoded.indexOf(groupId) >= 0 || decoded.toLowerCase().indexOf(PRIXRADAR_ACTIVE_GROUPS[groupId].toLowerCase()) >= 0;
-  });
+  return activeGroupFromContent_(repeatedlyDecode_(String(content || ""))) !== null;
 }
 
 function ingestPublications_(config, sourceId, items) {
@@ -314,4 +429,30 @@ function hasRelayTrigger_() {
   return ScriptApp.getProjectTriggers().some(function (trigger) {
     return trigger.getHandlerFunction() === "relayFacebookEmails";
   });
+}
+
+function readProcessedMessages_() {
+  const raw = PropertiesService.getScriptProperties().getProperty(PRIXRADAR_PROCESSED_MESSAGES_PROPERTY);
+  let parsed = {};
+  try { parsed = raw ? JSON.parse(raw) : {}; } catch (error) { parsed = {}; }
+  const cutoff = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  const entries = Object.keys(parsed).map(function (messageId) {
+    return [messageId, Number(parsed[messageId])];
+  }).filter(function (entry) {
+    return entry[0] && Number.isFinite(entry[1]) && entry[1] >= cutoff;
+  }).sort(function (left, right) { return right[1] - left[1]; }).slice(0, PRIXRADAR_MAX_TRACKED_MESSAGES);
+  const result = {};
+  entries.forEach(function (entry) { result[entry[0]] = entry[1]; });
+  return result;
+}
+
+function writeProcessedMessages_(messages) {
+  const entries = Object.keys(messages).map(function (messageId) {
+    return [messageId, Number(messages[messageId])];
+  }).filter(function (entry) {
+    return entry[0] && Number.isFinite(entry[1]);
+  }).sort(function (left, right) { return right[1] - left[1]; }).slice(0, PRIXRADAR_MAX_TRACKED_MESSAGES);
+  const compact = {};
+  entries.forEach(function (entry) { compact[entry[0]] = entry[1]; });
+  PropertiesService.getScriptProperties().setProperty(PRIXRADAR_PROCESSED_MESSAGES_PROPERTY, JSON.stringify(compact));
 }
