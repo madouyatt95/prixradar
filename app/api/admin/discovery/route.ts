@@ -80,10 +80,8 @@ export async function POST(request: Request) {
   try {
     if (raw.action === "seedDefaults") {
       const bands = [
-        { label: "High-Tech et informatique", categories: [14_011_561, 340_859_031], min: 2_000, max: 250_000, budget: 384, priority: 100 },
-        { label: "Maison et électroménager", categories: [908_827_031, 57_686_031], min: 2_000, max: 300_000, budget: 288, priority: 90 },
-        { label: "Bricolage et jardin", categories: [590_749_031, 3_557_028_031], min: 1_500, max: 200_000, budget: 192, priority: 80 },
-        { label: "Sport et beauté", categories: [325_615_031, 197_859_031], min: 1_500, max: 100_000, budget: 96, priority: 70 },
+        { label: "High-Tech et informatique", categories: [14_011_561, 340_859_031], min: 2_000, max: 250_000, budget: 576, priority: 100 },
+        { label: "Maison et électroménager", categories: [908_827_031, 57_686_031], min: 2_000, max: 300_000, budget: 384, priority: 90 },
       ];
       const values = await Promise.all(DEFAULT_MARKETS.flatMap((market) => bands.map(async (band) => ({
         id: await idFor(`${market}:${band.label}`),
