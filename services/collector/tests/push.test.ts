@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sendProtectionPush, sendPushForObservation } from "../src/push.js";
+import { sendProtectionPush, sendPushForObservation, sendSocialPublicationPush } from "../src/push.js";
 import type { VerifiedObservation } from "../src/types.js";
 
 function alert(fixture = false): VerifiedObservation {
@@ -80,6 +80,41 @@ const config = {
   vapidPublicKey: "PUBLIC_TEST_KEY",
   vapidPrivateKey: "PRIVATE_TEST_KEY",
 };
+
+test("confirme une notification sociale avec le bail exact reçu", async () => {
+  const attemptId = "12345678-1234-4123-8123-123456789abc";
+  const completions: unknown[] = [];
+  const summary = await sendSocialPublicationPush(
+    "facebook:848306336465354:123456789",
+    config,
+    {
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (init?.method === "GET") {
+          assert.equal(url.searchParams.get("publicationId"), "facebook:848306336465354:123456789");
+          return Response.json({ ok: true, targets: [{
+            notificationId: 9,
+            attemptId,
+            publicationId: "facebook:848306336465354:123456789",
+            id: 3,
+            endpoint: "https://push.example/facebook",
+            keys: { p256dh: "p256dh", auth: "auth" },
+            contentEncoding: "aes128gcm",
+            title: "Facebook · Bons plans",
+            body: "Nouvelle publication",
+            url: "https://www.facebook.com/groups/848306336465354/posts/123456789/",
+            imageUrl: null,
+          }] });
+        }
+        completions.push(JSON.parse(String(init?.body)) as unknown);
+        return Response.json({ ok: true });
+      },
+      sendNotification: async () => ({ statusCode: 201, headers: {}, body: "" }),
+    },
+  );
+  assert.equal(summary.sent, 1);
+  assert.deepEqual(completions, [{ notificationId: 9, attemptId, status: "sent" }]);
+});
 
 test("une fixture ne récupère aucune cible et n’envoie rien", async () => {
   let calls = 0;

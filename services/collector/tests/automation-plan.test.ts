@@ -6,7 +6,7 @@ import { buildAutomationPlan } from "../src/automation-plan.js";
 test("concentre le forfait Keepa API 20 sur Amazon France", () => {
   const [amazon] = buildAutomationPlan("user/prixradar", []);
   assert.equal(amazon?.name, "prixradar-amazon-eu5-api-20");
-  assert.equal(amazon?.definition.cronExpression, "15,45 * * * *");
+  assert.equal(amazon?.definition.cronExpression, "15,45 0,7-23 * * *");
   assert.equal(amazon?.definition.actions?.length, 1);
   const action = amazon?.definition.actions?.[0];
   assert.equal(action?.type, "RUN_ACTOR");
@@ -45,8 +45,9 @@ test("récupère la couverture distante et teste les connecteurs chaque jour", (
     const socialAction = socialSchedule.definition.actions?.[0];
     if (!socialAction || socialAction.type !== "RUN_ACTOR") assert.fail("Action sociale attendue");
     const socialInput = JSON.parse(socialAction.runInput?.body ?? "{}") as Record<string, unknown>;
-    assert.equal(socialInput.mode, "social");
+    assert.equal(socialInput.mode, "social-dispatch");
     assert.equal(socialInput.notify, true);
+    assert.equal(socialInput.browserFallback, false);
   }
   assert.equal(plan[5]?.definition.cronExpression, "17 6 * * *");
   assert.equal(plan[6]?.definition.cronExpression, "7 18 * * *");

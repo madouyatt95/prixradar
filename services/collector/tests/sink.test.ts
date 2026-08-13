@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ingestIdempotencyKey, postObservation, postSignalObservation, recentSocialPublicationIds, toAlertIngestEnvelope } from "../src/sink.js";
+import { ingestIdempotencyKey, postObservation, postSignalObservation, postSocialPublications, recentSocialPublicationIds, toAlertIngestEnvelope } from "../src/sink.js";
 import type { VerifiedObservation } from "../src/types.js";
 
 function observation(fixture = false): VerifiedObservation {
@@ -166,24 +166,87 @@ test("les erreurs publiques ne contiennent aucun secret", async () => {
   );
 });
 
-test("la livraison Facebook ne retient que les nouvelles publications valides", async () => {
+test("la livraison Facebook conserve six heures pour rattraper les e-mails retardés", async () => {
   const now = Date.now();
   let authorization = "";
+  const offsets: number[] = [];
   const ids = await recentSocialPublicationIds({
     baseUrl: "https://prixradar.example",
     ingestSecret: "social-ingest-secret-test",
-  }, async (_input, init) => {
+  }, async (input, init) => {
     authorization = new Headers(init?.headers).get("authorization") ?? "";
+    const offset = Number(new URL(String(input)).searchParams.get("offset") ?? "0");
+    offsets.push(offset);
     return Response.json({
       ok: true,
       items: [
-        { id: "facebook:848306336465354:123456789", firstSeenAt: new Date(now - 5 * 60_000).toISOString() },
-        { id: "facebook:848306336465354:123456789", firstSeenAt: new Date(now - 4 * 60_000).toISOString() },
-        { id: "facebook:584379244259839:987654321", firstSeenAt: new Date(now - 16 * 60_000).toISOString() },
-        { id: "x:dealabs:123456789", firstSeenAt: new Date(now - 2 * 60_000).toISOString() },
+        { id: "facebook:848306336465354:123456789", publishedAt: new Date(now - 5 * 60_000).toISOString() },
+        { id: "facebook:848306336465354:123456789", publishedAt: new Date(now - 4 * 60_000).toISOString() },
+        { id: "facebook:584379244259839:987654321", publishedAt: new Date(now - 16 * 60_000).toISOString() },
+        { id: "facebook:584379244259839:111111111", publishedAt: new Date(now - 7 * 60 * 60_000).toISOString() },
+        { id: "x:dealabs:123456789", publishedAt: new Date(now - 2 * 60_000).toISOString() },
       ],
     });
   });
   assert.equal(authorization, "Bearer social-ingest-secret-test");
-  assert.deepEqual(ids, ["facebook:848306336465354:123456789"]);
+  assert.deepEqual(ids, [
+    "facebook:848306336465354:123456789",
+    "facebook:584379244259839:987654321",
+  ]);
+  assert.deepEqual(offsets, [0]);
+});
+
+test("la livraison Facebook pagine au-delà de quarante publications", async () => {
+  const now = Date.now();
+  const offsets: number[] = [];
+  const ids = await recentSocialPublicationIds({
+    baseUrl: "https://prixradar.example",
+    ingestSecret: "social-ingest-secret-test",
+  }, async (input) => {
+    const offset = Number(new URL(String(input)).searchParams.get("offset") ?? "0");
+    offsets.push(offset);
+    if (offset === 0) {
+      return Response.json({
+        ok: true,
+        items: Array.from({ length: 60 }, (_value, index) => ({
+          id: `facebook:848306336465354:${String(index + 1).padStart(3, "0")}`,
+          publishedAt: new Date(now - index * 1_000).toISOString(),
+        })),
+      });
+    }
+    return Response.json({
+      ok: true,
+      items: [{
+        id: "facebook:584379244259839:061",
+        publishedAt: new Date(now - 61_000).toISOString(),
+      }],
+    });
+  });
+  assert.deepEqual(offsets, [0, 60]);
+  assert.equal(ids.length, 61);
+  assert.ok(ids.includes("facebook:584379244259839:061"));
+});
+
+test("l’ingestion sociale laisse l’API centrale décider d’un unique dispatch", async () => {
+  let body: Record<string, unknown> = {};
+  const response = await postSocialPublications({
+    sourceId: "facebook:848306336465354",
+    scannedAt: new Date().toISOString(),
+    successful: true,
+    notify: false,
+    items: [],
+  }, {
+    baseUrl: "https://prixradar.example",
+    ingestSecret: "social-ingest-secret-test",
+  }, async (_input, init) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Response.json({
+      ok: true,
+      accepted: 0,
+      newItems: [],
+      notificationDispatch: { requested: false, started: false },
+    });
+  });
+  assert.equal(body.notify, false);
+  assert.deepEqual(response.notificationDispatch, { requested: false, started: false });
 });
