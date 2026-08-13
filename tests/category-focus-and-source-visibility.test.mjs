@@ -41,4 +41,5 @@ test("une offre JD Sports doublement vérifiée reste visible en signal à surve
   assert.match(ingest, /const JD_LISTING_WATCH_MIN_SCORE = 35/u);
   assert.match(ingest, /categoryListingWatchEligible[\s\S]*evaluation\.score >= JD_LISTING_WATCH_MIN_SCORE/u);
   assert.match(alerts, /view === "single_check" \? 0 : 35/u);
+  assert.match(alerts, /item\.source === "jd_sports"/u);
 });
