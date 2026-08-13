@@ -285,6 +285,8 @@ type SourceRuntimeStatus = {
   effectiveStatus?: string;
   mode?: string;
   lastSuccessAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastErrorCode?: string | null;
   productsSeen?: number;
   queueLag?: number;
 };
@@ -1438,6 +1440,10 @@ export function PriceRadarApp() {
               mode: typeof item.mode === "string" ? item.mode : undefined,
               lastSuccessAt:
                 typeof item.lastSuccessAt === "string" ? item.lastSuccessAt : null,
+              lastAttemptAt:
+                typeof item.lastAttemptAt === "string" ? item.lastAttemptAt : null,
+              lastErrorCode:
+                typeof item.lastErrorCode === "string" ? item.lastErrorCode : null,
               productsSeen: finite(item.productsSeen),
               queueLag: finite(item.queueLag),
             }));
@@ -3320,7 +3326,8 @@ function SourcesView({
           <span className="eyebrow">Vérification à la demande</span>
           <h2>5 pays restent consultables</h2>
           <p>
-            La recherche automatique est concentrée sur Amazon.fr. Vous pouvez toujours
+            La recherche automatique est concentrée sur le High-Tech, l’informatique,
+            la maison et l’électroménager sur Amazon.fr. Vous pouvez toujours
             vérifier manuellement un produit en Allemagne, Italie, Espagne ou au Royaume-Uni.
           </p>
         </div>
@@ -3350,15 +3357,28 @@ function SourcesView({
         <SourceRow
           mark="K"
           name="Amazon France"
-          detail="Recherche automatique sur Amazon.fr"
+          detail="High-Tech, informatique, maison et électroménager"
           status={keepaState.status}
           tone={keepaState.tone}
           runtime={runtimeFor("keepa", "amazon")}
           method="Historique 90 jours, Buy Box, deuxième vérification avant alerte"
+          resultNote="Les baisses intéressantes apparaissent dans Radar. Un prix habituel contrôlé reste volontairement masqué."
         />
         {FRENCH_SOURCE_COVERAGE.map((source) => {
           const state = frenchSourceStates.get(source.id) ?? { status: source.fallbackStatus, tone: source.fallbackTone };
-          return <SourceRow key={source.id} mark={source.mark} name={source.name} detail={source.detail} status={state.status} tone={state.tone} runtime={runtimeFor(source.id)} method={source.method} />;
+          return <SourceRow
+            key={source.id}
+            mark={source.mark}
+            name={source.name}
+            detail={source.detail}
+            status={state.status}
+            tone={state.tone}
+            runtime={runtimeFor(source.id)}
+            method={source.method}
+            resultNote={source.id === "jd_sports"
+              ? "Les offres d’au moins 70 % hors accessoires apparaissent dans Radar → Signaux à confirmer. Si la liste est vide, aucun produit n’a franchi ce filtre au dernier passage."
+              : undefined}
+          />;
         })}
       </div>
 
@@ -3404,6 +3424,7 @@ function SourceRow({
   tone,
   method,
   runtime,
+  resultNote,
 }: {
   mark: string;
   name: string;
@@ -3412,6 +3433,7 @@ function SourceRow({
   tone: "pending" | "prepared" | "live";
   method: string;
   runtime?: SourceRuntimeStatus;
+  resultNote?: string;
 }) {
   return (
     <article className="source-row">
@@ -3419,12 +3441,17 @@ function SourceRow({
       <div className="source-identity">
         <h3>{name}</h3>
         <p>{detail}</p>
-        {runtime?.lastSuccessAt ? (
-          <small>
-            Dernier passage {relativeTime(runtime.lastSuccessAt)}
-            {runtime.productsSeen ? ` · ${runtime.productsSeen} produits` : ""}
-          </small>
-        ) : null}
+        {runtime?.lastSuccessAt ? <small>
+          Dernier passage réussi {relativeTime(runtime.lastSuccessAt)}
+          {runtime.productsSeen !== undefined
+            ? ` · ${runtime.productsSeen} produit${runtime.productsSeen === 1 ? "" : "s"} examiné${runtime.productsSeen === 1 ? "" : "s"}`
+            : ""}
+        </small> : null}
+        {runtime?.lastAttemptAt && runtime.lastAttemptAt !== runtime.lastSuccessAt ? <small>
+          Dernière tentative {relativeTime(runtime.lastAttemptAt)}
+          {runtime.lastErrorCode ? " · contrôle à renouveler" : ""}
+        </small> : null}
+        {resultNote ? <small className="source-result-note">{resultNote}</small> : null}
       </div>
       <p className="source-method">{method}</p>
       <span className={`source-status status-${tone}`}>
