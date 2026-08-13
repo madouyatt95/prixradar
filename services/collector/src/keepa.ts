@@ -54,13 +54,17 @@ export interface KeepaProduct {
   productGroup: string | null;
 }
 
-export type AmazonExcludedFamily = "books" | "music" | "wall_art";
-export const DEFAULT_AMAZON_EXCLUDED_FAMILIES: readonly AmazonExcludedFamily[] = ["books", "music", "wall_art"];
+export type AmazonExcludedFamily = "books" | "music" | "media" | "wall_art";
+export const DEFAULT_AMAZON_EXCLUDED_FAMILIES: readonly AmazonExcludedFamily[] = ["books", "music", "media", "wall_art"];
 
 const EXCLUDED_CATEGORY_IDS: Partial<Record<Market, Partial<Record<AmazonExcludedFamily, readonly number[]>>>> = {
-  // Amazon.fr top-level browse nodes. The text classifier below remains the
-  // authority for nested wall-art nodes and products returned outside a root.
-  FR: { books: [301061], music: [301062] },
+  // Amazon.fr root browse nodes. The text classifier below remains the
+  // authority for products returned outside a root or under a generic node.
+  FR: {
+    books: [468256, 69_633_011, 672_109_031],
+    music: [537366, 206_442_031],
+    media: [578608],
+  },
 };
 
 export function excludedCategoryIdsFor(
@@ -81,13 +85,12 @@ export function isExcludedAmazonProduct(
 ): boolean {
   const familySet = new Set(families);
   const category = normalizedCategoryText([...product.categoryPath, product.productGroup ?? ""].join(" "));
-  if (familySet.has("books") && /\b(?:book|books|livre|livres|buch|bucher|libro|libri|libros|kindle)\b/u.test(category)) return true;
-  if (familySet.has("music") && /\b(?:music|musique|musik|musica|vinyl|vinyle|vinili|cds?)\b/u.test(category)) return true;
-  if (familySet.has("wall_art") && /\b(?:wall art|art mural|decoration murale|tableau|tableaux|poster|posters|affiche|affiches|toile|toiles|canvas print|kunstdruck|arte da parete|cuadro|cuadros)\b/u.test(category)) return true;
-  if (!category && familySet.has("wall_art")) {
-    const title = normalizedCategoryText(product.title);
-    return /\b(?:tableau|poster|affiche|toile)\b/u.test(title);
-  }
+  const title = normalizedCategoryText(product.title);
+  const searchable = `${category} ${title}`;
+  if (familySet.has("books") && /\b(?:book|books|livre|livres|roman|romans|buch|bucher|libro|libri|libros|kindle)\b/u.test(searchable)) return true;
+  if (familySet.has("music") && /\b(?:music|musique|musik|musica|vinyl|vinyle|vinili|cds?|album audio|import allemand)\b/u.test(searchable)) return true;
+  if (familySet.has("media") && /\b(?:dvd|blu ray|bluray|vhs|film|films|serie tv|series tv|video)\b/u.test(searchable)) return true;
+  if (familySet.has("wall_art") && /\b(?:wall art|art mural|decoration murale|tableau|tableaux|poster|posters|affiche|affiches|toile|toiles|canvas print|kunstdruck|arte da parete|cuadro|cuadros)\b/u.test(searchable)) return true;
   return false;
 }
 

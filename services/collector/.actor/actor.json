@@ -3,7 +3,7 @@
   "name": "prixradar-collector",
   "title": "PrixRadar Collector",
   "description": "Découverte et vérification de prix, plus relève des publications bons plans publiques configurées.",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "buildTag": "latest",
   "dockerfile": "../Dockerfile",
   "readme": "../README.md",

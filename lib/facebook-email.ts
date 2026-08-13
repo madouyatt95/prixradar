@@ -1,6 +1,8 @@
 const FACEBOOK_RELAY_START_MINUTES = 7 * 60 + 30;
 const FACEBOOK_RELAY_END_MINUTES = 15 * 60;
-const FACEBOOK_EMAIL_MAX_AGE_MS = 45 * 60_000;
+// Gmail can batch Facebook notifications. A six-hour window avoids losing a
+// legitimate post while the UID receipt still guarantees one-time delivery.
+const FACEBOOK_EMAIL_MAX_AGE_MS = 6 * 60 * 60_000;
 
 export const ACTIVE_FACEBOOK_GROUPS = Object.freeze({
   "848306336465354": "SARAH - Les Addicts Des Bons Plans",
@@ -87,18 +89,38 @@ function normalizeText(value: string) {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-function facebookPublication(decodedContent: string) {
+function fallbackExternalId(value: string) {
+  let hash = 2_166_136_261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16_777_619) >>> 0;
+  }
+  return `mail-${hash.toString(16).padStart(8, "0")}`;
+}
+
+function activeGroupFromContent(decodedContent: string) {
+  const normalized = decodedContent.toLowerCase();
+  return Object.entries(ACTIVE_FACEBOOK_GROUPS).find(([groupId, name]) => (
+    normalized.includes(groupId) || normalized.includes(name.toLowerCase())
+  ))?.[0] ?? null;
+}
+
+function facebookPublication(decodedContent: string, fallbackSeed: string) {
   const normalized = decodeHtmlEntities(decodedContent).replace(/\\\//gu, "/");
   const absolute = /https?:\/\/(?:www\.|m\.)?facebook\.com\/groups\/(\d{6,20})\/(?:posts|permalink)\/([A-Za-z0-9._:-]{3,160})/iu.exec(normalized);
   const relative = /(?:^|[\s"'=])(\/groups\/(\d{6,20})\/(?:posts|permalink)\/([A-Za-z0-9._:-]{3,160}))/iu.exec(normalized);
-  const groupId = absolute?.[1] ?? relative?.[2];
-  const rawPostId = absolute?.[2] ?? relative?.[3];
-  if (!groupId || !rawPostId || !(groupId in ACTIVE_FACEBOOK_GROUPS)) return null;
-  const postId = rawPostId.replace(/[?&#/].*$/gu, "");
+  const queryPost = /(?:story_fbid|fbid|multi_permalinks)=([A-Za-z0-9._:-]{3,160})/iu.exec(normalized)?.[1] ?? null;
+  const groupId = absolute?.[1] ?? relative?.[2] ?? activeGroupFromContent(normalized);
+  const rawPostId = absolute?.[2] ?? relative?.[3] ?? queryPost;
+  if (!groupId || !(groupId in ACTIVE_FACEBOOK_GROUPS)) return null;
+  if (!rawPostId && !/(?:a publie|a publié|publication|nouveau post|nouvelle publication|posted|shared a post)/iu.test(normalized)) return null;
+  const postId = rawPostId?.replace(/[?&#/].*$/gu, "") || fallbackExternalId(fallbackSeed);
   return {
     groupId,
     postId,
-    url: `https://www.facebook.com/groups/${groupId}/posts/${postId}/`,
+    url: rawPostId
+      ? `https://www.facebook.com/groups/${groupId}/posts/${postId}/`
+      : `https://www.facebook.com/groups/${groupId}/`,
   };
 }
 
@@ -172,7 +194,7 @@ export function parseFacebookEmailContent(
   if (!Number.isFinite(messageTime) || age < -60_000 || age > FACEBOOK_EMAIL_MAX_AGE_MS) return null;
 
   const combined = repeatedlyDecode(`${input.subject}\n${input.text}\n${input.html}`);
-  const publication = facebookPublication(combined);
+  const publication = facebookPublication(combined, `${input.subject}|${input.date.toISOString()}|${input.text.slice(0, 500)}`);
   if (!publication) return null;
   return {
     sourceId: `facebook:${publication.groupId}`,

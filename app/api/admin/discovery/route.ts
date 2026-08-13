@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const MARKETS = new Set(["FR", "DE", "IT", "ES", "GB"]);
 const DEFAULT_MARKETS = ["FR"] as const;
-const DEFAULT_EXCLUDED_FAMILIES = ["books", "music", "wall_art"] as const;
+const DEFAULT_EXCLUDED_FAMILIES = ["books", "music", "media", "wall_art"] as const;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -80,21 +80,22 @@ export async function POST(request: Request) {
   try {
     if (raw.action === "seedDefaults") {
       const bands = [
-        { label: "Découvertes 1–100 €", min: 1, max: 10_000, budget: 48, priority: 65 },
-        { label: "Découvertes 100–500 €", min: 10_001, max: 50_000, budget: 72, priority: 80 },
-        { label: "Découvertes 500 € et plus", min: 50_001, max: 100_000_000, budget: 48, priority: 60 },
+        { label: "High-Tech et informatique", categories: [14_011_561, 340_859_031], min: 2_000, max: 250_000, budget: 384, priority: 100 },
+        { label: "Maison et électroménager", categories: [908_827_031, 57_686_031], min: 2_000, max: 300_000, budget: 288, priority: 90 },
+        { label: "Bricolage et jardin", categories: [590_749_031, 3_557_028_031], min: 1_500, max: 200_000, budget: 192, priority: 80 },
+        { label: "Sport et beauté", categories: [325_615_031, 197_859_031], min: 1_500, max: 100_000, budget: 96, priority: 70 },
       ];
       const values = await Promise.all(DEFAULT_MARKETS.flatMap((market) => bands.map(async (band) => ({
         id: await idFor(`${market}:${band.label}`),
         source: "amazon",
         market,
         label: band.label,
-        categoryIdsJson: JSON.stringify({ include: [], excludeFamilies: DEFAULT_EXCLUDED_FAMILIES }),
+        categoryIdsJson: JSON.stringify({ include: band.categories, excludeFamilies: DEFAULT_EXCLUDED_FAMILIES }),
         minPriceCents: band.min,
         maxPriceCents: band.max,
-        minimumDropPercent: 30,
-        dailyTokenBudget: band.budget * 5,
-        cadenceMinutes: 60,
+        minimumDropPercent: 35,
+        dailyTokenBudget: band.budget,
+        cadenceMinutes: 30,
         priority: band.priority,
         enabled: true,
       }))));

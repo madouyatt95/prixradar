@@ -52,7 +52,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         liveVerificationLimit: 0,
         processEanScans: true,
         useRemoteCoverage: false,
-        useRemoteDiscovery: false,
+        useRemoteDiscovery: true,
       }, 1_024)],
     },
   }];

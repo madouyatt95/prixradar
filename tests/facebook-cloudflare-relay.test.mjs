@@ -48,9 +48,20 @@ test("le lecteur accepte seulement Facebook et les deux groupes autorisés", () 
     subject: "Publication Facebook",
     text: "Offre ancienne",
     html: "https://www.facebook.com/groups/848306336465354/posts/123456789/",
-    date: new Date("2026-08-11T07:00:00.000Z"),
+    date: new Date("2026-08-11T01:00:00.000Z"),
   }, now);
   assert.equal(stale, null);
+
+  const delayedWithoutCanonicalPostLink = parseFacebookEmailContent({
+    from: "notification@facebookmail.com",
+    subject: "Lucie a publié dans Bons plans courses et reductions - Melina",
+    text: "Nouvelle publication à découvrir dans le groupe",
+    html: '<a href="https://www.facebook.com/n/?notif_t=group_activity">Voir la publication</a>',
+    date: new Date("2026-08-11T04:30:00.000Z"),
+  }, now);
+  assert.equal(delayedWithoutCanonicalPostLink?.sourceId, "facebook:584379244259839");
+  assert.match(delayedWithoutCanonicalPostLink?.externalId ?? "", /^mail-[a-f0-9]{8}$/u);
+  assert.equal(delayedWithoutCanonicalPostLink?.publicationUrl, "https://www.facebook.com/groups/584379244259839/");
 });
 
 test("la déduplication Gmail bloque le retraitement du même UID", async () => {

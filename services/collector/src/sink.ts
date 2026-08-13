@@ -425,6 +425,30 @@ export async function postFrontierItems(
   return response.json() as Promise<{ ok: boolean; accepted: number }>;
 }
 
+export async function postRemoteTaskResult(
+  result: {
+    id: string;
+    kind: "inspection" | "recheck";
+    status: "completed" | "failed";
+    errorCode: string | null;
+  },
+  config: SinkConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean }> {
+  const endpoint = new URL("api/source-plan", validatedBaseUrl(config.baseUrl));
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: privateApiHeaders({
+      secret: config.ingestSecret,
+      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+    }),
+    body: JSON.stringify(result),
+    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+  });
+  if (!response.ok) throw new SinkRequestError(`Résultat de tâche refusé par PrixRadar (HTTP ${response.status}).`, response.status);
+  return response.json() as Promise<{ ok: boolean }>;
+}
+
 export async function postEanScanResult(
   result: { id: string; productsFound: number; marketsChecked: Market[]; errorCode: string | null },
   config: SinkConfig,

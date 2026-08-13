@@ -1,6 +1,6 @@
 {
   "name": "@prixradar/collector",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "private": true,
   "description": "Collecteur autonome PrixRadar: discovery, double verification, ingestion et push.",
   "type": "module",

@@ -124,7 +124,7 @@
       "title": "Utiliser les budgets de découverte",
       "type": "boolean",
       "description": "Répartit les jetons Keepa selon les segments et budgets configurés dans PrixRadar.",
-      "default": false
+      "default": true
     }
   }
 }

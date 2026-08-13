@@ -93,7 +93,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   );
   assert.equal(client.quota.tokensLeft, 10);
   assert.deepEqual(dealSelection.includeCategories, [172282]);
-  assert.deepEqual(dealSelection.excludeCategories, [301061, 301062]);
+  assert.deepEqual(dealSelection.excludeCategories, [468256, 69_633_011, 672_109_031, 537366, 206_442_031, 578608]);
   assert.deepEqual(dealSelection.priceTypes, [18]);
   assert.deepEqual(dealSelection.deltaPercentRange, [30, 100]);
   assert.equal(dealSelection.deltaRange, undefined);
@@ -118,11 +118,12 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(merged.historicalPrices?.length, 6);
 });
 
-test("exclut par défaut les livres, la musique et l'art mural des résultats Amazon", () => {
+test("exclut par défaut les livres, la musique, les vidéos et l'art mural des résultats Amazon", () => {
   assert.equal(isExcludedAmazonProduct({ title: "Roman", categoryPath: ["Livres"], productGroup: "Book" }, ["books"]), true);
   assert.equal(isExcludedAmazonProduct({ title: "Album", categoryPath: ["CD et Vinyles"], productGroup: "Music" }, ["music"]), true);
   assert.equal(isExcludedAmazonProduct({ title: "Décoration", categoryPath: ["Décoration murale", "Tableaux"], productGroup: "Home" }, ["wall_art"]), true);
-  assert.equal(isExcludedAmazonProduct({ title: "Casque audio", categoryPath: ["High-Tech", "Audio"], productGroup: "Electronics" }, ["books", "music", "wall_art"]), false);
+  assert.equal(isExcludedAmazonProduct({ title: "Avengers Blu-ray", categoryPath: ["Films", "DVD et Blu-ray"], productGroup: "Video" }, ["media"]), true);
+  assert.equal(isExcludedAmazonProduct({ title: "Casque audio", categoryPath: ["High-Tech", "Audio"], productGroup: "Electronics" }, ["books", "music", "media", "wall_art"]), false);
 });
 
 test("résout un EAN en ASIN avec le paramètre Keepa code et conserve le GTIN", async () => {

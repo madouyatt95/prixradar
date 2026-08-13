@@ -13,7 +13,8 @@ const MAX_SEARCH_RESULTS = 40;
 const MAX_EMAIL_BYTES = 512 * 1024;
 const MAX_IMAP_RESPONSE_BYTES = 768 * 1024;
 const IMAP_TIMEOUT_MS = 12_000;
-const TERMINAL_RECEIPT_STATUSES = new Set(["processed", "ignored", "review"]);
+const TERMINAL_RECEIPT_STATUSES = new Set(["processed", "ignored"]);
+const REVIEW_RETRY_MS = 15 * 60_000;
 
 type ImapStatus = "OK" | "NO" | "BAD";
 
@@ -186,14 +187,15 @@ function safeMessageId(email: Email) {
   return value ? value.slice(0, 512) : null;
 }
 
-async function existingReceipts(database: D1Database, mailbox: string, uids: string[]) {
+async function existingReceipts(database: D1Database, mailbox: string, uids: string[], now: Date) {
   if (uids.length === 0) return new Set<string>();
   const placeholders = uids.map(() => "?").join(",");
   const result = await database.prepare(
-    `SELECT uid, status FROM facebook_email_receipts WHERE mailbox = ? AND uid IN (${placeholders})`,
-  ).bind(mailbox, ...uids).all<{ uid: string; status: string }>();
+    `SELECT uid, status, processed_at AS processedAt FROM facebook_email_receipts WHERE mailbox = ? AND uid IN (${placeholders})`,
+  ).bind(mailbox, ...uids).all<{ uid: string; status: string; processedAt: string }>();
   return new Set((result.results ?? [])
-    .filter((row) => TERMINAL_RECEIPT_STATUSES.has(row.status))
+    .filter((row) => TERMINAL_RECEIPT_STATUSES.has(row.status)
+      || (row.status === "review" && Date.parse(row.processedAt) > now.getTime() - REVIEW_RETRY_MS))
     .map((row) => row.uid));
 }
 
@@ -272,7 +274,7 @@ export async function pollFacebookGmail(options: PollOptions): Promise<FacebookG
     );
     const uids = searchUids(search);
     summary.searched = uids.length;
-    const processed = await existingReceipts(options.database, user, uids);
+    const processed = await existingReceipts(options.database, user, uids, now);
     const pendingBySource = new Map<string, PendingPublication[]>();
 
     for (const uid of uids) {

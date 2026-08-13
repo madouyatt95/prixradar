@@ -2505,7 +2505,7 @@ function SocialFeedView({
       <PageHeading
         eyebrow="Publications bons plans"
         title="Vos sources, au même endroit"
-        description="Le relais Gmail Facebook transmet les nouvelles publications à PrixRadar et vous renvoie toujours vers le post original. Elles sont affichées telles quelles, sans être présentées comme des prix confirmés."
+        description="Le relais Gmail Facebook affiche les notifications réellement envoyées par e-mail et renvoie vers le post original. Facebook ne garantit pas un e-mail pour chaque publication : cette source reste complémentaire."
         action={<button type="button" className={`social-notify-button ${notificationsEnabled ? "is-on" : ""}`} onClick={onToggleNotifications} disabled={facebookUnavailable}>
           <span aria-hidden="true">{notificationsEnabled ? "●" : "○"}</span>
           {facebookUnavailable ? "Relève suspendue" : notificationsEnabled ? "Notifications activées" : "Me prévenir"}
@@ -2514,7 +2514,7 @@ function SocialFeedView({
 
       <div className="social-summary">
         <div><strong>{configuredFacebookSources.length}/2</strong><span>groupes Facebook suivis</span></div>
-        <div><strong>{facebookCadence ? `${facebookCadence} min` : "Pause"}</strong><span>{facebookCadence ? "entre deux vérifications" : "recherche non activée"}</span></div>
+        <div><strong>{facebookCadence ? `${facebookCadence} min` : "Pause"}</strong><span>{facebookCadence ? "entre deux lectures Gmail" : "recherche non activée"}</span></div>
         <div><strong>7 h 30–15 h</strong><span>plage de réception quotidienne</span></div>
       </div>
 
@@ -2527,7 +2527,7 @@ function SocialFeedView({
           const ready = source.enabled && source.status === "ready";
           return <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className={`social-source is-${source.status}`}>
             <span className={`social-platform is-${source.platform}`} aria-hidden="true">{source.platform === "facebook" ? "f" : "𝕏"}</span>
-            <span><strong>{source.name}</strong><small>{live ? `Dernière publication reçue ${relativeTime(source.lastSuccessAt)}` : ready ? "Relais prêt · première publication attendue" : blocked ? "Facebook bloque la relève automatique" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Réception momentanément indisponible" : "Première publication en attente"}</small></span>
+            <span><strong>{source.name}</strong><small>{live ? `Dernière publication reçue ${relativeTime(source.lastSuccessAt)}` : ready ? "Relais e-mail prêt · couverture partielle" : blocked ? "Facebook bloque la relève automatique" : savedForLater ? "Enregistré pour une activation ultérieure" : waiting ? "Connexion X à activer" : source.status === "degraded" ? "Réception momentanément indisponible" : "Première publication en attente"}</small></span>
             <i>{live ? "Actif" : ready ? "Prêt" : blocked ? "Suspendu" : savedForLater ? "Plus tard" : waiting ? "En attente" : "Démarrage"}</i>
           </a>;
         })}
@@ -2559,7 +2559,7 @@ function SocialFeedView({
             </footer>
           </article>)}
         </div>
-      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Réception Facebook suspendue" : liveFacebook > 0 ? "Aucune nouvelle publication" : "En attente de la première publication"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook bloque actuellement la relève automatique. Vos groupes restent enregistrés sans passage payant inutile." : liveFacebook > 0 ? "Les prochains posts apparaîtront automatiquement ici." : "Les deux groupes sont prêts. Le prochain e-mail Facebook reçu entre 7 h 30 et 15 h apparaîtra ici automatiquement."}</p></div>}
+      ) : <div className="social-empty"><strong>{platform === "x" ? "Le compte X Dealabs n’est pas encore raccordé" : facebookUnavailable ? "Réception Facebook suspendue" : liveFacebook > 0 ? "Aucune nouvelle publication reçue" : "En attente du premier e-mail exploitable"}</strong><p>{platform === "x" ? "L’accès officiel X sera activé séparément. Les groupes Facebook n’en dépendent pas." : facebookUnavailable ? "Facebook bloque actuellement la relève automatique. Vos groupes restent enregistrés sans passage payant inutile." : liveFacebook > 0 ? "Les prochains e-mails de publication apparaîtront automatiquement ici, sans garantie d’exhaustivité côté Facebook." : "PrixRadar lit les e-mails Facebook reçus entre 7 h 30 et 15 h. Une notification seulement affichée dans Facebook ne peut pas être récupérée par ce relais."}</p></div>}
     </section>
   );
 }

@@ -38,12 +38,13 @@ type DiscoverySegment = {
   cadenceMinutes: number;
   priority: number;
   enabled: boolean;
-  excludedFamilies?: Array<"books" | "music" | "wall_art">;
+  excludedFamilies?: Array<"books" | "music" | "media" | "wall_art">;
 };
 
 const AMAZON_EXCLUSION_LABELS = {
   books: "Livres",
   music: "Musique",
+  media: "Films et séries",
   wall_art: "Tableaux",
 } as const;
 
@@ -295,7 +296,7 @@ export function AdminView() {
   }
 
   async function toggleAmazonExclusion(segment: DiscoverySegment, family: keyof typeof AMAZON_EXCLUSION_LABELS) {
-    const current = segment.excludedFamilies ?? ["books", "music", "wall_art"];
+    const current = segment.excludedFamilies ?? ["books", "music", "media", "wall_art"];
     const next = current.includes(family) ? current.filter((item) => item !== family) : [...current, family];
     const response = await fetch("/api/admin/discovery", {
       method: "PATCH",
@@ -411,7 +412,7 @@ export function AdminView() {
           <div className="section-label-row"><div><span className="eyebrow">Amazon France</span><h2>Découverte sous budget</h2></div>{segments.length === 0 ? <button className="primary-button" onClick={() => void seedDiscovery()}>Initialiser la France</button> : <span>{segments.filter((segment) => segment.enabled).length} recherches actives</span>}</div>
           <p className="admin-muted">Le budget est concentré sur Amazon.fr. Livres, musique et tableaux sont exclus par défaut pour privilégier les produits réellement utiles. Les boutons ci-dessous permettent de les réinclure.</p>
           <div className="admin-source-list">{segments.slice(0, 15).map((segment) => {
-            const excluded = segment.excludedFamilies ?? ["books", "music", "wall_art"];
+            const excluded = segment.excludedFamilies ?? ["books", "music", "media", "wall_art"];
             return <div className="admin-source-row" key={segment.id}><div><strong>{segment.market} · {segment.label}</strong><small>{segment.dailyTokenBudget} unités/jour · priorité {segment.priority} · toutes les {segment.cadenceMinutes} min</small><em>Exclus : {excluded.length ? excluded.map((family) => AMAZON_EXCLUSION_LABELS[family]).join(", ") : "aucune catégorie"}</em></div><div className="admin-row-actions">{(Object.keys(AMAZON_EXCLUSION_LABELS) as Array<keyof typeof AMAZON_EXCLUSION_LABELS>).map((family) => <button key={family} className={excluded.includes(family) ? "secondary-button" : "danger-button"} onClick={() => void toggleAmazonExclusion(segment, family)}>{excluded.includes(family) ? `${AMAZON_EXCLUSION_LABELS[family]} exclus` : `${AMAZON_EXCLUSION_LABELS[family]} inclus`}</button>)}<button className={segment.enabled ? "danger-button" : "secondary-button"} onClick={() => void toggleSegment(segment)}>{segment.enabled ? "Suspendre" : "Activer"}</button></div></div>;
           })}</div>
         </section>

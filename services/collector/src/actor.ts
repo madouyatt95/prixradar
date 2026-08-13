@@ -22,6 +22,7 @@ import { sendDailyDigests, sendProtectionPush, sendSocialPublicationPush } from 
 import {
   postEanScanResult,
   postFrontierItems,
+  postRemoteTaskResult,
   recentSocialPublicationIds,
   postSocialCollectionCheckpoint,
   postSocialPublications,
@@ -29,7 +30,7 @@ import {
   requestSocialCollectionPlan,
 } from "./sink.js";
 import { collectFacebookSocialSources, FACEBOOK_SOCIAL_SOURCES } from "./social.js";
-import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource } from "./types.js";
+import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource, type VerifiedObservation } from "./types.js";
 import { verifyOfferSnapshots } from "./verify.js";
 
 interface ActorInput {
@@ -80,7 +81,7 @@ type RemotePlan = { coverageTargets: CoverageTarget[]; discoverySegments: Remote
 
 function amazonExcludedFamilies(value: unknown): AmazonExcludedFamily[] {
   if (!Array.isArray(value)) return [...DEFAULT_AMAZON_EXCLUDED_FAMILIES];
-  const allowed = new Set<AmazonExcludedFamily>(["books", "music", "wall_art"]);
+  const allowed = new Set<AmazonExcludedFamily>(["books", "music", "media", "wall_art"]);
   return [...new Set(value.filter((item): item is AmazonExcludedFamily => typeof item === "string" && allowed.has(item as AmazonExcludedFamily)))];
 }
 
@@ -105,12 +106,13 @@ function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePrio
 
 async function remotePlan(
   config: CollectorConfig,
-  options: { source: RetailSource | "all"; includeEanScans: boolean },
+  options: { source: RetailSource | "all"; includeEanScans: boolean; includeTasks: boolean },
 ): Promise<RemotePlan> {
   if (!config.priceRadarBaseUrl || !config.ingestSecret) return { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
   const endpoint = new URL("api/source-plan", config.priceRadarBaseUrl.endsWith("/") ? config.priceRadarBaseUrl : `${config.priceRadarBaseUrl}/`);
   if (options.source !== "all") endpoint.searchParams.set("source", options.source);
   if (options.includeEanScans) endpoint.searchParams.set("includeEan", "1");
+  if (!options.includeTasks) endpoint.searchParams.set("includeTasks", "0");
   const response = await fetch(endpoint, {
     headers: privateApiHeaders({
       secret: config.ingestSecret,
@@ -457,7 +459,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       || input.useRemoteDiscovery === true
       || input.processEanScans === true;
     const plan = usesRemotePlan
-      ? await remotePlan(config, { source, includeEanScans: input.processEanScans === true })
+      ? await remotePlan(config, { source, includeEanScans: input.processEanScans === true, includeTasks: !fixture })
       : { coverageTargets: [], discoverySegments: [], rechecks: [], priorityTasks: [], eanScans: [] };
     const rawCoverageTargets: ActorCoverageTarget[] = configuredUrls.length > 0
       ? configuredUrls.map((url) => ({ url, sourceConfigurationId: null, productLimit: null }))
@@ -473,16 +475,44 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       ? uniqueCoverageTargets
       : [...uniqueCoverageTargets.slice(jdRotationOffset), ...uniqueCoverageTargets.slice(0, jdRotationOffset)];
     const seenProductUrls = new Set<string>();
-    for (const task of plan.priorityTasks) {
+    const priorityKeepaClient = config.keepaApiKey ? new KeepaClient({
+      apiKey: config.keepaApiKey,
+      timeoutMs: config.httpTimeoutMs,
+      maxQuotaWaitMs: config.keepaMaxQuotaWaitMs,
+    }) : null;
+    const reportTaskResult = async (
+      id: string,
+      kind: "inspection" | "recheck",
+      status: "completed" | "failed",
+      errorCode: string | null,
+    ) => {
+      if (!config.priceRadarBaseUrl || !config.ingestSecret) return;
+      await postRemoteTaskResult({ id, kind, status, errorCode }, {
+        baseUrl: config.priceRadarBaseUrl,
+        ingestSecret: config.ingestSecret,
+        ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+        timeoutMs: config.httpTimeoutMs,
+      }).catch(() => undefined);
+    };
+    for (const task of fixture ? [] : plan.priorityTasks) {
       if (source !== "all" && task.source !== source) continue;
       if (seenProductUrls.has(task.url)) continue;
       try {
-        const observation = await verifySourceUrl(task.url, publicWebScanOptions(task.source, {
-          ...scanOptions,
-          shadowCart: isPublicWebRetailSource(task.source) ? false : task.shadowCart,
-          verifyDelayMs: config.verifyDelayMs,
-        }));
-        if (!fixture) await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
+        let observation: VerifiedObservation;
+        if (task.source === "amazon" && task.kind === "inspection" && priorityKeepaClient) {
+          const asin = /\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/iu.exec(task.url)?.[1]?.toUpperCase() ?? null;
+          if (!asin) throw new Error("AMAZON_ASIN_MISSING");
+          const [product] = await priorityKeepaClient.products(task.market, [asin]);
+          if (!product) throw new Error("KEEPA_PRODUCT_NOT_FOUND");
+          observation = verifyKeepaCodeProduct(product, false);
+        } else {
+          observation = await verifySourceUrl(task.url, publicWebScanOptions(task.source, {
+            ...scanOptions,
+            shadowCart: isPublicWebRetailSource(task.source) ? false : task.shadowCart,
+            verifyDelayMs: config.verifyDelayMs,
+          }));
+        }
+        await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
         seenProductUrls.add(task.url);
         let protectionPush: unknown = null;
         if (task.kind === "purchase" && !fixture && config.priceRadarBaseUrl && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
@@ -500,22 +530,27 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             protectionPush = { error: error instanceof Error ? error.message : "PUSH_PROTECTION_FAILED" };
           }
         }
+        if (task.kind === "inspection") await reportTaskResult(task.id, "inspection", "completed", null);
         await Actor.pushData({ dataKind: `autonomous-${task.kind}`, requestId: task.id, protectionPush, ...observation });
       } catch (error) {
         const message = error instanceof Error ? error.message.toLowerCase() : "";
+        const errorCode = /(?:403|429|captcha|blocked|access denied|robot)/u.test(message)
+          ? "ANTI_BOT_BLOCKED"
+          : /quota/u.test(message)
+            ? "KEEPA_QUOTA_DEFERRED"
+            : "PRODUCT_VERIFICATION_FAILED";
+        if (task.kind === "inspection") await reportTaskResult(task.id, "inspection", "failed", errorCode);
         await Actor.pushData({
           dataKind: `autonomous-${task.kind}-failure`,
           requestId: task.id,
           source: task.source,
           market: task.market,
           url: task.url,
-          errorCode: /(?:403|429|captcha|blocked|access denied|robot)/u.test(message)
-            ? "ANTI_BOT_BLOCKED"
-            : "PRODUCT_VERIFICATION_FAILED",
+          errorCode,
         });
       }
     }
-    for (const recheck of plan.rechecks) {
+    for (const recheck of fixture ? [] : plan.rechecks) {
       if (source !== "all" && recheck.source !== source) continue;
       try {
         const observation = await verifySourceUrl(recheck.url, publicWebScanOptions(recheck.source, {
@@ -523,11 +558,16 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           verifyDelayMs: config.verifyDelayMs,
           shadowCart: isPublicWebRetailSource(recheck.source) ? false : input.shadowCart ?? true,
         }));
-        if (!fixture) await deliverObservation(observation, config, { allowPush: false });
+        await deliverObservation(observation, config, { allowPush: false });
         seenProductUrls.add(recheck.url);
+        await reportTaskResult(recheck.id, "recheck", "completed", null);
         await Actor.pushData({ dataKind: "on-demand-recheck", requestId: recheck.id, alertId: recheck.alertId, ...observation });
       } catch (error) {
         const message = error instanceof Error ? error.message.toLowerCase() : "";
+        const errorCode = /(?:403|429|captcha|blocked|access denied|robot)/u.test(message)
+          ? "ANTI_BOT_BLOCKED"
+          : "PRODUCT_VERIFICATION_FAILED";
+        await reportTaskResult(recheck.id, "recheck", "failed", errorCode);
         await Actor.pushData({
           dataKind: "on-demand-recheck-failure",
           requestId: recheck.id,
@@ -535,9 +575,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           source: recheck.source,
           market: recheck.market,
           url: recheck.url,
-          errorCode: /(?:403|429|captcha|blocked|access denied|robot)/u.test(message)
-            ? "ANTI_BOT_BLOCKED"
-            : "PRODUCT_VERIFICATION_FAILED",
+          errorCode,
         });
       }
     }

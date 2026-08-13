@@ -43,10 +43,11 @@ function effectiveCadence(source: string, cadenceMinutes: number, volatilityScor
   const adjusted = volatilityScore >= 70
     ? Math.max(15, Math.floor(cadenceMinutes / 2))
     : volatilityScore <= 20 ? Math.min(1_440, cadenceMinutes * 2) : cadenceMinutes;
+  if (source === "jd_sports") return Math.max(30, adjusted);
   return isPublicWebSource(source) ? Math.max(60, adjusted) : adjusted;
 }
 
-const DEFAULT_EXCLUDED_FAMILIES = ["books", "music", "wall_art"] as const;
+const DEFAULT_EXCLUDED_FAMILIES = ["books", "music", "media", "wall_art"] as const;
 
 function categoryConfiguration(value: string) {
   try {
@@ -86,6 +87,7 @@ export async function GET(request: Request) {
       ? requestedSourceValue
       : null;
     const includeEanScans = searchParams.get("includeEan") === "1";
+    const includeTasks = searchParams.get("includeTasks") !== "0";
     const partnerAuthorization = authorizedPartnerSources();
     const authorizedSourceIds = ACTIVE_SOURCE_IDS.filter((source) => isPartnerSourceAuthorized(source, partnerAuthorization));
     const plannedSourceIds = requestedSource === null
@@ -113,33 +115,33 @@ export async function GET(request: Request) {
         .from(discoverySegments)
         .where(eq(discoverySegments.enabled, true))
         .orderBy(desc(discoverySegments.priority), asc(discoverySegments.lastRunAt)),
-      database.select().from(recheckRequests)
+      includeTasks ? database.select().from(recheckRequests)
         .where(and(eq(recheckRequests.status, "pending"), inArray(recheckRequests.source, plannedSourceIds)))
-        .orderBy(asc(recheckRequests.requestedAt)).limit(25),
-      database.select().from(inspectionRequests)
+        .orderBy(asc(recheckRequests.requestedAt)).limit(25) : Promise.resolve([]),
+      includeTasks ? database.select().from(inspectionRequests)
         .where(and(eq(inspectionRequests.status, "pending"), inArray(inspectionRequests.source, plannedSourceIds)))
-        .orderBy(asc(inspectionRequests.requestedAt)).limit(25),
+        .orderBy(asc(inspectionRequests.requestedAt)).limit(100) : Promise.resolve([]),
       includeEanScans ? database.select().from(eanScanRequests)
         .where(and(
           inArray(eanScanRequests.status, ["queued", "monitoring", "matched", "failed"]),
           sql`${eanScanRequests.nextCheckAt} <= ${planNow}`,
         ))
         .orderBy(asc(eanScanRequests.nextCheckAt), desc(eanScanRequests.requestedAt)).limit(3) : Promise.resolve([]),
-      database.select().from(sentinelFrontier)
+      includeTasks ? database.select().from(sentinelFrontier)
         .where(and(
           inArray(sentinelFrontier.status, ["queued", "active"]),
           inArray(sentinelFrontier.source, plannedSourceIds),
           sql`${sentinelFrontier.nextScanAt} <= ${new Date().toISOString()}`,
         ))
-        .orderBy(desc(sentinelFrontier.priority), asc(sentinelFrontier.nextScanAt)).limit(50),
-      database.select().from(purchases)
+        .orderBy(desc(sentinelFrontier.priority), asc(sentinelFrontier.nextScanAt)).limit(50) : Promise.resolve([]),
+      includeTasks ? database.select().from(purchases)
         .where(and(
           inArray(purchases.status, ["protected", "action_available"]),
           inArray(purchases.source, plannedSourceIds),
           sql`${purchases.nextCheckAt} <= ${planNow}`,
           sql`${purchases.protectionEndsAt} > ${planNow}`,
         ))
-        .orderBy(asc(purchases.nextCheckAt)).limit(25),
+        .orderBy(asc(purchases.nextCheckAt)).limit(25) : Promise.resolve([]),
       database.select({
         source: collectionRuns.source,
         market: collectionRuns.market,
@@ -244,7 +246,12 @@ export async function GET(request: Request) {
           eq(recheckRequests.status, "pending"),
         ));
     }
-    const inspectionItems = pendingInspections.map((row) => ({
+    const inspectionLimit = requestedSource === "amazon" ? 5 : 10;
+    const uniqueInspections = [...new Map(pendingInspections.map((row) => [
+      `${row.source}:${row.market}:${row.url}`,
+      row,
+    ])).values()].slice(0, inspectionLimit);
+    const inspectionItems = uniqueInspections.map((row) => ({
       id: row.id,
       source: row.source,
       market: row.market,
@@ -336,5 +343,66 @@ export async function GET(request: Request) {
     });
   } catch {
     return json({ ok: false, code: "SOURCE_PLAN_UNAVAILABLE" }, 503);
+  }
+}
+
+export async function POST(request: Request) {
+  const expected = ingestSecret();
+  const token = /^Bearer ([^\s]{1,512})$/.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
+  if (expected === null) return json({ ok: false, code: "INGEST_NOT_CONFIGURED" }, 503);
+  if (!token || !(await equalSecret(token, expected))) return json({ ok: false, code: "UNAUTHORIZED" }, 401);
+
+  let raw: unknown;
+  try { raw = await request.json(); } catch { return json({ ok: false, code: "INVALID_BODY" }, 400); }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return json({ ok: false, code: "INVALID_BODY" }, 400);
+  const body = raw as Record<string, unknown>;
+  const id = typeof body.id === "string" ? body.id : "";
+  const kind = body.kind === "inspection" || body.kind === "recheck" ? body.kind : null;
+  const status = body.status === "completed" || body.status === "failed" ? body.status : null;
+  const errorCode = body.errorCode === null || body.errorCode === undefined
+    ? null
+    : typeof body.errorCode === "string" && /^[A-Z0-9_:-]{3,80}$/u.test(body.errorCode)
+      ? body.errorCode
+      : undefined;
+  if (!/^[A-Za-z0-9._:-]{3,200}$/u.test(id) || kind === null || status === null || errorCode === undefined) {
+    return json({ ok: false, code: "INVALID_RESULT" }, 400);
+  }
+
+  try {
+    const database = getDb();
+    const now = new Date().toISOString();
+    const resultJson = JSON.stringify({ status, errorCode, reportedAt: now });
+    if (kind === "inspection") {
+      const [target] = await database.select({
+        source: inspectionRequests.source,
+        market: inspectionRequests.market,
+        url: inspectionRequests.url,
+      }).from(inspectionRequests).where(eq(inspectionRequests.id, id)).limit(1);
+      if (!target) return json({ ok: false, code: "TASK_NOT_FOUND" }, 404);
+      await database.update(inspectionRequests).set({
+        status,
+        resultJson,
+        completedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(inspectionRequests.source, target.source),
+        eq(inspectionRequests.market, target.market),
+        eq(inspectionRequests.url, target.url),
+        inArray(inspectionRequests.status, ["pending", "processing"]),
+      ));
+    } else {
+      await database.update(recheckRequests).set({
+        status,
+        resultJson,
+        completedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(recheckRequests.id, id),
+        inArray(recheckRequests.status, ["pending", "processing"]),
+      ));
+    }
+    return json({ ok: true, id, kind, status });
+  } catch {
+    return json({ ok: false, code: "RESULT_UPDATE_FAILED" }, 503);
   }
 }
