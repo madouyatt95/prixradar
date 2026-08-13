@@ -261,7 +261,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       let failed = 0;
       if (input.notify === true) {
         for (const publicationId of publicationIds) {
-          const result = await sendSocialPublicationPush(publicationId, {
+          const pushConfig = {
             baseUrl: config.priceRadarBaseUrl,
             deliverySecret: config.pushDeliverySecret,
             ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
@@ -269,10 +269,18 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             vapidPublicKey: config.vapidPublicKey,
             vapidPrivateKey: config.vapidPrivateKey,
             timeoutMs: config.httpTimeoutMs,
-          });
+          };
+          const result = await sendSocialPublicationPush(publicationId, pushConfig);
           targets += result.targets;
           sent += result.sent;
-          failed += result.failed;
+          let finalFailed = result.failed;
+          if (result.failed > 0) {
+            const retry = await sendSocialPublicationPush(publicationId, pushConfig);
+            targets += retry.targets;
+            sent += retry.sent;
+            finalFailed = retry.failed;
+          }
+          failed += finalFailed;
         }
       }
       await Actor.pushData({
@@ -320,7 +328,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       let socialResults: Awaited<ReturnType<typeof collectFacebookSocialSources>> = [];
       let publicationsSeen = 0;
       let publicationsAdded = 0;
-      let notificationsSent = 0;
+      let notificationDispatchesStarted = 0;
       let ingestFailures = 0;
       try {
         socialResults = await collectFacebookSocialSources({
@@ -351,24 +359,15 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             sourceId: result.source.id,
             scannedAt: plan.startedAt,
             successful: result.errorCode === null,
+            notify: input.notify === true,
             items: result.publications,
           }, sinkConfig);
           publicationsSeen += result.publications.length;
           publicationsAdded += ingested.newItems.length;
-          if (input.notify === true && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
-            for (const publication of ingested.newItems.filter((item) => item.notificationEligible)) {
-              const pushed = await sendSocialPublicationPush(publication.id, {
-                baseUrl: config.priceRadarBaseUrl,
-                deliverySecret: config.pushDeliverySecret,
-                ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
-                vapidSubject: config.vapidSubject,
-                vapidPublicKey: config.vapidPublicKey,
-                vapidPrivateKey: config.vapidPrivateKey,
-                timeoutMs: config.httpTimeoutMs,
-              });
-              notificationsSent += pushed.sent;
-            }
-          }
+          if (ingested.notificationDispatch.started) notificationDispatchesStarted += 1;
+          // `/api/social/ingest` is the single dispatch owner. Keeping delivery
+          // out of the collection branch avoids two competing Actor runs for the
+          // same publication; D1 remains the notification idempotency boundary.
           await Actor.pushData({
             dataKind: "social-source",
             sourceId: result.source.id,
@@ -410,7 +409,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
         sourceFailures: collectionFailures,
         publicationsSeen,
         publicationsAdded,
-        notificationsSent,
+        notificationDispatchesStarted,
         estimatedCostMicros: checkpoint.estimatedCostMicros,
       });
       if (ingestFailures > 0) throw new Error(`${ingestFailures} source(s) sociale(s) n’ont pas été enregistrées.`);

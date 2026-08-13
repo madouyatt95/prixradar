@@ -50,6 +50,7 @@ interface ProtectionTarget extends PushSubscriptionTarget {
 
 interface SocialTarget extends PushSubscriptionTarget {
   notificationId: number;
+  attemptId: string;
   publicationId: string;
   title: string;
   body: string;
@@ -495,6 +496,8 @@ export async function sendSocialPublicationPush(
     ? response.targets.filter((target): target is SocialTarget => validTarget(target)
       && Number.isSafeInteger(target.notificationId)
       && target.notificationId > 0
+      && typeof target.attemptId === "string"
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(target.attemptId)
       && typeof target.publicationId === "string"
       && typeof target.title === "string"
       && typeof target.body === "string"
@@ -519,12 +522,15 @@ export async function sendSocialPublicationPush(
         topic: pushTopic(`social-${publicationId}`),
         ...(target.contentEncoding === "aesgcm" || target.contentEncoding === "aes128gcm" ? { contentEncoding: target.contentEncoding } : {}),
       });
-      await protectedJson(config, endpoint, { method: "POST", body: JSON.stringify({ notificationId: target.notificationId, status: "sent" }) }, fetchImpl);
+      await protectedJson(config, endpoint, {
+        method: "POST",
+        body: JSON.stringify({ notificationId: target.notificationId, attemptId: target.attemptId, status: "sent" }),
+      }, fetchImpl);
       summary.sent += 1;
     } catch (error) {
       await protectedJson(config, endpoint, {
         method: "POST",
-        body: JSON.stringify({ notificationId: target.notificationId, status: "failed", errorCode: deliveryErrorCode(error) }),
+        body: JSON.stringify({ notificationId: target.notificationId, attemptId: target.attemptId, status: "failed", errorCode: deliveryErrorCode(error) }),
       }, fetchImpl).catch(() => undefined);
       summary.failed += 1;
     }

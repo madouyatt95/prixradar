@@ -35,8 +35,8 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       ...common,
       name: "prixradar-amazon-eu5-api-20",
       title: "PrixRadar · Amazon France · API 20",
-      description: "Surveillance Amazon France toutes les 30 minutes avec le budget auparavant réparti sur cinq pays.",
-      cronExpression: "15,45 * * * *",
+      description: "Surveillance Amazon France toutes les 30 minutes, hors pause de 1 h à 7 h, avec le budget auparavant réparti sur cinq pays.",
+      cronExpression: "15,45 0,7-23 * * *",
       actions: [actorAction(actorId, {
         source: "amazon",
         markets: ["FR"],
@@ -84,12 +84,12 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       ...common,
       name,
       title,
-      description: "Relève les deux groupes Facebook publics actifs toutes les 15 minutes dans la plage 7 h 30–15 h ; Gmail reste un secours.",
+      description: "Retente uniquement la livraison des notifications Facebook reçues par Gmail ; aucune page Facebook n’est ouverte.",
       cronExpression,
       actions: [actorAction(actorId, {
-        mode: "social",
+        mode: "social-dispatch",
         notify: true,
-        browserFallback: true,
+        browserFallback: false,
       }, 1_024)],
     },
   });

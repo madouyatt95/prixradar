@@ -482,6 +482,7 @@ export type SocialIngestResponse = {
   ok: boolean;
   accepted: number;
   newItems: Array<{ id: string; sourceId: string; notificationEligible: boolean }>;
+  notificationDispatch: { requested: boolean; started: boolean };
 };
 
 export async function recentSocialPublicationIds(
@@ -489,34 +490,52 @@ export async function recentSocialPublicationIds(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string[]> {
   if (!config.ingestSecret.trim()) throw new SinkConfigurationError("INGEST_SECRET absent: notifications sociales désactivées.");
-  const endpoint = new URL("api/social?platform=facebook&limit=40", validatedBaseUrl(config.baseUrl));
-  const response = await fetchImpl(endpoint, {
-    headers: privateApiHeaders({
-      secret: config.ingestSecret,
-      ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
-    }),
-    signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
-  });
-  if (!response.ok) throw new SinkRequestError(`Flux Facebook indisponible (HTTP ${response.status}).`, response.status);
-  const payload = await response.json() as { ok?: unknown; items?: unknown };
-  if (payload.ok !== true || !Array.isArray(payload.items)) {
-    throw new SinkRequestError("Réponse du flux Facebook invalide.", response.status);
-  }
   const now = Date.now();
-  const recentWindowMs = 15 * 60_000;
-  return [...new Set(payload.items.flatMap((candidate): string[] => {
-    if (!candidate || typeof candidate !== "object") return [];
-    const item = candidate as Record<string, unknown>;
-    const id = typeof item.id === "string" ? item.id : "";
-    const firstSeenAt = typeof item.firstSeenAt === "string" ? Date.parse(item.firstSeenAt) : Number.NaN;
-    if (!/^facebook:\d{6,20}:[A-Za-z0-9._:-]{3,160}$/u.test(id)) return [];
-    if (!Number.isFinite(firstSeenAt) || firstSeenAt > now + 60_000 || now - firstSeenAt > recentWindowMs) return [];
-    return [id];
-  }))];
+  // Matches the Gmail recovery horizon. D1 delivery reservations ensure that
+  // the 15-minute dispatch safety net retries failures without duplicating a
+  // notification that was already sent.
+  const recentWindowMs = 6 * 60 * 60_000;
+  const pageSize = 60;
+  const ids = new Set<string>();
+  let offset = 0;
+  let reachedHorizon = false;
+  while (!reachedHorizon && offset <= 20_000) {
+    const endpoint = new URL("api/social", validatedBaseUrl(config.baseUrl));
+    endpoint.searchParams.set("platform", "facebook");
+    endpoint.searchParams.set("limit", String(pageSize));
+    endpoint.searchParams.set("offset", String(offset));
+    const response = await fetchImpl(endpoint, {
+      headers: privateApiHeaders({
+        secret: config.ingestSecret,
+        ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+      }),
+      signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+    });
+    if (!response.ok) throw new SinkRequestError(`Flux Facebook indisponible (HTTP ${response.status}).`, response.status);
+    const payload = await response.json() as { ok?: unknown; items?: unknown };
+    if (payload.ok !== true || !Array.isArray(payload.items)) {
+      throw new SinkRequestError("Réponse du flux Facebook invalide.", response.status);
+    }
+    for (const candidate of payload.items) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const item = candidate as Record<string, unknown>;
+      const id = typeof item.id === "string" ? item.id : "";
+      const publishedAt = typeof item.publishedAt === "string" ? Date.parse(item.publishedAt) : Number.NaN;
+      if (!Number.isFinite(publishedAt) || publishedAt > now + 60_000) continue;
+      if (now - publishedAt > recentWindowMs) {
+        reachedHorizon = true;
+        continue;
+      }
+      if (/^facebook:\d{6,20}:[A-Za-z0-9._:-]{3,160}$/u.test(id)) ids.add(id);
+    }
+    if (payload.items.length < pageSize) break;
+    offset += pageSize;
+  }
+  return [...ids];
 }
 
 export async function postSocialPublications(
-  payload: { sourceId: string; scannedAt: string; successful?: boolean; items: SocialPublicationInput[] },
+  payload: { sourceId: string; scannedAt: string; successful?: boolean; notify?: boolean; items: SocialPublicationInput[] },
   config: SinkConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SocialIngestResponse> {
@@ -533,7 +552,9 @@ export async function postSocialPublications(
   });
   if (!response.ok) throw new SinkRequestError(`Publications sociales refusées par PrixRadar (HTTP ${response.status}).`, response.status);
   const result = await response.json() as Partial<SocialIngestResponse>;
-  if (result.ok !== true || !Number.isSafeInteger(result.accepted) || !Array.isArray(result.newItems)) {
+  if (result.ok !== true || !Number.isSafeInteger(result.accepted) || !Array.isArray(result.newItems)
+    || !result.notificationDispatch || typeof result.notificationDispatch.requested !== "boolean"
+    || typeof result.notificationDispatch.started !== "boolean") {
     throw new SinkRequestError("Réponse d’ingestion sociale invalide.", response.status);
   }
   return result as SocialIngestResponse;
