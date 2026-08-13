@@ -32,3 +32,9 @@ test("l’interface explique où trouver les résultats JD Sports et montre auss
   assert.match(source, /runtime\.productsSeen !== undefined/u);
   assert.match(source, /Dernier passage réussi/u);
 });
+
+test("une offre JD Sports doublement vérifiée reste visible en signal à surveiller dès le score 35", async () => {
+  const source = await readFile(new URL("../app/api/ingest/route.ts", import.meta.url), "utf8");
+  assert.match(source, /const JD_LISTING_WATCH_MIN_SCORE = 35/u);
+  assert.match(source, /categoryListingWatchEligible[\s\S]*evaluation\.score >= JD_LISTING_WATCH_MIN_SCORE/u);
+});
