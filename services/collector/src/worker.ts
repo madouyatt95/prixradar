@@ -37,7 +37,7 @@ export async function deliverObservation(
         ingestSecret: config.ingestSecret,
         ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
         timeoutMs: config.httpTimeoutMs,
-        requestNotification: false,
+        requestNotification: options.allowPush ?? true,
       });
       logger.info("single_check_signal_ingested", {
         productKey: observation.offer.product.productKey,
@@ -45,18 +45,33 @@ export async function deliverObservation(
         duplicate: ingested.duplicate,
         alertId: ingested.alert?.id,
       });
+      let immediateDeliveryAttempted = false;
+      if (options.allowPush !== false && ingested.alert?.notificationEligible && ingested.alert.alertLevel === "watch"
+        && config.pushDeliverySecret && config.vapidSubject && config.vapidPublicKey && config.vapidPrivateKey) {
+        immediateDeliveryAttempted = true;
+        const result = await sendPushForObservation(ingested.alert.id, ingested.alert.score, observation, {
+          baseUrl: config.priceRadarBaseUrl,
+          deliverySecret: config.pushDeliverySecret,
+          ...(config.sitesAuthToken ? { sitesAuthToken: config.sitesAuthToken } : {}),
+          vapidSubject: config.vapidSubject,
+          vapidPublicKey: config.vapidPublicKey,
+          vapidPrivateKey: config.vapidPrivateKey,
+          timeoutMs: config.httpTimeoutMs,
+        }, {}, { alertLevel: "watch" });
+        logger.info("push_delivery_completed", { alertId: ingested.alert.id, ...result });
+      }
+      if (!immediateDeliveryAttempted) {
+        logger.info("single_check_signal_stored", {
+          productKey: observation.offer.product.productKey,
+          backendEligible: ingested.alert?.notificationEligible ?? false,
+        });
+      }
     } catch (error) {
       logger.warn("single_check_signal_ingest_failed", {
         productKey: observation.offer.product.productKey,
         errorType: error instanceof Error ? error.name : "UnknownError",
       });
     }
-    logger.warn("observation_not_notified", {
-      productKey: observation.offer.product.productKey,
-      verificationStatus: observation.verification.status,
-      matchingIdentity: observation.verification.matchingIdentity,
-      matchingPrice: observation.verification.matchingPrice,
-    });
     return;
   }
   if (!config.priceRadarBaseUrl || !config.ingestSecret) {
