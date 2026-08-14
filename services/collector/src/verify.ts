@@ -5,6 +5,7 @@ export interface VerifyOptions {
   delayMs?: number;
   baselineMinor?: number | null;
   sleep?: (milliseconds: number) => Promise<void>;
+  fallbackToObservation?: boolean;
 }
 
 const defaultSleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -81,9 +82,47 @@ export async function verifyWithSecondRead(
 ): Promise<VerifiedObservation> {
   const first = await read();
   await (options.sleep ?? defaultSleep)(options.delayMs ?? 2_500);
-  const second = await read();
+  let second: OfferSnapshot;
+  try {
+    second = await read();
+  } catch (error) {
+    if (!options.fallbackToObservation) throw error;
+    return observeOfferSnapshot(first, options.baselineMinor);
+  }
 
   return verifyOfferSnapshots(first, second, options.baselineMinor);
+}
+
+/**
+ * Builds an explicitly single-read signal. It is intentionally not marked as
+ * confirmed: the backend may expose or notify it as "à vérifier", while the
+ * reliable tier continues to require independent confirmation.
+ */
+export function observeOfferSnapshot(
+  offer: OfferSnapshot,
+  baselineMinor?: number | null,
+): VerifiedObservation {
+  const matchingIdentity = hasExactVariantEvidence(offer);
+  return {
+    schemaVersion: "1",
+    alertCandidateId: offer.product.productKey,
+    offer,
+    verification: {
+      status: "observed",
+      firstObservedAt: offer.observedAt,
+      secondObservedAt: offer.observedAt,
+      matchingPrice: false,
+      matchingIdentity,
+      matchingSeller: false,
+      matchingCondition: false,
+      matchingAvailability: false,
+      matchingShipping: false,
+      matchingTotal: false,
+      matchingDelivery: false,
+      matchingCart: false,
+    },
+    anomaly: scoreOffer(offer, baselineMinor),
+  };
 }
 
 export function verifyOfferSnapshots(
