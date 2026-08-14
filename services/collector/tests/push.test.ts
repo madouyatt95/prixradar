@@ -240,6 +240,12 @@ test("envoie une baisse JD Sports à vérifier sans inventer les frais de livrai
     verificationScope: "category_listing",
   };
   listing.anomaly = { score: 49, classification: "watch", discountPercent: 72.5, reasons: [] };
+  listing.verification = {
+    ...listing.verification,
+    status: "observed",
+    matchingPrice: false,
+    secondObservedAt: listing.offer.observedAt,
+  };
   const payloads: string[] = [];
   const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -258,7 +264,7 @@ test("envoie une baisse JD Sports à vérifier sans inventer les frais de livrai
     if (body?.action === "reserve") return Response.json({ ok: true, reserved: true, reservationId: 8 });
     return Response.json({ ok: true });
   };
-  const summary = await sendPushForObservation(listing.alertCandidateId, 49, listing, config, {
+  const summary = await sendPushForObservation(listing.alertCandidateId, 39, listing, config, {
     fetchImpl: fakeFetch,
     sendNotification: async (_subscription, payload) => {
       payloads.push(String(payload));
