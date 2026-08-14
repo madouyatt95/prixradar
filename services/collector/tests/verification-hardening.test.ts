@@ -123,7 +123,24 @@ test("publie une observation rejetée comme signal 1/2 sans interrompre l'ingest
   const body = payload?.payload as Record<string, unknown>;
   assert.equal(body.verificationCount, 1);
   assert.equal(body.verifiedAt, null);
-  assert.equal(body.notify, false);
+  assert.equal(body.notify, true);
+});
+
+test("conserve la première lecture à vérifier si la relecture est bloquée", async () => {
+  let reads = 0;
+  const result = await verifyWithSecondRead(async () => {
+    reads += 1;
+    if (reads === 2) throw new Error("403 pendant la relecture");
+    return verifiedOffer();
+  }, {
+    delayMs: 0,
+    sleep: async () => undefined,
+    fallbackToObservation: true,
+  });
+
+  assert.equal(result.verification.status, "observed");
+  assert.equal(result.verification.matchingIdentity, true);
+  assert.equal(result.verification.matchingPrice, false);
 });
 
 test("isole une erreur d'ingestion confirmée et laisse passer le produit suivant", async () => {
