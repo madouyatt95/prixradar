@@ -182,7 +182,7 @@ async function reserve(body: UnknownRecord) {
       historyPoints,
       exactVariantConfirmed: evidenceBoolean(alert.evidenceJson, "exactVariant") === true,
       cartConfirmed: alert.shadowCartStatus === "confirmed" && verifiedCartEvidence(alert.shadowCartJson ?? "{}"),
-      verifiedAt: alert.verifiedAt,
+      verifiedAt: alertLevel === "watch" ? alert.verifiedAt ?? alert.observedAt : alert.verifiedAt,
       discountPercent: alert.discountPercent,
       priceCents: alert.priceCents,
       publicPriceCents: alert.publicPriceCents,
@@ -206,12 +206,12 @@ async function reserve(body: UnknownRecord) {
   const alertEligible =
     alert?.sourceMode === "live" &&
     (reliableEvidence || watchEvidence) &&
-    alert.score >= (alertLevel === "watch" ? 45 : 65) &&
-    alert.shippingCents !== null &&
-    alert.verifiedAt !== null &&
+    alert.score >= (alertLevel === "watch" ? 35 : 65) &&
+    (alertLevel === "watch" || alert.shippingCents !== null) &&
+    (alertLevel === "watch" || alert.verifiedAt !== null) &&
     alert.expiresAt !== null &&
     Date.parse(alert.observedAt) >= freshAfter &&
-    Date.parse(alert.verifiedAt) >= freshAfter &&
+    Date.parse(alertLevel === "watch" ? alert.verifiedAt ?? alert.observedAt : alert.verifiedAt ?? "") >= freshAfter &&
     Date.parse(alert.expiresAt) > now &&
     preferenceEligible;
   if (!alert || !alertEligible) {
