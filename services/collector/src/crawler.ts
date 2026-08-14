@@ -430,5 +430,6 @@ export async function verifySourceUrl(
   }, {
     ...(options.verifyDelayMs === undefined ? {} : { delayMs: options.verifyDelayMs }),
     ...(options.baselineMinor === undefined ? {} : { baselineMinor: options.baselineMinor }),
+    fallbackToObservation: true,
   });
 }
