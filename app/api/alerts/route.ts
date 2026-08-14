@@ -43,6 +43,8 @@ function parseEvidence(value: string) {
     const parsed = JSON.parse(value) as {
       notificationEligible?: unknown;
       watchNotificationEligible?: unknown;
+      categoryListingWatchEligible?: unknown;
+      broadWatchEligible?: unknown;
       alertLevel?: unknown;
       priceReference?: {
         source?: unknown;
@@ -56,6 +58,8 @@ function parseEvidence(value: string) {
     return {
       notificationEligible: parsed.notificationEligible === true,
       watchNotificationEligible: parsed.watchNotificationEligible === true,
+      categoryListingWatchEligible: parsed.categoryListingWatchEligible === true,
+      broadWatchEligible: parsed.broadWatchEligible === true,
       alertLevel: parsed.alertLevel === "reliable" || parsed.alertLevel === "watch" ? parsed.alertLevel : "none",
       secondVerification: analysis?.checks?.secondVerification === true,
       historyPoints: typeof analysis?.historyPoints === "number" ? analysis.historyPoints : null,
@@ -179,10 +183,9 @@ function serializeAlert(
     (priceInsight.classification === "probable_error" || priceInsight.classification === "recent_drop");
   const watchEligible =
     row.sourceMode === "live" &&
-    row.status === "review" &&
-    row.verifiedAt !== null &&
+    (row.status === "review" || row.status === "monitoring") &&
     evidence?.watchNotificationEligible === true &&
-    (priceInsight.classification === "probable_error" || priceInsight.classification === "recent_drop");
+    !priceInsight.shouldAutoClose;
   let affiliateUrl: string | null = null;
   const tag = (env as unknown as { AMAZON_ASSOCIATE_TAG?: unknown }).AMAZON_ASSOCIATE_TAG ?? process.env.AMAZON_ASSOCIATE_TAG;
   if (row.source === "amazon" && typeof tag === "string" && /^[A-Za-z0-9-]{3,40}$/.test(tag)) {
@@ -455,15 +458,12 @@ export async function GET(request: Request) {
       jdSportsNonAccessory,
     ),
   );
-  const verifiedWatchVisibility = and(
+  const watchVisibility = and(
     eq(alerts.sourceMode, "live"),
     inArray(alerts.status, ["review", "monitoring"]),
-    isNotNull(alerts.verifiedAt),
     isNotNull(alerts.expiresAt),
     gt(alerts.expiresAt, now),
     gte(alerts.observedAt, freshAfter),
-    gte(alerts.verifiedAt, freshAfter),
-    sql`json_extract(${alerts.evidenceJson}, '$.analysis.checks.secondVerification') = 1`,
     sql`json_extract(${alerts.evidenceJson}, '$.watchNotificationEligible') = 1`,
     or(
       and(eq(alerts.source, "amazon"), gte(alerts.discountPercent, ANOMALY_LIMITS.minDiscountPercent), gte(alerts.score, 35)),
@@ -475,10 +475,10 @@ export async function GET(request: Request) {
     : includeDemo
     ? or(
         liveEligibility,
-        verifiedWatchVisibility,
+        watchVisibility,
         and(eq(alerts.sourceMode, "demo"), isNotNull(alerts.expiresAt), gt(alerts.expiresAt, now)),
       )
-    : or(liveEligibility, verifiedWatchVisibility);
+    : or(liveEligibility, watchVisibility);
   const dealVisibility = includeDemo
     ? or(eq(alerts.sourceMode, "demo"), publicDealPolicy)
     : publicDealPolicy;
