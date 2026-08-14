@@ -107,7 +107,7 @@ test("une fixture ne peut jamais atteindre le réseau", async () => {
   assert.equal(called, false);
 });
 
-test("un signal à une vérification est ingéré sans notification ni horodatage certifié", async () => {
+test("un signal à une vérification peut demander une notification sans horodatage certifié", async () => {
   const item = observation();
   item.verification.status = "rejected";
   item.verification.matchingPrice = false;
@@ -123,7 +123,7 @@ test("un signal à une vérification est ingéré sans notification ni horodatag
   const body = payload?.payload as Record<string, unknown>;
   assert.equal(body.verificationCount, 1);
   assert.equal(body.verifiedAt, null);
-  assert.equal(body.notify, false);
+  assert.equal(body.notify, true);
 });
 
 test("transmet l’historique Keepa uniquement avec un prix livré sans frais résiduels", () => {
