@@ -153,7 +153,7 @@ export interface OfferSnapshot {
 }
 
 export interface VerificationEvidence {
-  status: "confirmed" | "rejected";
+  status: "observed" | "confirmed" | "rejected";
   firstObservedAt: string;
   secondObservedAt: string;
   matchingPrice: boolean;
