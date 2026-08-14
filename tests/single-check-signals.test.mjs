@@ -23,7 +23,8 @@ test("sépare les signaux 1/2 des alertes confirmées et conserve le lien marcha
   assert.match(interfaceSource, /Voir le produit ↗/u);
   assert.match(interfaceSource, /0 jeton Keepa/u);
   assert.match(sink, /verificationCount: observation\.verification\.status === "confirmed" \? 2 : 1/u);
-  assert.match(sink, /toAlertIngestEnvelope\(observation, false\)/u);
+  assert.match(sink, /const requestNotification = config\.requestNotification === true/u);
+  assert.match(sink, /toAlertIngestEnvelope\(observation, requestNotification\)/u);
   const schema = JSON.parse(actorSchema);
   assert.equal(schema.properties.mode.enum.includes("digest"), true);
   assert.equal(schema.properties.useRemoteDiscovery.type, "boolean");
