@@ -39,8 +39,8 @@ test("digest and personal tiers respect the selected notification speed", () => 
   assert.equal(matcher.alertMatchesPushPreferences({ preferences: { ...preferences, notificationSpeed: "digest" }, alert, tier: "digest", radarMatches: true, nowMs }), true);
 });
 
-test("a watch alert is reserved only for instant users and keeps the product safeguards", () => {
-  const watchAlert = { ...alert, score: 49, sellerScore: 0, cartConfirmed: false };
+test("une alerte à vérifier est reçue en mode équilibré ou rapide, jamais en mode fiable", () => {
+  const watchAlert = { ...alert, score: 39, sellerScore: 0, cartConfirmed: false, historyPoints: 0 };
   assert.equal(matcher.alertMatchesPushPreferences({
     preferences: { ...preferences, notificationSpeed: "instant" },
     alert: watchAlert,
@@ -51,6 +51,22 @@ test("a watch alert is reserved only for instant users and keeps the product saf
   }), true);
   assert.equal(matcher.alertMatchesPushPreferences({
     preferences,
+    alert: watchAlert,
+    tier: "personal",
+    alertLevel: "watch",
+    radarMatches: true,
+    nowMs,
+  }), true);
+  assert.equal(matcher.alertMatchesPushPreferences({
+    preferences: { ...preferences, minScore: 85, notificationSpeed: "balanced" },
+    alert: watchAlert,
+    tier: "personal",
+    alertLevel: "watch",
+    radarMatches: true,
+    nowMs,
+  }), false);
+  assert.equal(matcher.alertMatchesPushPreferences({
+    preferences: { ...preferences, notificationSpeed: "digest" },
     alert: watchAlert,
     tier: "personal",
     alertLevel: "watch",
