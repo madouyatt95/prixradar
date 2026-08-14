@@ -81,8 +81,10 @@ export function alertMatchesPushPreferences(input: {
     && compatibleDeliveryMode
     && (expectedPostalPrefix === "" || expectedPostalPrefix === actualPostalPrefix)
   );
+  const acceptsWatch = preferences.notificationSpeed === "instant"
+    || (preferences.notificationSpeed === "balanced" && preferences.minScore <= 75);
   const speedMatches = watch
-    ? preferences.notificationSpeed === "instant"
+    ? acceptsWatch
     : tier === "digest"
     ? preferences.notificationSpeed === "digest"
     : tier === "personal"
@@ -90,7 +92,7 @@ export function alertMatchesPushPreferences(input: {
         && (preferences.notificationSpeed !== "balanced" || alert.score >= Math.min(100, preferences.minScore + 8))
       : true;
 
-  const minimumScore = watch ? Math.min(preferences.minScore, 45) : preferences.minScore;
+  const minimumScore = watch && acceptsWatch ? Math.min(preferences.minScore, 35) : preferences.minScore;
   // Le niveau « à vérifier » sert précisément à exposer les vendeurs tiers
   // inconnus sans les confondre avec une alerte fiable.
   const minimumSellerScore = watch ? 0 : preferences.minSellerScore;
@@ -98,7 +100,7 @@ export function alertMatchesPushPreferences(input: {
   return alert.score >= minimumScore
     && alert.discountPercent >= preferences.minDiscount
     && alert.sellerScore >= minimumSellerScore
-    && alert.historyPoints >= preferences.minimumHistoryPoints
+    && (watch || alert.historyPoints >= preferences.minimumHistoryPoints)
     && Number.isFinite(verifiedAt)
     && verifiedAt >= nowMs - preferences.maxAlertAgeMinutes * 60_000
     && (!preferences.requireExactVariant || alert.exactVariantConfirmed)
