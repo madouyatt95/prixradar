@@ -894,14 +894,22 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     && evaluation.checks.exactVariant
     && evaluation.checks.newCondition
     && evaluation.checks.available
-    && evaluation.checks.secondVerification
+    && evaluation.checks.notExpired
+    && evaluation.checks.publicPriceAccessible;
+  const broadWatchEligible = evaluation.score >= 35
+    && evaluation.checks.liveSource
+    && evaluation.checks.materialDiscount
+    && evaluation.checks.freshObservation
+    && evaluation.checks.exactVariant
+    && evaluation.checks.newCondition
+    && evaluation.checks.available
     && evaluation.checks.notExpired
     && evaluation.checks.publicPriceAccessible;
   const watchNotificationEligible = !notificationEligible
     && !evaluation.shouldAutoClose
     && publicDealPolicyEligible
     && identifiedSeller
-    && (categoryListingWatchEligible || (
+    && (categoryListingWatchEligible || broadWatchEligible || (
       evaluation.score >= 45
       && evaluation.checks.liveSource
       && evaluation.checks.historicalBaseline
@@ -920,7 +928,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     ));
   const alertLevel = notificationEligible ? "reliable" as const : watchNotificationEligible ? "watch" as const : "none" as const;
   const deliveryMode = alertDeliveryMode();
-  const deliveryEligible = alertLevel !== "none" && deliveryMode === "live";
+  const deliveryEligible = parsed.notify && alertLevel !== "none" && deliveryMode === "live";
   const buyNow = evaluateBuyNow({
     anomalyScore: evaluation.score,
     discountPercent: evaluation.discountPercent,
@@ -974,6 +982,7 @@ async function ingestAlert(envelope: IngestEnvelope, parsed: ParsedAlert, payloa
     publicDealPolicyEligible,
     verificationScope: parsed.verificationScope,
     categoryListingWatchEligible,
+    broadWatchEligible,
     categoryListingLimitations: parsed.verificationScope === "category_listing"
       ? ["product_page_not_verified", "size_not_verified", "shipping_unknown"]
       : [],
