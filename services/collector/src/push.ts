@@ -264,9 +264,6 @@ export async function sendPushForObservation(
   const categoryListingWatchEligible = observation.offer.fixture === false
     && observation.offer.product.source === "jd_sports"
     && observation.offer.verificationScope === "category_listing"
-    && observation.verification.status === "confirmed"
-    && observation.verification.matchingIdentity
-    && observation.verification.matchingPrice
     && hasExactVariantEvidence(observation.offer)
     && observation.offer.availability === "in_stock"
     && observation.offer.condition === "new"
@@ -274,20 +271,14 @@ export async function sendPushForObservation(
     && observation.offer.seller === "JD Sports"
     && observation.offer.promotion?.accessibleToAll !== false
     && (observation.anomaly.discountPercent ?? 0) >= 70;
-  const fullyVerifiedWatchEligible = observation.offer.fixture === false
-    && observation.verification.status === "confirmed"
-    && observation.verification.matchingIdentity
-    && observation.verification.matchingPrice
+  const broadWatchEligible = observation.offer.fixture === false
     && hasExactVariantEvidence(observation.offer)
     && observation.offer.availability === "in_stock"
-    && observation.offer.shipping !== null
-    && observation.offer.total !== null
-    && observation.offer.total.amountMinor > 0
     && observation.offer.promotion?.accessibleToAll !== false
     && observation.offer.seller !== null
     && (observation.anomaly.discountPercent ?? 0) >= 20
-    && ["watch", "probable", "strong"].includes(observation.anomaly.classification);
-  const watchEligible = categoryListingWatchEligible || fullyVerifiedWatchEligible;
+    && observation.anomaly.score >= 35;
+  const watchEligible = categoryListingWatchEligible || broadWatchEligible;
   if ((alertLevel === "reliable" && !notificationEligible(observation)) || (alertLevel === "watch" && !watchEligible)) {
     return { eligible: false, targets: 0, reserved: 0, sent: 0, failed: 0 };
   }
