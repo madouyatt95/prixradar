@@ -31,7 +31,7 @@ import {
 } from "./sink.js";
 import { collectFacebookSocialSources, FACEBOOK_SOCIAL_SOURCES } from "./social.js";
 import { isPublicWebRetailSource, isRetailSource, type Market, type RetailSource, type VerifiedObservation } from "./types.js";
-import { verifyOfferSnapshots } from "./verify.js";
+import { observeOfferSnapshot } from "./verify.js";
 
 interface ActorInput {
   source?: RetailSource | "all";
@@ -85,6 +85,15 @@ export function shouldIncludeRemoteTasks(source: RetailSource | "all", fixture: 
 
 export function shouldPersistFrontier(source: RetailSource): boolean {
   return source !== "jd_sports";
+}
+
+export function rotateJdCoverageTargets<T>(targets: readonly T[], nowMs = Date.now()): T[] {
+  if (targets.length <= 2) return [...targets];
+  const half = Math.ceil(targets.length / 2);
+  const first = Math.floor(nowMs / (30 * 60_000)) % half;
+  const secondHalfLength = targets.length - half;
+  const selected = [targets[first], targets[half + (first % Math.max(1, secondHalfLength))]];
+  return selected.filter((target): target is T => target !== undefined);
 }
 
 function amazonExcludedFamilies(value: unknown): AmazonExcludedFamily[] {
@@ -479,12 +488,9 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       `${target.sourceConfigurationId ?? "manual"}:${target.url}`,
       target,
     ])).values()];
-    const jdRotationOffset = source === "jd_sports" && uniqueCoverageTargets.length > 1
-      ? Math.floor(Date.now() / (4 * 60 * 60_000)) % uniqueCoverageTargets.length
-      : 0;
-    const coverageTargets = jdRotationOffset === 0
-      ? uniqueCoverageTargets
-      : [...uniqueCoverageTargets.slice(jdRotationOffset), ...uniqueCoverageTargets.slice(0, jdRotationOffset)];
+    const coverageTargets = source === "jd_sports"
+      ? rotateJdCoverageTargets(uniqueCoverageTargets)
+      : uniqueCoverageTargets;
     const seenProductUrls = new Set<string>();
     const priorityKeepaClient = config.keepaApiKey ? new KeepaClient({
       apiKey: config.keepaApiKey,
@@ -754,38 +760,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               };
             }
 
-            await new Promise<void>((resolve) => setTimeout(resolve, config.verifyDelayMs));
-            const confirmationScan = await scanSourceUrl(url, coverageScanOptions);
-            const confirmationByProduct = new Map(
-              confirmationScan.offers
-                .filter((offer) => offer.verificationScope === "category_listing")
-                .map((offer) => [offer.product.productKey, offer] as const),
-            );
             let verifiedProducts = 0;
-            let verificationFailures = 0;
             for (const firstOffer of qualifyingOffers) {
-              const secondOffer = confirmationByProduct.get(firstOffer.product.productKey);
-              if (!secondOffer) {
-                verificationFailures += 1;
-                await Actor.pushData({
-                  dataKind: "verification-failure",
-                  url: firstOffer.product.url,
-                  errorCode: "LISTING_SECOND_READ_MISSING",
-                });
-                continue;
-              }
-              const observation = verifyOfferSnapshots(firstOffer, secondOffer);
-              if (observation.verification.status !== "confirmed") {
-                verificationFailures += 1;
-                await Actor.pushData({
-                  dataKind: "verification-failure",
-                  url: firstOffer.product.url,
-                  errorCode: "LISTING_SECOND_READ_CHANGED",
-                });
-                continue;
-              }
+              const observation = observeOfferSnapshot(firstOffer, firstOffer.referencePrice?.amountMinor ?? null);
               if (!fixture) await deliverObservation(observation, config, { allowPush: input.notify === true });
-              await Actor.pushData({ dataKind: "verified-listing-observation", ...observation });
+              await Actor.pushData({ dataKind: "watch-listing-observation", ...observation });
               seenProductUrls.add(firstOffer.product.url);
               verifiedProducts += 1;
             }
@@ -794,7 +773,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               duplicatesSkipped: 0,
               nextPageCursor: initialScan.nextPageUrl,
               attemptedProducts: qualifyingOffers.length,
-              verificationFailures,
+              verificationFailures: 0,
               policySkipped,
               antiBotBlocked: false,
               verifiedProducts,
