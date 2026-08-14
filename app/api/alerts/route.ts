@@ -259,6 +259,15 @@ function serializeAlert(
   const displayedDiscountPercent = merchantReferenceCents !== null
     ? Math.max(0, Math.round((merchantReferenceCents - (totalCents ?? row.priceCents)) * 100 / merchantReferenceCents))
     : Math.max(0, Math.round(priceInsight.discountPercent));
+  const displayedPriceInsight = merchantReferenceCents !== null && priceInsight.baselineCents === null
+    ? {
+        ...priceInsight,
+        classification: "recent_drop" as const,
+        classificationLabel: "Baisse affichée",
+        discountPercent: displayedDiscountPercent,
+        explanation: "Baisse calculée depuis le prix barré affiché par l’enseigne. Elle reste à vérifier tant qu’une seconde lecture manque.",
+      }
+    : priceInsight;
 
   return {
     id: row.id,
@@ -317,7 +326,7 @@ function serializeAlert(
     verifiedAt: row.verifiedAt,
     expiresAt: row.expiresAt,
     priceReference,
-    priceInsight,
+    priceInsight: displayedPriceInsight,
     comparableOffers,
     certificateUrl: liveEligible ? `/certified/${encodeURIComponent(row.id)}` : null,
     certificateApiUrl: liveEligible ? `/api/certified/${encodeURIComponent(row.id)}` : null,
