@@ -256,6 +256,9 @@ function serializeAlert(
     : priceInsight.baselineCents !== null && priceInsight.baselineCents > (totalCents ?? row.priceCents)
       ? { kind: "historical" as const, amountCents: priceInsight.baselineCents, label: "Prix habituel estimé sur 90 jours", crossedOut: false }
       : { kind: "unavailable" as const, amountCents: null, label: "Référence insuffisante", crossedOut: false };
+  const displayedDiscountPercent = merchantReferenceCents !== null
+    ? Math.max(0, Math.round((merchantReferenceCents - (totalCents ?? row.priceCents)) * 100 / merchantReferenceCents))
+    : Math.max(0, Math.round(priceInsight.discountPercent));
 
   return {
     id: row.id,
@@ -280,7 +283,7 @@ function serializeAlert(
     shippingKnown: row.shippingCents !== null,
     totalCents,
     usualPriceCents: priceInsight.baselineCents ?? row.usualPriceCents,
-    discountPercent: Math.max(0, Math.round(priceInsight.discountPercent)),
+    discountPercent: displayedDiscountPercent,
     score: effectiveScore,
     buyNow,
     confidence: row.confidence,
