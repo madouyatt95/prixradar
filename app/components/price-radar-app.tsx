@@ -2780,7 +2780,7 @@ function RadarView({
 
       <section className="single-check-section" aria-labelledby="single-check-title">
         <div className="single-check-heading">
-          <div><span className="eyebrow">À regarder avant confirmation</span><h2 id="single-check-title">Signaux à confirmer</h2><p>Un premier relevé a détecté un prix intéressant, mais la seconde lecture n’a pas encore concordé. Ces signaux ne déclenchent ni notification ni passeport certifié.</p></div>
+          <div><span className="eyebrow">À regarder avant confirmation</span><h2 id="single-check-title">Signaux à confirmer</h2><p>Un premier relevé a détecté une baisse intéressante. Selon votre niveau d’alerte, ces signaux peuvent être notifiés sous la mention « À vérifier », sans être confondus avec une alerte fiable.</p></div>
           <span>{singleCheckSignals.length} signal{singleCheckSignals.length === 1 ? "" : "s"} · 1/2</span>
         </div>
         {singleCheckSignals.length > 0 ? <div className="single-check-columns">
@@ -3376,7 +3376,7 @@ function SourcesView({
             runtime={runtimeFor(source.id)}
             method={source.method}
             resultNote={source.id === "jd_sports"
-              ? "Les offres d’au moins 70 % hors accessoires apparaissent dans Radar → Signaux à confirmer. Si la liste est vide, aucun produit n’a franchi ce filtre au dernier passage."
+              ? "Les offres d’au moins 70 % hors accessoires apparaissent dans Radar avec la mention « À vérifier ». Elles peuvent être notifiées sans attendre les preuves exigées pour une alerte fiable."
               : undefined}
           />;
         })}
