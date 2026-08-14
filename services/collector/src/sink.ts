@@ -390,9 +390,10 @@ export async function postSignalObservation(
   if (observation.verification.status === "confirmed") {
     throw new SinkRequestError("Une observation confirmée doit suivre le circuit des alertes.", null);
   }
+  const requestNotification = config.requestNotification === true;
   return postEnvelope<IngestResponse>(
-    toAlertIngestEnvelope(observation, false),
-    { ...config, requestNotification: false },
+    toAlertIngestEnvelope(observation, requestNotification),
+    { ...config, requestNotification },
     fetchImpl,
   );
 }
