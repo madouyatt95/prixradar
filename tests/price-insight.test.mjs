@@ -48,10 +48,15 @@ test("distingue une erreur probable fraîche d'un bon prix devenu stable", () =>
 });
 
 test("l'interface ne barre que la référence réellement affichée par l'enseigne", async () => {
-  const application = await readFile(new URL("../app/components/price-radar-app.tsx", import.meta.url), "utf8");
+  const [application, alertsRoute] = await Promise.all([
+    readFile(new URL("../app/components/price-radar-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/alerts/route.ts", import.meta.url), "utf8"),
+  ]);
   assert.match(application, /reference\.crossedOut/);
   assert.match(application, /Habituel estimé/);
   assert.doesNotMatch(application, /<del>\{money\(alert\.usualPrice/u);
   assert.match(application, /Comparaison entre enseignes/);
   assert.match(application, /Rareté/);
+  assert.match(alertsRoute, /const displayedDiscountPercent = merchantReferenceCents !== null/u);
+  assert.match(alertsRoute, /merchantReferenceCents - \(totalCents \?\? row\.priceCents\)/u);
 });
