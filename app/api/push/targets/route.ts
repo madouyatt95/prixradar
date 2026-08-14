@@ -121,7 +121,7 @@ export async function GET(request: Request) {
             eq(userPreferences.notificationEnabled, true),
             gt(pushSubscriptions.id, cursor),
             alertLevel === "watch"
-              ? eq(userPreferences.notificationSpeed, "instant")
+              ? lte(userPreferences.minScore, 75)
               : lte(userPreferences.minScore, score),
           ),
         )
@@ -200,18 +200,18 @@ export async function GET(request: Request) {
           gtin,
         }));
         const speedMismatch = alertLevel === "watch"
-          ? row.notificationSpeed !== "instant"
+          ? row.notificationSpeed === "digest"
           : tier === "personal" && (
               row.notificationSpeed === "digest" ||
               (row.notificationSpeed === "balanced" && score < Math.min(100, row.minScore + 8))
             );
-        const requiredScore = alertLevel === "watch" ? Math.min(row.minScore, 45) : row.minScore;
+        const requiredScore = alertLevel === "watch" ? Math.min(row.minScore, 35) : row.minScore;
         const requiredSellerScore = alertLevel === "watch" ? 0 : row.minSellerScore;
         const filtered =
           score < requiredScore ||
           discount < row.minDiscount ||
           sellerScore < requiredSellerScore ||
-          historyPoints < row.minimumHistoryPoints ||
+          (alertLevel !== "watch" && historyPoints < row.minimumHistoryPoints) ||
           verifiedAgeMinutes > row.maxAlertAgeMinutes ||
           (row.requireExactVariant && !exactVariantConfirmed) ||
           (alertLevel !== "watch" && row.requireCartConfirmation && !cartConfirmed) ||
