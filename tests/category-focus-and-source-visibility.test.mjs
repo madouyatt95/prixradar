@@ -27,19 +27,24 @@ test("la couverture Amazon automatique se concentre sur High-Tech et maison", as
 
 test("l’interface explique où trouver les résultats JD Sports et montre aussi zéro", async () => {
   const source = await readFile(new URL("../app/components/price-radar-app.tsx", import.meta.url), "utf8");
-  assert.match(source, /Radar → Signaux à confirmer/u);
-  assert.match(source, /aucun produit n’a franchi ce filtre/u);
+  assert.match(source, /mention « À vérifier »/u);
+  assert.match(source, /sans attendre les preuves exigées pour une alerte fiable/u);
   assert.match(source, /runtime\.productsSeen !== undefined/u);
   assert.match(source, /Dernier passage réussi/u);
 });
 
-test("une offre JD Sports doublement vérifiée reste visible en signal à surveiller dès le score 35", async () => {
+test("une offre JD Sports repérée une fois reste visible et notifiable dès le score 35", async () => {
   const [ingest, alerts] = await Promise.all([
     readFile(new URL("../app/api/ingest/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/alerts/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(ingest, /const JD_LISTING_WATCH_MIN_SCORE = 35/u);
   assert.match(ingest, /categoryListingWatchEligible[\s\S]*evaluation\.score >= JD_LISTING_WATCH_MIN_SCORE/u);
+  const listingRule = ingest.slice(
+    ingest.indexOf("const categoryListingWatchEligible"),
+    ingest.indexOf("const broadWatchEligible"),
+  );
+  assert.doesNotMatch(listingRule, /evaluation\.checks\.secondVerification/u);
   assert.match(alerts, /view === "single_check" \? 0 : 35/u);
   assert.match(alerts, /item\.source === "jd_sports"/u);
 });
