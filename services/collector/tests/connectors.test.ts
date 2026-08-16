@@ -143,7 +143,7 @@ test("JD Sports extrait les prix des cartes catégorie sans inventer la livraiso
   });
   assert.ok(offer);
   assert.equal(offer.product.externalId, "19742720_jdsportsfr");
-  assert.equal(offer.product.url, "https://m.jdsports.fr/product/blanc-new-balance-740-enfant/19742720_jdsportsfr/");
+  assert.equal(offer.product.url, "https://www.jdsports.fr/product/blanc-new-balance-740-enfant/19742720_jdsportsfr/");
   assert.equal(offer.product.category, "Chaussures");
   assert.equal(offer.price.amountMinor, 5_500);
   assert.equal(offer.referencePrice?.amountMinor, 20_000);
