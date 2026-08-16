@@ -635,6 +635,71 @@ a {
   font-size: 10px;
 }
 
+.alert-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alert-list-actions > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.radar-refresh-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: var(--ink);
+  background: var(--surface-strong);
+  font-size: 11px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.radar-refresh-button i {
+  font-size: 17px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.radar-refresh-button:disabled {
+  cursor: progress;
+  opacity: .58;
+}
+
+.amazon-focus-banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 3px 10px;
+  margin: -4px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgb(93 78 229 / 22%);
+  border-radius: 14px;
+  background: rgb(93 78 229 / 7%);
+}
+
+.amazon-focus-banner span {
+  grid-row: 1 / 3;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--violet);
+  font-size: 9px;
+  font-weight: 820;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+}
+
+.amazon-focus-banner strong { font-size: 12px; }
+.amazon-focus-banner small { color: var(--muted); font-size: 10px; }
+
 .alert-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4075,6 +4140,11 @@ a {
   .public-governance-panel { padding: 17px; }
   .heading-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin-top: 15px; }
   .heading-actions button { width: 100%; padding-inline: 8px; }
+  .section-label-row { align-items: flex-start; }
+  .alert-list-actions { align-items: flex-end; flex-direction: column; gap: 6px; }
+  .radar-refresh-button { min-height: 38px; }
+  .amazon-focus-banner { grid-template-columns: 1fr; }
+  .amazon-focus-banner span { grid-row: auto; justify-self: start; }
   .natural-radar { grid-template-columns: 1fr; padding: 17px; }
   .natural-radar form { grid-template-columns: 1fr; }
   .radar-rule-list { grid-column: 1; }
