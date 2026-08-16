@@ -9,6 +9,7 @@ import {
   DEFAULT_AMAZON_EXCLUDED_FAMILIES,
   DEFAULT_AMAZON_TARGET_BRANDS,
   KeepaClient,
+  isTargetAmazonBrand,
   scanKeepaMarket,
   verifyKeepaCodeProduct,
   type AmazonExcludedFamily,
@@ -87,6 +88,15 @@ export function shouldIncludeRemoteTasks(source: RetailSource | "all", fixture: 
 
 export function shouldPersistFrontier(source: RetailSource): boolean {
   return source !== "jd_sports";
+}
+
+export function shouldKeepAmazonObservation(
+  source: RetailSource,
+  observation: VerifiedObservation,
+  targetBrands: readonly string[],
+): boolean {
+  return source !== "amazon"
+    || isTargetAmazonBrand(observation.offer.product.brand, targetBrands);
 }
 
 export function rotateJdCoverageTargets<T>(targets: readonly T[], nowMs = Date.now()): T[] {
@@ -543,6 +553,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             verifyDelayMs: config.verifyDelayMs,
           }));
         }
+        if (!shouldKeepAmazonObservation(task.source, observation, targetAmazonBrands)) {
+          seenProductUrls.add(task.url);
+          if (task.kind === "inspection") await reportTaskResult(task.id, "inspection", "completed", null);
+          continue;
+        }
         await deliverObservation(observation, config, { allowPush: task.kind === "inspection" && input.notify === true });
         seenProductUrls.add(task.url);
         let protectionPush: unknown = null;
@@ -589,6 +604,11 @@ export async function runActor(config: CollectorConfig): Promise<void> {
           verifyDelayMs: config.verifyDelayMs,
           shadowCart: isPublicWebRetailSource(recheck.source) ? false : input.shadowCart ?? true,
         }));
+        if (!shouldKeepAmazonObservation(recheck.source, observation, targetAmazonBrands)) {
+          seenProductUrls.add(recheck.url);
+          await reportTaskResult(recheck.id, "recheck", "completed", null);
+          continue;
+        }
         await deliverObservation(observation, config, { allowPush: false });
         seenProductUrls.add(recheck.url);
         await reportTaskResult(recheck.id, "recheck", "completed", null);
