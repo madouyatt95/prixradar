@@ -1350,6 +1350,118 @@ export function PriceRadarApp() {
   }, []);
 
   useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    let active = true;
+    let foregroundRefreshInFlight = false;
+    let lastForegroundRefresh = 0;
+
+    const refreshAlerts = async (requestedAlertId: string | null) => {
+      const [alertsResponse, signalsResponse] = await Promise.all([
+        fetch("/api/alerts?limit=50", { headers: { accept: "application/json" }, cache: "no-store" }),
+        fetch("/api/alerts?view=single_check&limit=30&minScore=0&accessibleOnly=false", { headers: { accept: "application/json" }, cache: "no-store" }),
+      ]);
+      const alertsPayload = alertsResponse.ok ? await alertsResponse.json() as Record<string, unknown> : {};
+      const signalsPayload = signalsResponse.ok ? await signalsResponse.json() as Record<string, unknown> : {};
+      const rawAlerts = Array.isArray(alertsPayload.items)
+        ? alertsPayload.items
+        : Array.isArray(alertsPayload.alerts)
+          ? alertsPayload.alerts
+          : [];
+      const alerts = rawAlerts.map(mapLiveAlert).filter((item): item is AlertItem => item !== null);
+      const signals = (Array.isArray(signalsPayload.items) ? signalsPayload.items : [])
+        .map(mapLiveAlert)
+        .filter((item): item is AlertItem => item !== null);
+      if (!active) return;
+      setLiveAlerts(alerts);
+      setSingleCheckSignals(signals);
+      setLiveLoading(false);
+      setSelected((current) => {
+        const targetId = requestedAlertId ?? current?.id ?? null;
+        if (!targetId) return current;
+        return alerts.find((item) => item.id === targetId)
+          ?? signals.find((item) => item.id === targetId)
+          ?? current;
+      });
+    };
+
+    const refreshSocial = async () => {
+      const response = await fetch("/api/social?limit=60", { headers: { accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) return;
+      const payload = await response.json() as { sources?: unknown[]; items?: unknown[] };
+      if (!active) return;
+      setSocialSources((payload.sources ?? []).map(mapSocialSource).filter((item): item is SocialSource => item !== null));
+      setSocialPublications((payload.items ?? []).map(mapSocialPublication).filter((item): item is SocialPublication => item !== null));
+      setSocialLoading(false);
+    };
+
+    const refreshMissions = async () => {
+      const data = await loadMissionCenter();
+      if (!active) return;
+      setMissions(data.missions);
+      setPurchases(data.purchases);
+      setSavings(data.savings);
+      setMissionCenterLoading(false);
+    };
+
+    const refreshFromNotification = async (rawData: unknown) => {
+      const data = record(rawData);
+      const requestedUrl = typeof data?.url === "string" ? data.url : window.location.href;
+      const target = new URL(requestedUrl, window.location.origin);
+      const safeTarget = target.origin === window.location.origin
+        ? `${target.pathname}${target.search}`
+        : window.location.pathname + window.location.search;
+      if (`${window.location.pathname}${window.location.search}` !== safeTarget) {
+        window.history.replaceState({}, "", safeTarget);
+      }
+      const requestedAlertId = typeof data?.alertId === "string"
+        ? data.alertId
+        : target.searchParams.get("alert");
+      const tier = typeof data?.tier === "string" ? data.tier : null;
+      const requestedTab = target.searchParams.get("tab");
+
+      if (tier === "social" || requestedTab === "social") {
+        setTab("social");
+        await refreshSocial();
+        return;
+      }
+      if (tier === "protection" || requestedTab === "missions") {
+        setTab("watchlist");
+        await refreshMissions();
+        return;
+      }
+      setTab("radar");
+      await refreshAlerts(requestedAlertId);
+    };
+
+    const onServiceWorkerMessage = (event: MessageEvent<unknown>) => {
+      const data = record(event.data);
+      if (data?.type !== "PRIXRADAR_NOTIFICATION_OPEN") return;
+      void refreshFromNotification(data).catch(() => undefined);
+    };
+    const onForeground = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastForegroundRefresh < 5_000) return;
+      lastForegroundRefresh = now;
+      if (foregroundRefreshInFlight) return;
+      foregroundRefreshInFlight = true;
+      void Promise.allSettled([refreshAlerts(null), refreshSocial()]).finally(() => {
+        foregroundRefreshInFlight = false;
+      });
+    };
+
+    navigator.serviceWorker.addEventListener("message", onServiceWorkerMessage);
+    document.addEventListener("visibilitychange", onForeground);
+    window.addEventListener("pageshow", onForeground);
+    return () => {
+      active = false;
+      navigator.serviceWorker.removeEventListener("message", onServiceWorkerMessage);
+      document.removeEventListener("visibilitychange", onForeground);
+      window.removeEventListener("pageshow", onForeground);
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
     const load = () => fetch("/api/social?limit=60", { headers: { accept: "application/json" } })
       .then(async (response) => response.ok ? response.json() as Promise<{ sources?: unknown[]; items?: unknown[] }> : { sources: [], items: [] })
