@@ -59,7 +59,11 @@ export function normalizeProductUrl(rawUrl: string, allowedHosts: ReadonlySet<st
   if (url.protocol !== "https:" || !allowedHosts.has(host) || url.username || url.password) {
     throw new Error("URL produit refusée: protocole ou hôte non autorisé.");
   }
-  url.hostname = host;
+  const jdSportsHost = host === "jdsports.fr" || host === "www.jdsports.fr" || host === "m.jdsports.fr";
+  url.hostname = jdSportsHost ? "www.jdsports.fr" : host;
+  if (jdSportsHost && url.pathname.startsWith("/product/")) {
+    url.pathname = `${url.pathname.replace(/\/+$/u, "")}/`;
+  }
   url.hash = "";
   for (const key of [...url.searchParams.keys()]) {
     if (key.toLowerCase().startsWith("utm_") || TRACKING_PARAMETERS.has(key.toLowerCase())) {
