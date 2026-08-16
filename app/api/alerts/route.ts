@@ -495,6 +495,12 @@ export async function GET(request: Request) {
     ? or(eq(alerts.sourceMode, "demo"), publicDealPolicy)
     : publicDealPolicy;
   const conditions: SQL[] = [visibility as SQL, dealVisibility as SQL, gte(alerts.discountPercent, minDiscount), gte(alerts.score, minScore)];
+  // Le test Amazon actif ne doit exposer ni l'ancien historique hors cible,
+  // ni un accessoire qui mentionne Apple/Samsung sans être de cette marque.
+  conditions.push(sql`(
+    ${alerts.source} <> 'amazon'
+    or lower(trim(coalesce(${alerts.brand}, ''))) in ('apple', 'apple inc', 'samsung', 'samsung electronics')
+  )`);
   conditions.push(lte(alerts.publicPriceCents, maxPrice));
   if (accessibleOnly) conditions.push(eq(alerts.priceAccessibleToAll, true));
   if (source !== null) conditions.push(eq(alerts.source, source));
