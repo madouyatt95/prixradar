@@ -1,4 +1,4 @@
-const CACHE_NAME = "prixradar-shell-v8";
+const CACHE_NAME = "prixradar-shell-v9";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -65,9 +65,13 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("notificationclick", (event) => {
+  const notificationData =
+    event.notification.data && typeof event.notification.data === "object"
+      ? event.notification.data
+      : {};
   const requestedUrl =
-    event.notification.data && typeof event.notification.data.url === "string"
-      ? event.notification.data.url
+    typeof notificationData.url === "string"
+      ? notificationData.url
       : "/";
   let targetUrl = "/";
   try {
@@ -79,12 +83,29 @@ self.addEventListener("notificationclick", (event) => {
 
   event.notification.close();
   event.waitUntil(
-    Promise.resolve("clearAppBadge" in self.navigator ? self.navigator.clearAppBadge() : undefined).then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true })).then((clients) => {
+    Promise.resolve("clearAppBadge" in self.navigator ? self.navigator.clearAppBadge() : undefined).then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true })).then(async (clients) => {
+      const message = {
+        type: "PRIXRADAR_NOTIFICATION_OPEN",
+        url: targetUrl,
+        alertId: typeof notificationData.alertId === "string" ? notificationData.alertId : null,
+        tier: typeof notificationData.tier === "string" ? notificationData.tier : "personal",
+      };
       const existing = clients.find((client) => client.url.startsWith(self.location.origin));
       if (existing) {
-        return existing.navigate(targetUrl).then(() => existing.focus());
+        let targetClient = existing;
+        try {
+          targetClient = (await existing.navigate(targetUrl)) || existing;
+        } catch {
+          // iOS peut refuser navigate() quand la PWA est suspendue. Le message
+          // ci-dessous force alors l'actualisation dans le client remis au premier plan.
+        }
+        await targetClient.focus();
+        targetClient.postMessage(message);
+        return targetClient;
       }
-      return self.clients.openWindow(targetUrl);
+      const opened = await self.clients.openWindow(targetUrl);
+      if (opened) opened.postMessage(message);
+      return opened;
     }),
   );
 });
@@ -125,7 +146,7 @@ self.addEventListener("push", (event) => {
       ...(image ? { image } : {}),
       tag: `prixradar-${tier}-${alertId}`,
       renotify: tier === "urgent" || tier === "protection",
-      data: { url, tier },
+      data: { url, tier, alertId },
     })),
   );
 });
