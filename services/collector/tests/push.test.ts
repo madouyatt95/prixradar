@@ -274,6 +274,9 @@ test("envoie une baisse JD Sports à vérifier sans inventer les frais de livrai
   assert.equal(summary.sent, 1);
   assert.match(payloads[0] ?? "", /taille, stock et livraison à confirmer/u);
   assert.match(payloads[0] ?? "", /55\.00 EUR/u);
+  const notificationPayload = JSON.parse(payloads[0] ?? "{}") as Record<string, unknown>;
+  assert.equal(notificationPayload.url, `/?alert=${encodeURIComponent(listing.alertCandidateId)}`);
+  assert.equal(notificationPayload.externalUrl, listing.offer.product.url);
 });
 
 test("livre une baisse après achat uniquement à la réservation du propriétaire", async () => {
