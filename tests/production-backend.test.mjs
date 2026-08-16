@@ -36,7 +36,7 @@ test("publishes only live, fully verified anomalies", async () => {
 });
 
 test("keeps push preferences durable and private APIs out of caches", async () => {
-  const [pushRoute, targetRoute, serverAuth, deliveriesRoute, digestsRoute, preferencesRoute, serviceWorker] = await Promise.all([
+  const [pushRoute, targetRoute, serverAuth, deliveriesRoute, digestsRoute, preferencesRoute, serviceWorker, app] = await Promise.all([
     source("../app/api/push/route.ts"),
     source("../app/api/push/targets/route.ts"),
     source("../app/api/push/server-auth.ts"),
@@ -44,6 +44,7 @@ test("keeps push preferences durable and private APIs out of caches", async () =
     source("../app/api/push/digests/route.ts"),
     source("../app/api/preferences/route.ts"),
     source("../public/sw.js"),
+    source("../app/components/price-radar-app.tsx"),
   ]);
 
   assert.match(pushRoute, /pushSubscriptions/);
@@ -62,6 +63,12 @@ test("keeps push preferences durable and private APIs out of caches", async () =
   assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /addEventListener\("push"/);
   assert.match(serviceWorker, /showNotification/);
+  assert.match(serviceWorker, /PRIXRADAR_NOTIFICATION_OPEN/);
+  assert.match(serviceWorker, /targetClient\.postMessage\(message\)/);
+  assert.match(serviceWorker, /data: \{ url, tier, alertId \}/);
+  assert.match(app, /navigator\.serviceWorker\.addEventListener\("message", onServiceWorkerMessage\)/);
+  assert.match(app, /document\.addEventListener\("visibilitychange", onForeground\)/);
+  assert.match(app, /cache: "no-store"/);
 });
 
 test("ships the incremental D1 schema for collection and notification audit", async () => {
@@ -175,7 +182,7 @@ test("keeps the mobile header clear of the iPhone safe area", async () => {
   assert.match(styles, /min-height:\s*calc\(64px \+ var\(--safe-top\)\)/);
   assert.match(styles, /padding:\s*calc\(10px \+ var\(--safe-top\)\)/);
   const serviceWorker = await source("../public/sw.js");
-  assert.match(serviceWorker, /prixradar-shell-v8/);
+  assert.match(serviceWorker, /prixradar-shell-v9/);
   assert.match(serviceWorker, /cacheableNavigation/);
   assert.doesNotMatch(serviceWorker, /cache\.put\("\/"/);
 });
