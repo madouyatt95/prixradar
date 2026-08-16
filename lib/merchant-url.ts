@@ -1,4 +1,7 @@
 import { sourceForHost, type ActiveSourceId } from "./source-registry";
+import { canonicalMerchantProductUrl } from "./merchant-link";
+
+export { canonicalMerchantProductUrl } from "./merchant-link";
 
 export type SupportedMerchant = ActiveSourceId;
 
@@ -129,8 +132,9 @@ export function parseCoverageProductUrl(raw: string): {
   parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./u, "");
   parsed.search = "";
   parsed.hash = "";
+  const canonicalUrl = canonicalMerchantProductUrl(merchant.source, parsed.toString());
   return {
-    url: parsed.toString(),
+    url: canonicalUrl,
     productKey: `${merchant.source}:${merchant.market.toLowerCase()}:${identity}`,
     externalId,
     source: merchant.source,
