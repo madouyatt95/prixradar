@@ -61,4 +61,5 @@ test("l'interface ne barre que la référence réellement affichée par l'enseig
   assert.match(alertsRoute, /merchantReferenceCents - \(totalCents \?\? row\.priceCents\)/u);
   assert.match(alertsRoute, /classificationLabel: "Baisse affichée"/u);
   assert.match(alertsRoute, /prix barré affiché par l’enseigne/u);
+  assert.match(alertsRoute, /merchantReferenceCents !== null && history\.length === 0/u);
 });
