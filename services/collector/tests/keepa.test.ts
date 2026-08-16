@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { KEEPA_MARKETS, KeepaApiError, KeepaClient, isExcludedAmazonProduct, keepaOffer, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
+import { KEEPA_MARKETS, KeepaApiError, KeepaClient, isExcludedAmazonProduct, isTargetAmazonBrand, keepaOffer, mergeKeepaWithLive, scanKeepaMarket } from "../src/keepa.js";
 
 test("déclare exactement les cinq marchés Amazon Europe couverts", () => {
   assert.deepEqual(Object.fromEntries(Object.entries(KEEPA_MARKETS).map(([market, config]) => [market, config.domainId])), {
@@ -47,7 +47,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
         products: [{
           asin: "B012345678",
           title: "Produit Keepa Fixture",
-          brand: "Fixture",
+          brand: "Apple",
           categoryTree: [{ catId: 172282, name: "High-Tech" }],
           productGroup: "Electronics",
           stats: {
@@ -77,6 +77,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
     categoryIds: [172282, 172282],
     minPriceCents: 10_000,
     maxPriceCents: 50_000,
+    targetBrands: ["Apple", "Samsung"],
   });
   assert.deepEqual(paths, ["/deal", "/product"]);
   assert.equal(observations[0]?.offer.price.amountMinor, 5_000);
@@ -100,6 +101,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(dealSelection.isRangeEnabled, true);
   assert.equal(dealSelection.dateRange, 0);
   assert.deepEqual(dealSelection.currentRange, [10_000, 50_000]);
+  assert.deepEqual(dealSelection.brand, ["Apple", "Samsung"]);
 
   const keepa = observations[0];
   assert.ok(keepa);
@@ -116,6 +118,14 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(merged.offer.referencePrice?.amountMinor, 8_000);
   assert.equal(merged.offer.referencePriceSource, "merchant_page");
   assert.equal(merged.historicalPrices?.length, 6);
+});
+
+test("le ciblage Amazon accepte uniquement les marques Apple et Samsung", () => {
+  assert.equal(isTargetAmazonBrand("Apple"), true);
+  assert.equal(isTargetAmazonBrand("Samsung Electronics"), true);
+  assert.equal(isTargetAmazonBrand("Coque compatible Apple"), false);
+  assert.equal(isTargetAmazonBrand("Generic"), false);
+  assert.equal(isTargetAmazonBrand(null), false);
 });
 
 test("exclut par défaut les livres, la musique, les vidéos et l'art mural des résultats Amazon", () => {
