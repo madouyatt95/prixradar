@@ -52,6 +52,7 @@ import {
 import { resolveCanonicalProduct } from "@/lib/product-identity";
 import { parseCoverageProductUrl, parseMerchantUrl } from "@/lib/merchant-url";
 import { isActiveSource, isPartnerSourceAuthorized, isPublicWebSource, type ActiveSourceId } from "@/lib/source-registry";
+import { isAmazonFocusBrand } from "@/lib/amazon-focus";
 
 export const dynamic = "force-dynamic";
 
@@ -1502,6 +1503,9 @@ export async function POST(request: Request) {
         parsed = parseAlert(envelope.source, envelope.payload);
       } catch (error) {
         return apiError(422, "INVALID_ALERT", error instanceof Error ? error.message : "Alerte invalide.");
+      }
+      if (envelope.source === "amazon" && !isAmazonFocusBrand(parsed.brand)) {
+        return json({ ok: true, accepted: false, duplicate: false, code: "AMAZON_BRAND_OUT_OF_SCOPE" }, 202);
       }
       return await ingestAlert(envelope, parsed, payloadHash);
     }
