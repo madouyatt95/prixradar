@@ -327,7 +327,8 @@ export async function sendPushForObservation(
     body: listingOnly
       ? `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · baisse de ${Math.round(observation.anomaly.discountPercent ?? 0)} %, taille, stock et livraison à confirmer`
       : `${(total.amountMinor / 100).toFixed(2)} ${total.currency} · ${alertLevel === "watch" ? "baisse inhabituelle, vendeur à contrôler" : `score ${backendScore}/100`}`,
-    url: observation.offer.product.url,
+    url: `/?alert=${encodeURIComponent(alertId)}`,
+    externalUrl: observation.offer.product.url,
     source: observation.offer.product.source,
     market: observation.offer.product.market,
     tier: backendScore >= 88 && (observation.anomaly.discountPercent ?? 0) >= 35 ? "urgent" : "personal",
