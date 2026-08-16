@@ -7,6 +7,7 @@ import { isExtremeRetailCandidate, offerDiscountPercent } from "./deal-policy.js
 import type { CollectorConfig } from "./config.js";
 import {
   DEFAULT_AMAZON_EXCLUDED_FAMILIES,
+  DEFAULT_AMAZON_TARGET_BRANDS,
   KeepaClient,
   scanKeepaMarket,
   verifyKeepaCodeProduct,
@@ -53,6 +54,7 @@ interface ActorInput {
   scanAmazon?: boolean;
   shadowCart?: boolean;
   excludedAmazonCategories?: AmazonExcludedFamily[];
+  amazonBrands?: string[];
 }
 
 type RemoteDiscoverySegment = {
@@ -100,6 +102,17 @@ function amazonExcludedFamilies(value: unknown): AmazonExcludedFamily[] {
   if (!Array.isArray(value)) return [...DEFAULT_AMAZON_EXCLUDED_FAMILIES];
   const allowed = new Set<AmazonExcludedFamily>(["books", "music", "media", "wall_art"]);
   return [...new Set(value.filter((item): item is AmazonExcludedFamily => typeof item === "string" && allowed.has(item as AmazonExcludedFamily)))];
+}
+
+function amazonTargetBrands(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...DEFAULT_AMAZON_TARGET_BRANDS];
+  const allowed = new Map(DEFAULT_AMAZON_TARGET_BRANDS.map((brand) => [brand.toLowerCase(), brand]));
+  const selected = [...new Set(value.flatMap((item) => {
+    if (typeof item !== "string") return [];
+    const brand = allowed.get(item.trim().toLowerCase());
+    return brand ? [brand] : [];
+  }))];
+  return selected.length > 0 ? selected : [...DEFAULT_AMAZON_TARGET_BRANDS];
 }
 
 function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePriority[] {
@@ -463,6 +476,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       proxyUrls: config.proxyUrls,
       authorizedPartnerSources: config.authorizedPartnerSources,
     };
+    const targetAmazonBrands = amazonTargetBrands(input.amazonBrands);
 
     const sourceValue = String(input.source ?? "all");
     if (sourceValue !== "all" && !isRetailSource(sourceValue)) {
@@ -911,6 +925,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               minimumDropPercent: segment.minimumDropPercent,
               categoryIds: segment.categoryIds,
               excludedFamilies: segment.excludedFamilies,
+              targetBrands: targetAmazonBrands,
               minPriceCents: segment.minPriceCents,
               maxPriceCents: segment.maxPriceCents,
               fixture,

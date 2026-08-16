@@ -56,6 +56,25 @@ export interface KeepaProduct {
 
 export type AmazonExcludedFamily = "books" | "music" | "media" | "wall_art";
 export const DEFAULT_AMAZON_EXCLUDED_FAMILIES: readonly AmazonExcludedFamily[] = ["books", "music", "media", "wall_art"];
+export const DEFAULT_AMAZON_TARGET_BRANDS = ["Apple", "Samsung"] as const;
+
+function normalizedBrand(value: string | null | undefined) {
+  return (value ?? "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
+}
+
+export function isTargetAmazonBrand(
+  brand: string | null | undefined,
+  targetBrands: readonly string[] = DEFAULT_AMAZON_TARGET_BRANDS,
+) {
+  const productBrand = normalizedBrand(brand);
+  if (!productBrand) return false;
+  return targetBrands.some((target) => {
+    const expected = normalizedBrand(target);
+    return productBrand === expected
+      || productBrand === `${expected} inc`
+      || productBrand === `${expected} electronics`;
+  });
+}
 
 const EXCLUDED_CATEGORY_IDS: Partial<Record<Market, Partial<Record<AmazonExcludedFamily, readonly number[]>>>> = {
   // Amazon.fr root browse nodes. The text classifier below remains the
@@ -386,10 +405,12 @@ export class KeepaClient {
     minPriceCents?: number;
     maxPriceCents?: number;
     excludedCategoryIds?: readonly number[];
+    targetBrands?: readonly string[];
   } = {}): Promise<KeepaDeal[]> {
     const config = KEEPA_MARKETS[market];
     const minPriceCents = Math.max(1, Math.round(options.minPriceCents ?? 1));
     const maxPriceCents = Math.max(minPriceCents, Math.round(options.maxPriceCents ?? 100_000_000));
+    const targetBrands = [...new Set((options.targetBrands ?? []).map((brand) => brand.trim()).filter(Boolean))].slice(0, 10);
     const selection = {
       page: options.page ?? 0,
       domainId: config.domainId,
@@ -406,6 +427,7 @@ export class KeepaClient {
       isLowest: true,
       sortType: 4,
       dateRange: 0,
+      ...(targetBrands.length > 0 ? { brand: targetBrands } : {}),
     };
     const payload = await this.#request("/deal", { selection: JSON.stringify(selection) });
     return normalizeDeals(payload);
@@ -603,6 +625,7 @@ export async function scanKeepaMarket(
     minPriceCents?: number;
     maxPriceCents?: number;
     excludedFamilies?: readonly AmazonExcludedFamily[];
+    targetBrands?: readonly string[];
   } = {},
 ): Promise<VerifiedObservation[]> {
   const excludedFamilies = options.excludedFamilies ?? DEFAULT_AMAZON_EXCLUDED_FAMILIES;
@@ -613,7 +636,8 @@ export async function scanKeepaMarket(
   if (deals.length === 0) return [];
   const products = await client.products(market, deals.map((deal) => deal.asin));
   const byAsin = new Map(products
-    .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies))
+    .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies)
+      && (!options.targetBrands?.length || isTargetAmazonBrand(product.brand, options.targetBrands)))
     .map((product) => [product.asin, product]));
   return deals.flatMap((deal) => {
     const product = byAsin.get(deal.asin);

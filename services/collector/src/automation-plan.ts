@@ -35,7 +35,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
       ...common,
       name: "prixradar-amazon-eu5-api-20",
       title: "PrixRadar · Amazon France · API 20",
-      description: "Surveillance Amazon France toutes les 30 minutes, hors pause de 1 h à 7 h, avec le budget auparavant réparti sur cinq pays.",
+      description: "Test ciblé Apple et Samsung sur Amazon France toutes les 30 minutes, hors pause de 1 h à 7 h.",
       cronExpression: "15,45 0,7-23 * * *",
       actions: [actorAction(actorId, {
         source: "amazon",
@@ -48,6 +48,7 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         page: 0,
         pageRotation: 12,
         minimumDropPercent: 30,
+        amazonBrands: ["Apple", "Samsung"],
         verifyAmazonPage: false,
         liveVerificationLimit: 0,
         processEanScans: true,
