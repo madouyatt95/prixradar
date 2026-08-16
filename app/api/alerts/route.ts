@@ -8,6 +8,7 @@ import { NON_AMAZON_EXTREME_DISCOUNT_PERCENT } from "@/lib/deal-policy";
 import { assessPurchasability } from "@/lib/purchasability";
 import { buildPriceInsight } from "@/lib/price-insight";
 import { sellerChannel } from "@/lib/seller-channel";
+import { canonicalMerchantProductUrl } from "@/lib/merchant-link";
 import { isActiveSource } from "@/lib/source-registry";
 
 export const dynamic = "force-dynamic";
@@ -157,6 +158,7 @@ function serializeAlert(
   history: PublicHistoryPoint[] = [],
   comparisons: PublicComparison[] = [],
 ) {
+  const publicUrl = canonicalMerchantProductUrl(row.source, row.url);
   const evidence = parseEvidence(row.evidenceJson);
   const totalCents = intelligence?.finalTotalCents ?? (row.shippingCents === null ? null : row.priceCents + row.shippingCents);
   const priceInsight = buildPriceInsight({
@@ -284,7 +286,7 @@ function serializeAlert(
     model: row.model,
     gtin: row.gtin,
     category: row.category,
-    url: row.url,
+    url: publicUrl,
     affiliateUrl,
     currency: row.currency,
     priceCents: row.priceCents,
