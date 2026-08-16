@@ -259,7 +259,7 @@ function serializeAlert(
   const displayedDiscountPercent = merchantReferenceCents !== null
     ? Math.max(0, Math.round((merchantReferenceCents - (totalCents ?? row.priceCents)) * 100 / merchantReferenceCents))
     : Math.max(0, Math.round(priceInsight.discountPercent));
-  const displayedPriceInsight = merchantReferenceCents !== null && priceInsight.baselineCents === null
+  const displayedPriceInsight = merchantReferenceCents !== null && history.length === 0
     ? {
         ...priceInsight,
         classification: "recent_drop" as const,
