@@ -2823,7 +2823,7 @@ function RadarView({
       <div className="amazon-focus-banner" role="status">
         <span>Test Amazon</span>
         <strong>Apple et Samsung uniquement</strong>
-        <small>Les autres marques et les produits simplement compatibles sont exclus dès la recherche Keepa.</small>
+        <small>Les autres marques, les produits simplement compatibles et les signaux Amazon hors cible sont exclus.</small>
       </div>
 
       <section className="natural-radar" aria-labelledby="natural-radar-title">
