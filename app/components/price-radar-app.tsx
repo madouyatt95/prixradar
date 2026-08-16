@@ -1264,6 +1264,7 @@ export function PriceRadarApp() {
   const [socialPublications, setSocialPublications] = useState<SocialPublication[]>([]);
   const [socialLoading, setSocialLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(true);
+  const [radarRefreshing, setRadarRefreshing] = useState(false);
   const [sourceStatuses, setSourceStatuses] = useState<SourceRuntimeStatus[]>([]);
   const [health, setHealth] = useState<HealthCapabilities | null>(null);
   const [watched, setWatched] = useState<Set<string>>(new Set());
@@ -1941,6 +1942,45 @@ export function PriceRadarApp() {
     }
   }
 
+  async function refreshRadar() {
+    if (radarRefreshing) return;
+    setRadarRefreshing(true);
+    try {
+      const [alertsResponse, signalsResponse, dealabsResponse] = await Promise.all([
+        fetch("/api/alerts?limit=50", { headers: { accept: "application/json" }, cache: "no-store" }),
+        fetch("/api/alerts?view=single_check&limit=30&minScore=0&accessibleOnly=false", { headers: { accept: "application/json" }, cache: "no-store" }),
+        fetch("/api/dealabs?limit=20", { headers: { accept: "application/json" }, cache: "no-store" }),
+      ]);
+      if (!alertsResponse.ok || !signalsResponse.ok) throw new Error("RADAR_REFRESH_FAILED");
+      const alertsPayload = await alertsResponse.json() as Record<string, unknown>;
+      const signalsPayload = await signalsResponse.json() as Record<string, unknown>;
+      const rawAlerts = Array.isArray(alertsPayload.items)
+        ? alertsPayload.items
+        : Array.isArray(alertsPayload.alerts) ? alertsPayload.alerts : [];
+      const nextAlerts = rawAlerts.map(mapLiveAlert).filter((item): item is AlertItem => item !== null);
+      const nextSignals = (Array.isArray(signalsPayload.items) ? signalsPayload.items : [])
+        .map(mapLiveAlert)
+        .filter((item): item is AlertItem => item !== null);
+      setLiveAlerts(nextAlerts);
+      setSingleCheckSignals(nextSignals);
+      setSelected((current) => current
+        ? nextAlerts.find((item) => item.id === current.id)
+          ?? nextSignals.find((item) => item.id === current.id)
+          ?? current
+        : null);
+      if (dealabsResponse.ok) {
+        const dealabsPayload = await dealabsResponse.json() as { items?: unknown[] };
+        setDealabsSignals((dealabsPayload.items ?? []).map(mapDealabsSignal).filter((item): item is DealabsSignal => item !== null));
+      }
+      setLiveLoading(false);
+      setToast(`Radar actualisé · ${nextAlerts.length} alerte${nextAlerts.length === 1 ? "" : "s"}`);
+    } catch {
+      setToast("Actualisation impossible pour le moment");
+    } finally {
+      setRadarRefreshing(false);
+    }
+  }
+
   async function submitFeedback(alert: AlertItem, verdict: "useful" | "false_positive" | "expired" | "purchased" | "cancelled" | "wrong_variant" | "coupon_failed" | "price_confirmed") {
     try {
       const response = await fetch("/api/feedback", {
@@ -2414,6 +2454,8 @@ export function PriceRadarApp() {
         onCreateRadar={createRadar}
         onDeleteRadar={deleteRadar}
         onScan={() => setScannerOpen(true)}
+        onRefresh={() => void refreshRadar()}
+        refreshing={radarRefreshing}
         maxAlertAgeMinutes={maxAlertAgeMinutes}
         closeExpiredMinutes={closeExpiredMinutes}
       />
@@ -2706,6 +2748,8 @@ function RadarView({
   onCreateRadar,
   onDeleteRadar,
   onScan,
+  onRefresh,
+  refreshing,
   maxAlertAgeMinutes,
   closeExpiredMinutes,
 }: {
@@ -2732,6 +2776,8 @@ function RadarView({
   onCreateRadar: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteRadar: (id: string) => void;
   onScan: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
   maxAlertAgeMinutes: number;
   closeExpiredMinutes: number;
 }) {
@@ -2773,6 +2819,12 @@ function RadarView({
           <div className="heading-actions"><button type="button" className="secondary-button" onClick={onScan}><span aria-hidden="true">▦</span> Scanner EAN</button><button type="button" className="primary-button" onClick={onLookup}><span aria-hidden="true">{keepaAvailable ? "＋" : "⌁"}</span> {keepaAvailable ? "Vérifier un ASIN" : "Voir les sources"}</button></div>
         }
       />
+
+      <div className="amazon-focus-banner" role="status">
+        <span>Test Amazon</span>
+        <strong>Apple et Samsung uniquement</strong>
+        <small>Les autres marques et les produits simplement compatibles sont exclus dès la recherche Keepa.</small>
+      </div>
 
       <section className="natural-radar" aria-labelledby="natural-radar-title">
         <div><span className="eyebrow">Alerte en langage naturel</span><h2 id="natural-radar-title">Dites simplement ce que vous cherchez</h2><p>Vous pouvez écrire : « un iPhone neuf sous 850 €, livré en France, avec au moins 25 % de remise ».</p><span className="zero-token-note">0 jeton Keepa · filtre la surveillance déjà active</span></div>
@@ -2836,7 +2888,12 @@ function RadarView({
 
       <div className="section-label-row">
         <h2>Alertes en cours</h2>
-        <span>{qualityAlerts.length} résultat{qualityAlerts.length === 1 ? "" : "s"}</span>
+        <div className="alert-list-actions">
+          <span>{qualityAlerts.length} résultat{qualityAlerts.length === 1 ? "" : "s"}</span>
+          <button type="button" className="radar-refresh-button" onClick={onRefresh} disabled={refreshing} aria-busy={refreshing}>
+            <i aria-hidden="true">↻</i>{refreshing ? "Actualisation…" : "Actualiser"}
+          </button>
+        </div>
       </div>
       <div className="seller-channel-tabs quality-level-tabs" role="tablist" aria-label="Niveau de confiance">
         <button type="button" role="tab" aria-selected={qualityView === "all"} className={qualityView === "all" ? "is-active" : ""} onClick={() => setQualityView("all")}>Toutes <span>{alerts.length}</span></button>
@@ -3438,8 +3495,8 @@ function SourcesView({
           <span className="eyebrow">Vérification à la demande</span>
           <h2>5 pays restent consultables</h2>
           <p>
-            La recherche automatique est concentrée sur le High-Tech, l’informatique,
-            la maison et l’électroménager sur Amazon.fr. Vous pouvez toujours
+            Le test automatique actuel cherche uniquement les produits Apple et Samsung
+            sur Amazon.fr. Vous pouvez toujours
             vérifier manuellement un produit en Allemagne, Italie, Espagne ou au Royaume-Uni.
           </p>
         </div>
@@ -3469,7 +3526,7 @@ function SourcesView({
         <SourceRow
           mark="K"
           name="Amazon France"
-          detail="High-Tech, informatique, maison et électroménager"
+          detail="Test ciblé · Apple et Samsung uniquement"
           status={keepaState.status}
           tone={keepaState.tone}
           runtime={runtimeFor("keepa", "amazon")}
