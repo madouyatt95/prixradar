@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, ne, or } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { alerts, communitySignals, inspectionRequests } from "@/db/schema";
+import { isAmazonFocusTitle } from "@/lib/amazon-focus";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
   try {
     const database = getDb();
     const freshAfter = new Date(Date.now() - 12 * 60 * 60_000).toISOString();
-    const rows = await database.select().from(communitySignals).where(and(
+    const candidateRows = await database.select().from(communitySignals).where(and(
       eq(communitySignals.provider, "dealabs"),
       ne(communitySignals.status, "stale"),
       gte(communitySignals.lastSeenAt, freshAfter),
@@ -52,7 +53,8 @@ export async function GET(request: Request) {
       desc(communitySignals.velocityX100),
       desc(communitySignals.temperature),
       desc(communitySignals.publishedAt),
-    ).limit(limit);
+    ).limit(Math.min(40, limit * 2));
+    const rows = candidateRows.filter((row) => row.source !== "amazon" || isAmazonFocusTitle(row.title)).slice(0, limit);
 
     const productIds = [...new Set(rows.map((row) => row.productId).filter((value): value is string => Boolean(value)))];
     const inspectionIds = [...new Set(rows.map((row) => row.inspectionRequestId).filter((value): value is string => Boolean(value)))];
