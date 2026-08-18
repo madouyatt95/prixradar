@@ -16,6 +16,69 @@ export const dynamic = "force-dynamic";
 const CONFIDENCE = new Set(["very_likely", "likely", "review", "insufficient"]);
 const MAX_ALERT_AGE_MS = 120 * 60_000;
 
+// The automatic Amazon radar is intentionally editorial rather than a dump of
+// every Keepa category. Keepa's fallback queries can occasionally return an
+// unrelated ASIN, so the public feed applies the same high-tech / informatique
+// / maison guard before exposing a result. This is a category focus, not a
+// brand test: Apple, Samsung and other relevant brands remain eligible.
+const AMAZON_FOCUS_TEXT = sql`lower(coalesce(${alerts.category}, '') || ' ' || coalesce(${alerts.title}, ''))`;
+const AMAZON_FOCUS_POLICY = sql`(
+  ${AMAZON_FOCUS_TEXT} like '%high-tech%'
+  or ${AMAZON_FOCUS_TEXT} like '%informatique%'
+  or ${AMAZON_FOCUS_TEXT} like '%ordinateur%'
+  or ${AMAZON_FOCUS_TEXT} like '%pc portable%'
+  or ${AMAZON_FOCUS_TEXT} like '%laptop%'
+  or ${AMAZON_FOCUS_TEXT} like '%smartphone%'
+  or ${AMAZON_FOCUS_TEXT} like '%telephone%'
+  or ${AMAZON_FOCUS_TEXT} like '%téléphone%'
+  or ${AMAZON_FOCUS_TEXT} like '%iphone%'
+  or ${AMAZON_FOCUS_TEXT} like '%ipad%'
+  or ${AMAZON_FOCUS_TEXT} like '%macbook%'
+  or ${AMAZON_FOCUS_TEXT} like '%tablette%'
+  or ${AMAZON_FOCUS_TEXT} like '%ecran%'
+  or ${AMAZON_FOCUS_TEXT} like '%écran%'
+  or ${AMAZON_FOCUS_TEXT} like '%moniteur%'
+  or ${AMAZON_FOCUS_TEXT} like '%ssd%'
+  or ${AMAZON_FOCUS_TEXT} like '%disque dur%'
+  or ${AMAZON_FOCUS_TEXT} like '%clavier%'
+  or ${AMAZON_FOCUS_TEXT} like '%souris%'
+  or ${AMAZON_FOCUS_TEXT} like '%imprimante%'
+  or ${AMAZON_FOCUS_TEXT} like '%routeur%'
+  or ${AMAZON_FOCUS_TEXT} like '%wifi%'
+  or ${AMAZON_FOCUS_TEXT} like '%gaming%'
+  or ${AMAZON_FOCUS_TEXT} like '%console%'
+  or ${AMAZON_FOCUS_TEXT} like '%audio%'
+  or ${AMAZON_FOCUS_TEXT} like '%casque%'
+  or ${AMAZON_FOCUS_TEXT} like '%television%'
+  or ${AMAZON_FOCUS_TEXT} like '%télévision%'
+  or ${AMAZON_FOCUS_TEXT} like '%image et son%'
+  or ${AMAZON_FOCUS_TEXT} like '%maison%'
+  or ${AMAZON_FOCUS_TEXT} like '%electromenager%'
+  or ${AMAZON_FOCUS_TEXT} like '%électroménager%'
+  or ${AMAZON_FOCUS_TEXT} like '%aspirateur%'
+  or ${AMAZON_FOCUS_TEXT} like '%robot cuiseur%'
+  or ${AMAZON_FOCUS_TEXT} like '%cuisine%'
+  or ${AMAZON_FOCUS_TEXT} like '%four%'
+  or ${AMAZON_FOCUS_TEXT} like '%lave-linge%'
+  or ${AMAZON_FOCUS_TEXT} like '%lave linge%'
+  or ${AMAZON_FOCUS_TEXT} like '%lave-vaisselle%'
+  or ${AMAZON_FOCUS_TEXT} like '%réfrigérateur%'
+  or ${AMAZON_FOCUS_TEXT} like '%refrigerateur%'
+  or ${AMAZON_FOCUS_TEXT} like '%chauffage%'
+  or ${AMAZON_FOCUS_TEXT} like '%climatisation%'
+  or ${AMAZON_FOCUS_TEXT} like '%meuble%'
+  or ${AMAZON_FOCUS_TEXT} like '%matelas%'
+  or ${AMAZON_FOCUS_TEXT} like '%literie%'
+  or ${AMAZON_FOCUS_TEXT} like '%bricolage%'
+  or ${AMAZON_FOCUS_TEXT} like '%jardin%'
+  or ${AMAZON_FOCUS_TEXT} like '%éclairage%'
+  or ${AMAZON_FOCUS_TEXT} like '%eclairage%'
+  or ${AMAZON_FOCUS_TEXT} like '%luminaire%'
+  or ${AMAZON_FOCUS_TEXT} like '%outillage%'
+  or ${AMAZON_FOCUS_TEXT} like '%rangement%'
+  or ${AMAZON_FOCUS_TEXT} like '%nettoyage%'
+)`;
+
 function json(body: unknown, status = 200, cache = false) {
   return Response.json(body, {
     status,
@@ -497,12 +560,10 @@ export async function GET(request: Request) {
     ? or(eq(alerts.sourceMode, "demo"), publicDealPolicy)
     : publicDealPolicy;
   const conditions: SQL[] = [visibility as SQL, dealVisibility as SQL, gte(alerts.discountPercent, minDiscount), gte(alerts.score, minScore)];
-  // Le test Amazon actif ne doit exposer ni l'ancien historique hors cible,
-  // ni un accessoire qui mentionne Apple/Samsung sans être de cette marque.
-  conditions.push(sql`(
-    ${alerts.source} <> 'amazon'
-    or lower(trim(coalesce(${alerts.brand}, ''))) in ('apple', 'apple inc', 'samsung', 'samsung electronics')
-  )`);
+  // Le test de marque Apple/Samsung est terminé. Le radar public reste
+  // volontairement centré sur les catégories high-tech, informatique et
+  // maison, y compris pour les vendeurs tiers.
+  conditions.push(sql`(${alerts.source} <> 'amazon' or ${AMAZON_FOCUS_POLICY})`);
   conditions.push(lte(alerts.publicPriceCents, maxPrice));
   if (accessibleOnly) conditions.push(eq(alerts.priceAccessibleToAll, true));
   if (source !== null) conditions.push(eq(alerts.source, source));
