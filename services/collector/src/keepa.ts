@@ -650,13 +650,14 @@ export async function scanKeepaMarket(
       : []),
     // The default Keepa window is only the last day. A weekly fallback keeps
     // the radar useful when a valid Apple/Samsung price drop happened before
-    // the last 24 hours; the product price is still fetched live from Keepa
-    // and the Worker applies its own freshness/eligibility rules.
+    // the last 24 hours. A 10% floor is the documented minimum for this
+    // candidate pass; the Worker still applies its own anomaly and
+    // notification eligibility rules before anything can reach the user.
     ...(options.targetBrands?.length
-      ? [{ ...dealOptions, targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum), dateRange: 1 }]
+      ? [{ ...dealOptions, targetBrands: [], minimumDropPercent: Math.min(10, requestedMinimum), dateRange: 1 }]
       : []),
     ...((dealOptions.categoryIds?.length ?? 0) > 0
-      ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum), dateRange: 1 }]
+      ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(10, requestedMinimum), dateRange: 1 }]
       : []),
   ];
   for (const query of queries) {
