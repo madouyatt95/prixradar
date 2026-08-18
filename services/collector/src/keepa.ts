@@ -406,6 +406,7 @@ export class KeepaClient {
     maxPriceCents?: number;
     excludedCategoryIds?: readonly number[];
     targetBrands?: readonly string[];
+    dateRange?: number;
   } = {}): Promise<KeepaDeal[]> {
     const config = KEEPA_MARKETS[market];
     const minPriceCents = Math.max(1, Math.round(options.minPriceCents ?? 1));
@@ -425,7 +426,7 @@ export class KeepaClient {
       currentRange: [minPriceCents, maxPriceCents],
       isRangeEnabled: true,
       sortType: 4,
-      dateRange: 0,
+      dateRange: options.dateRange ?? 0,
       ...(targetBrands.length > 0 ? { brand: targetBrands } : {}),
     };
     const payload = await this.#request("/deal", { selection: JSON.stringify(selection) });
@@ -647,8 +648,15 @@ export async function scanKeepaMarket(
     ...(options.targetBrands?.length
       ? [{ ...dealOptions, targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum) }]
       : []),
+    // The default Keepa window is only the last day. A weekly fallback keeps
+    // the radar useful when a valid Apple/Samsung price drop happened before
+    // the last 24 hours; the product price is still fetched live from Keepa
+    // and the Worker applies its own freshness/eligibility rules.
+    ...(options.targetBrands?.length
+      ? [{ ...dealOptions, targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum), dateRange: 1 }]
+      : []),
     ...((dealOptions.categoryIds?.length ?? 0) > 0
-      ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum) }]
+      ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum), dateRange: 1 }]
       : []),
   ];
   for (const query of queries) {
