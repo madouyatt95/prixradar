@@ -98,6 +98,7 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.deepEqual(dealSelection.priceTypes, [18]);
   assert.deepEqual(dealSelection.deltaPercentRange, [30, 100]);
   assert.equal(dealSelection.deltaRange, undefined);
+  assert.equal(dealSelection.isLowest, undefined);
   assert.equal(dealSelection.isRangeEnabled, true);
   assert.equal(dealSelection.dateRange, 0);
   assert.deepEqual(dealSelection.currentRange, [10_000, 50_000]);
@@ -118,6 +119,175 @@ test("enchaîne /deal puis /product, normalise les centimes et expose le quota",
   assert.equal(merged.offer.referencePrice?.amountMinor, 8_000);
   assert.equal(merged.offer.referencePriceSource, "merchant_page");
   assert.equal(merged.historicalPrices?.length, 6);
+});
+
+test("réessaie un segment Keepa vide à 20 % sans élargir ses catégories", async () => {
+  const selections: Record<string, unknown>[] = [];
+  let dealCall = 0;
+  const client = new KeepaClient({
+    apiKey: "KEEPA_SECRET_TEST",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/deal") {
+        const selection = JSON.parse(url.searchParams.get("selection") ?? "{}") as Record<string, unknown>;
+        selections.push(selection);
+        dealCall += 1;
+        if (dealCall === 1) return Response.json({ tokensLeft: 10, refillIn: 1000, deals: { dr: [] } });
+        return Response.json({
+          tokensLeft: 5,
+          refillIn: 1000,
+          deals: { dr: [{ asin: "B012345678", current: [5000], lastUpdate: 8_000_000 }] },
+        });
+      }
+      return Response.json({
+        tokensLeft: 4,
+        refillIn: 1000,
+        products: [{
+          asin: "B012345678",
+          title: "Produit Apple Fixture",
+          brand: "Apple",
+          categoryTree: [{ catId: 172282, name: "High-Tech" }],
+          productGroup: "Electronics",
+          stats: {
+            current: [5000, -1, -1, -1, 9000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 5000],
+            avg90: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10000],
+            buyBoxIsAmazon: true,
+          },
+        }],
+      });
+    },
+  });
+
+  const observations = await scanKeepaMarket(client, "FR", {
+    fixture: true,
+    categoryIds: [172282],
+    minimumDropPercent: 35,
+    targetBrands: ["Apple", "Samsung"],
+  });
+
+  assert.equal(observations.length, 1);
+  assert.deepEqual(selections.map((selection) => selection.deltaPercentRange), [[35, 100], [20, 100]]);
+  assert.deepEqual(selections[0]?.includeCategories, [172282]);
+  assert.deepEqual(selections[1]?.includeCategories, [172282]);
+});
+
+test("retombe sur la recherche de marque si un browse node Amazon est vide", async () => {
+  const selections: Record<string, unknown>[] = [];
+  const client = new KeepaClient({
+    apiKey: "KEEPA_SECRET_TEST",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/deal") {
+        const selection = JSON.parse(url.searchParams.get("selection") ?? "{}") as Record<string, unknown>;
+        selections.push(selection);
+        return Response.json({ tokensLeft: 5, refillIn: 1000, deals: { dr: [] } });
+      }
+      return Response.json({ products: [] });
+    },
+  });
+
+  await scanKeepaMarket(client, "FR", {
+    fixture: true,
+    categoryIds: [172282],
+    minimumDropPercent: 35,
+    targetBrands: ["Apple", "Samsung"],
+  });
+
+  assert.deepEqual(selections.slice(0, 5).map((selection) => selection.includeCategories), [[172282], [172282], [172282], [172282], []]);
+  assert.deepEqual(selections.slice(0, 5).map((selection) => selection.deltaPercentRange), [[35, 100], [20, 100], [20, 100], [10, 100], [10, 100]]);
+  assert.deepEqual(selections.slice(0, 5).map((selection) => selection.dateRange), [0, 0, 0, 1, 1]);
+  assert.deepEqual(selections.slice(0, 5).map((selection) => selection.brand), [["Apple", "Samsung"], ["Apple", "Samsung"], undefined, undefined, undefined]);
+  assert.deepEqual(selections.slice(0, 5).map((selection) => selection.priceTypes), [[18], [18], [18], [18], [18]]);
+  assert.deepEqual(selections.slice(5).map((selection) => selection.priceTypes), [[10], [10], [10], [10], [7], [7], [7], [7]]);
+});
+
+test("utilise une offre FBA tierce si la Buy Box ne donne aucun résultat", async () => {
+  const dealSelections: Record<string, unknown>[] = [];
+  let dealCall = 0;
+  const client = new KeepaClient({
+    apiKey: "KEEPA_SECRET_TEST",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/deal") {
+        const selection = JSON.parse(url.searchParams.get("selection") ?? "{}") as Record<string, unknown>;
+        dealSelections.push(selection);
+        dealCall += 1;
+        // All Buy Box retries are empty; the first FBA pass has one deal.
+        if (dealCall <= 5) return Response.json({ tokensLeft: 20, refillIn: 1000, deals: { dr: [] } });
+        return Response.json({ tokensLeft: 15, refillIn: 1000, deals: { dr: [{ asin: "B012345678", current: [5000], lastUpdate: 8_000_000 }] } });
+      }
+      return Response.json({
+        tokensLeft: 14,
+        refillIn: 1000,
+        products: [{
+          asin: "B012345678",
+          title: "Produit Apple FBA",
+          brand: "Apple",
+          categoryTree: [{ catId: 172282, name: "High-Tech" }],
+          productGroup: "Electronics",
+          stats: {
+            current: Array.from({ length: 19 }, (_, index) => index === 10 ? 5000 : index === 4 ? 9000 : -1),
+            avg90: Array.from({ length: 19 }, (_, index) => index === 10 ? 10000 : -1),
+            buyBoxIsAmazon: false,
+            buyBoxIsFBA: true,
+          },
+        }],
+      });
+    },
+  });
+
+  const observations = await scanKeepaMarket(client, "FR", {
+    fixture: true,
+    categoryIds: [172282],
+    minimumDropPercent: 35,
+    targetBrands: ["Apple", "Samsung"],
+  });
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0]?.offer.seller, "Vendeur tiers Amazon · FBA");
+  assert.equal(observations[0]?.offer.shipping, null);
+  assert.equal(observations[0]?.offer.total, null);
+  assert.equal(observations[0]?.offer.sellerTrusted, false);
+  assert.equal(dealSelections[5]?.priceTypes?.[0], 10);
+});
+
+test("réessaie si /deal renvoie des ASIN mais /product ne conserve aucune marque ciblée", async () => {
+  const selections: Record<string, unknown>[] = [];
+  let dealCall = 0;
+  const client = new KeepaClient({
+    apiKey: "KEEPA_SECRET_TEST",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/deal") {
+        const selection = JSON.parse(url.searchParams.get("selection") ?? "{}") as Record<string, unknown>;
+        selections.push(selection);
+        dealCall += 1;
+        return Response.json({ tokensLeft: 5, refillIn: 1000, deals: { dr: [{ asin: dealCall === 1 ? "B000000001" : "B012345678", current: [5000], lastUpdate: 8_000_000 }] } });
+      }
+      const asin = new URL(String(input)).searchParams.get("asin");
+      return Response.json({
+        tokensLeft: 4,
+        products: [{
+          asin,
+          title: asin === "B000000001" ? "Produit d’une autre marque" : "Produit Apple Fixture",
+          brand: asin === "B000000001" ? "Other" : "Apple",
+          categoryTree: [{ catId: 172282, name: "High-Tech" }],
+          productGroup: "Electronics",
+          stats: { current: [5000, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 5000], avg90: [10000], buyBoxIsAmazon: true },
+        }],
+      });
+    },
+  });
+
+  const observations = await scanKeepaMarket(client, "FR", {
+    fixture: true,
+    categoryIds: [172282],
+    minimumDropPercent: 35,
+    targetBrands: ["Apple", "Samsung"],
+  });
+
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0]?.offer.product.brand, "Apple");
+  assert.deepEqual(selections.map((selection) => selection.deltaPercentRange), [[35, 100], [20, 100]]);
 });
 
 test("le ciblage Amazon accepte uniquement les marques Apple et Samsung", () => {
