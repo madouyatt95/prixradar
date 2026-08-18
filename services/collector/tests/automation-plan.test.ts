@@ -16,7 +16,7 @@ test("concentre le forfait Keepa API 20 sur Amazon France", () => {
   assert.equal(input.limit, 20);
   assert.equal(input.pageRotation, 12);
   assert.equal(input.minimumDropPercent, 30);
-  assert.deepEqual(input.amazonBrands, ["Apple", "Samsung"]);
+  assert.deepEqual(input.amazonBrands, ["*"]);
   assert.equal(input.notify, true);
   assert.equal(input.liveVerificationLimit, 0);
   assert.equal(input.verifyAmazonPage, false);
