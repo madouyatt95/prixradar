@@ -632,40 +632,31 @@ export async function scanKeepaMarket(
     ...options,
     excludedCategoryIds: excludedCategoryIdsFor(market, excludedFamilies),
   };
-  let deals = await client.deals(market, dealOptions);
-  // Keepa's deal endpoint is deliberately strict about the minimum drop and
-  // only considers products updated in its recent window. A category can
-  // therefore be empty even when the same Apple/Samsung catalogue contains
-  // a valid, slightly smaller drop. Retry once at 20% before reporting an
-  // empty segment. This keeps the brand/category guardrails while avoiding a
-  // permanently silent radar after a 35% segment happens to be empty.
   const requestedMinimum = Number(options.minimumDropPercent ?? 30);
-  if (deals.length === 0 && requestedMinimum > 20) {
-    deals = await client.deals(market, {
-      ...dealOptions,
-      minimumDropPercent: 20,
+  // Keepa can return rows that disappear at the product endpoint (or belong
+  // to another brand/category than the requested guardrails). Treat that as
+  // an empty segment too, otherwise a non-empty but unusable /deal response
+  // prevents the lower-threshold and unscoped retries from running.
+  const queries = [
+    dealOptions,
+    ...(requestedMinimum > 20 ? [{ ...dealOptions, minimumDropPercent: 20 }] : []),
+    ...((dealOptions.categoryIds?.length ?? 0) > 0
+      ? [{ ...dealOptions, categoryIds: [], minimumDropPercent: Math.min(20, requestedMinimum) }]
+      : []),
+  ];
+  for (const query of queries) {
+    const deals = (await client.deals(market, query)).slice(0, options.limit ?? 50);
+    if (deals.length === 0) continue;
+    const products = await client.products(market, deals.map((deal) => deal.asin));
+    const byAsin = new Map(products
+      .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies)
+        && (!options.targetBrands?.length || isTargetAmazonBrand(product.brand, options.targetBrands)))
+      .map((product) => [product.asin, product]));
+    const observations = deals.flatMap((deal) => {
+      const product = byAsin.get(deal.asin);
+      return product ? [verifyKeepaDeal(deal, product, options.fixture ?? false)] : [];
     });
+    if (observations.length > 0) return observations;
   }
-  // Some Amazon browse-node IDs are locale-specific and can temporarily
-  // return no rows even though the brand filter has matching deals. Keep the
-  // Apple/Samsung and excluded-family filters, but make one final unscoped
-  // query so a stale category mapping cannot silence the whole radar.
-  if (deals.length === 0 && (dealOptions.categoryIds?.length ?? 0) > 0) {
-    deals = await client.deals(market, {
-      ...dealOptions,
-      categoryIds: [],
-      minimumDropPercent: Math.min(20, requestedMinimum),
-    });
-  }
-  deals = deals.slice(0, options.limit ?? 50);
-  if (deals.length === 0) return [];
-  const products = await client.products(market, deals.map((deal) => deal.asin));
-  const byAsin = new Map(products
-    .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies)
-      && (!options.targetBrands?.length || isTargetAmazonBrand(product.brand, options.targetBrands)))
-    .map((product) => [product.asin, product]));
-  return deals.flatMap((deal) => {
-    const product = byAsin.get(deal.asin);
-    return product ? [verifyKeepaDeal(deal, product, options.fixture ?? false)] : [];
-  });
+  return [];
 }
