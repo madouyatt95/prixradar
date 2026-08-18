@@ -424,7 +424,6 @@ export class KeepaClient {
       deltaPercentRange: [options.minimumDropPercent ?? 30, 100],
       currentRange: [minPriceCents, maxPriceCents],
       isRangeEnabled: true,
-      isLowest: true,
       sortType: 4,
       dateRange: 0,
       ...(targetBrands.length > 0 ? { brand: targetBrands } : {}),
