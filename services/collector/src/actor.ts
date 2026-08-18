@@ -908,7 +908,24 @@ export async function runActor(config: CollectorConfig): Promise<void> {
       }
     }
 
-    if ((source === "amazon" || (source === "all" && input.scanAmazon !== false)) && config.keepaApiKey) {
+    const amazonRequested = source === "amazon" || (source === "all" && input.scanAmazon !== false);
+    if (amazonRequested && !config.keepaApiKey) {
+      // Never let a missing Apify secret look like a successful empty scan.
+      // This diagnostic is intentionally boolean-only: it proves the runtime
+      // configuration without exposing the Keepa key in Actor output.
+      await Actor.pushData({
+        dataKind: "amazon-runtime",
+        keepaConfigured: false,
+        errorCode: "KEEPA_NOT_CONFIGURED",
+      });
+      await Actor.pushData({
+        dataKind: "source-failure",
+        source: "amazon",
+        market: input.market ?? "FR",
+        errorCode: "KEEPA_NOT_CONFIGURED",
+      });
+    }
+    if (amazonRequested && config.keepaApiKey) {
       const requestedMarkets = inputMarkets(input);
       const requestedMarketSet = new Set<Market>(requestedMarkets);
       const requestedRemoteSegments = plan.discoverySegments.filter((segment) => requestedMarketSet.has(segment.market));
@@ -926,6 +943,14 @@ export async function runActor(config: CollectorConfig): Promise<void> {
             limit,
             page,
           }));
+      await Actor.pushData({
+        dataKind: "amazon-runtime",
+        keepaConfigured: true,
+        requestedMarkets,
+        segmentCount: segments.length,
+        targetBrands: targetAmazonBrands,
+        minimumDropPercent,
+      });
       const seenAmazonProducts = new Set<string>();
       const verifiedByMarket = new Map<Market, number>();
       const keepaClient = new KeepaClient({
@@ -950,6 +975,19 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               maxPriceCents: segment.maxPriceCents,
               fixture,
             });
+            if (observations.length === 0) {
+              await Actor.pushData({
+                dataKind: "keepa-empty-segment",
+                source: "amazon",
+                market,
+                discoverySegmentId: segment.id,
+                discoverySegmentLabel: segment.label,
+                categoryCount: segment.categoryIds.length,
+                targetBrands: targetAmazonBrands,
+                excludedFamilies: segment.excludedFamilies,
+                quota: keepaClient.quota,
+              });
+            }
             const uniqueObservations = observations.filter((observation) => {
               if (seenAmazonProducts.has(observation.alertCandidateId)) return false;
               seenAmazonProducts.add(observation.alertCandidateId);
