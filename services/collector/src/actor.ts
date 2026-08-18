@@ -96,6 +96,7 @@ export function shouldKeepAmazonObservation(
   targetBrands: readonly string[],
 ): boolean {
   return source !== "amazon"
+    || targetBrands.length === 0
     || isTargetAmazonBrand(observation.offer.product.brand, targetBrands);
 }
 
@@ -116,13 +117,17 @@ function amazonExcludedFamilies(value: unknown): AmazonExcludedFamily[] {
 
 function amazonTargetBrands(value: unknown): string[] {
   if (!Array.isArray(value)) return [...DEFAULT_AMAZON_TARGET_BRANDS];
+  // An explicit wildcard/empty list means all brands. This is intentionally
+  // opt-in so older tasks that omit amazonBrands retain their Apple/Samsung
+  // safety filter, while the production high-tech/maison radar can be broad.
+  if (value.some((item) => typeof item === "string" && ["*", "all", "tous", "toutes"].includes(item.trim().toLowerCase()))) return [];
   const allowed = new Map(DEFAULT_AMAZON_TARGET_BRANDS.map((brand) => [brand.toLowerCase(), brand]));
   const selected = [...new Set(value.flatMap((item) => {
     if (typeof item !== "string") return [];
     const brand = allowed.get(item.trim().toLowerCase());
     return brand ? [brand] : [];
   }))];
-  return selected.length > 0 ? selected : [...DEFAULT_AMAZON_TARGET_BRANDS];
+  return selected;
 }
 
 function priorityItems(value: unknown, kind: RemotePriority["kind"]): RemotePriority[] {
