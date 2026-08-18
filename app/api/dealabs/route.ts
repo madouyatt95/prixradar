@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, ne, or } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { alerts, communitySignals, inspectionRequests } from "@/db/schema";
-import { isAmazonFocusTitle } from "@/lib/amazon-focus";
+import { isAmazonFocusCategory } from "@/lib/amazon-focus";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
       desc(communitySignals.temperature),
       desc(communitySignals.publishedAt),
     ).limit(Math.min(40, limit * 2));
-    const rows = candidateRows.filter((row) => row.source !== "amazon" || isAmazonFocusTitle(row.title)).slice(0, limit);
+    const rows = candidateRows.filter((row) => row.source !== "amazon" || isAmazonFocusCategory(row.category, row.title)).slice(0, limit);
 
     const productIds = [...new Set(rows.map((row) => row.productId).filter((value): value is string => Boolean(value)))];
     const inspectionIds = [...new Set(rows.map((row) => row.inspectionRequestId).filter((value): value is string => Boolean(value)))];
