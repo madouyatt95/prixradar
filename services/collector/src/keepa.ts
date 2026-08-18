@@ -646,6 +646,17 @@ export async function scanKeepaMarket(
       minimumDropPercent: 20,
     });
   }
+  // Some Amazon browse-node IDs are locale-specific and can temporarily
+  // return no rows even though the brand filter has matching deals. Keep the
+  // Apple/Samsung and excluded-family filters, but make one final unscoped
+  // query so a stale category mapping cannot silence the whole radar.
+  if (deals.length === 0 && (dealOptions.categoryIds?.length ?? 0) > 0) {
+    deals = await client.deals(market, {
+      ...dealOptions,
+      categoryIds: [],
+      minimumDropPercent: Math.min(20, requestedMinimum),
+    });
+  }
   deals = deals.slice(0, options.limit ?? 50);
   if (deals.length === 0) return [];
   const products = await client.products(market, deals.map((deal) => deal.asin));
