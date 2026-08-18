@@ -23,6 +23,7 @@ test("les anciennes tâches Amazon respectent aussi le test Apple et Samsung", (
   assert.equal(shouldKeepAmazonObservation("amazon", observation("Apple"), ["Apple", "Samsung"]), true);
   assert.equal(shouldKeepAmazonObservation("amazon", observation("Samsung Electronics"), ["Apple", "Samsung"]), true);
   assert.equal(shouldKeepAmazonObservation("amazon", observation("ARCTIC"), ["Apple", "Samsung"]), false);
+  assert.equal(shouldKeepAmazonObservation("amazon", observation("ARCTIC"), []), true);
   assert.equal(shouldKeepAmazonObservation("jd_sports", observation("Vans"), ["Apple", "Samsung"]), true);
 });
 
