@@ -56,6 +56,7 @@ interface ActorInput {
   shadowCart?: boolean;
   excludedAmazonCategories?: AmazonExcludedFamily[];
   amazonBrands?: string[];
+  strictAmazonCategories?: boolean;
 }
 
 type RemoteDiscoverySegment = {
@@ -979,6 +980,7 @@ export async function runActor(config: CollectorConfig): Promise<void> {
               minPriceCents: segment.minPriceCents,
               maxPriceCents: segment.maxPriceCents,
               fixture,
+              strictCategoryScope: input.strictAmazonCategories === true,
             });
             if (observations.length === 0) {
               await Actor.pushData({
