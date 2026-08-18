@@ -19,7 +19,10 @@ export const KEEPA_MARKETS = {
 } as const satisfies Record<Market, { domainId: number; currency: Currency; host: string }>;
 
 const KEEPA_UNIX_OFFSET_MINUTES = 21_564_000;
-const PRICE_INDEXES = { amazon: 0, new: 1, list: 4, buyBox: 18 } as const;
+const PRICE_INDEXES = { amazon: 0, new: 1, list: 4, fba: 10, fbmShipping: 7, buyBox: 18 } as const;
+export type KeepaDealPriceType = 7 | 10 | 18;
+const DEFAULT_DEAL_PRICE_TYPE: KeepaDealPriceType = PRICE_INDEXES.buyBox;
+const SELLER_DEAL_PRICE_TYPES: readonly [KeepaDealPriceType, KeepaDealPriceType] = [PRICE_INDEXES.fba, PRICE_INDEXES.fbmShipping];
 
 export interface KeepaQuota {
   tokensLeft: number | null;
@@ -29,6 +32,7 @@ export interface KeepaQuota {
 
 export interface KeepaDeal {
   asin: string;
+  priceType: KeepaDealPriceType;
   currentMinor: number | null;
   lastUpdate: string | null;
   rawDeltaPercent: number | null;
@@ -36,6 +40,7 @@ export interface KeepaDeal {
 
 export interface KeepaProduct {
   asin: string;
+  priceType: KeepaDealPriceType;
   gtin: string | null;
   title: string;
   brand: string | null;
@@ -204,17 +209,16 @@ function dealRows(payload: JsonRecord): unknown[] {
   return [];
 }
 
-function dealCurrentPrice(row: JsonRecord): number | null {
-  if (!Array.isArray(row.current)) return keepaPrice(row.current);
-  if (row.current.length > PRICE_INDEXES.buyBox) {
-    return arrayPrice(row.current, PRICE_INDEXES.buyBox)
-      ?? arrayPrice(row.current, PRICE_INDEXES.amazon)
-      ?? arrayPrice(row.current, PRICE_INDEXES.new);
-  }
-  return row.current.map(keepaPrice).find((value) => value !== null) ?? null;
+function indexedKeepaPrice(value: unknown, priceType: KeepaDealPriceType): number | null {
+  if (!Array.isArray(value)) return keepaPrice(value);
+  // /deal normally returns the complete current[] vector. Some compatible
+  // responses return only the selected price type, so accept a one-value
+  // compact vector without silently substituting another seller type.
+  if (value.length === 1) return arrayPrice(value, 0);
+  return arrayPrice(value, priceType);
 }
 
-function normalizeDeals(payload: JsonRecord): KeepaDeal[] {
+function normalizeDeals(payload: JsonRecord, priceType: KeepaDealPriceType): KeepaDeal[] {
   const deals: KeepaDeal[] = [];
   for (const candidate of dealRows(payload)) {
     if (!isRecord(candidate)) continue;
@@ -222,7 +226,8 @@ function normalizeDeals(payload: JsonRecord): KeepaDeal[] {
     if (!asin) continue;
     deals.push({
       asin,
-      currentMinor: dealCurrentPrice(candidate),
+      priceType,
+      currentMinor: indexedKeepaPrice(candidate.current, priceType),
       lastUpdate: keepaTime(candidate.lastUpdate ?? candidate.creationDate),
       rawDeltaPercent: finite(candidate.deltaPercent),
     });
@@ -230,7 +235,7 @@ function normalizeDeals(payload: JsonRecord): KeepaDeal[] {
   return deals;
 }
 
-function buyBoxHistoryLast(value: unknown): number | null {
+function priceHistoryLast(value: unknown): number | null {
   if (!Array.isArray(value)) return null;
   // Like every Keepa price CSV, BUY_BOX_SHIPPING is a sequence of
   // [Keepa minute, landed price]. The price already includes shipping.
@@ -241,7 +246,7 @@ function buyBoxHistoryLast(value: unknown): number | null {
   return null;
 }
 
-function normalizeBuyBoxHistory(value: unknown, asin: string, observedAt: string): TrustedHistoricalPrice[] {
+function normalizePriceHistory(value: unknown, asin: string, observedAt: string): TrustedHistoricalPrice[] {
   if (!Array.isArray(value)) return [];
   const currentTimestamp = Date.parse(observedAt);
   const minimumTimestamp = currentTimestamp - 180 * 86_400_000;
@@ -266,21 +271,25 @@ function normalizeBuyBoxHistory(value: unknown, asin: string, observedAt: string
     .slice(0, 60);
 }
 
-function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, requestedCode: string | null = null): KeepaProduct | null {
+function normalizeProduct(
+  raw: JsonRecord,
+  market: Market,
+  observedAt: string,
+  requestedCode: string | null = null,
+  priceType: KeepaDealPriceType = DEFAULT_DEAL_PRICE_TYPE,
+): KeepaProduct | null {
   const asin = normalizedAsin(raw.asin);
   const title = text(raw.title);
   if (!asin || !title) return null;
   const stats = isRecord(raw.stats) ? raw.stats : null;
   const csv = Array.isArray(raw.csv) ? raw.csv : [];
   const current = stats?.current;
-  // stats.current[18] is Keepa's Buy Box price including shipping. Do not
-  // fall back to price types whose shipping component is unknown.
-  const currentMinor = arrayPrice(current, PRICE_INDEXES.buyBox)
-    ?? buyBoxHistoryLast(csv[PRICE_INDEXES.buyBox]);
+  const currentMinor = indexedKeepaPrice(current, priceType)
+    ?? priceHistoryLast(csv[priceType]);
   if (currentMinor === null) return null;
 
   const avg90 = stats?.avg90;
-  const averageReference = arrayPrice(avg90, PRICE_INDEXES.buyBox);
+  const averageReference = indexedKeepaPrice(avg90, priceType);
   const listReference = arrayPrice(current, PRICE_INDEXES.list);
   const referenceMinor = averageReference ?? listReference;
   const referenceSource = averageReference !== null
@@ -289,13 +298,14 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
       ? "keepa_list" as const
       : "unknown" as const;
   const imageName = text(raw.imagesCSV ?? raw.imageCSV)?.split(",")[0]?.trim() ?? null;
-  const historySeries = csv[PRICE_INDEXES.buyBox];
+  const historySeries = csv[priceType];
   const categoryPath = (Array.isArray(raw.categoryTree) ? raw.categoryTree : [])
     .flatMap((entry): string[] => isRecord(entry) && text(entry.name) ? [text(entry.name) as string] : [])
     .slice(0, 20);
 
   return {
     asin,
+    priceType,
     gtin: productGtin(raw, requestedCode),
     title,
     brand: text(raw.brand),
@@ -311,7 +321,7 @@ function normalizeProduct(raw: JsonRecord, market: Market, observedAt: string, r
     buyBoxIsAmazon: stats?.buyBoxIsAmazon === true || raw.buyBoxIsAmazon === true,
     buyBoxIsFba: stats?.buyBoxIsFBA === true,
     buyBoxSellerId: text(stats?.buyBoxSellerId),
-    history: normalizeBuyBoxHistory(historySeries, asin, observedAt),
+    history: normalizePriceHistory(historySeries, asin, observedAt),
     categoryPath,
     productGroup: text(raw.productGroup),
   };
@@ -407,11 +417,13 @@ export class KeepaClient {
     excludedCategoryIds?: readonly number[];
     targetBrands?: readonly string[];
     dateRange?: number;
+    priceType?: KeepaDealPriceType;
   } = {}): Promise<KeepaDeal[]> {
     const config = KEEPA_MARKETS[market];
     const minPriceCents = Math.max(1, Math.round(options.minPriceCents ?? 1));
     const maxPriceCents = Math.max(minPriceCents, Math.round(options.maxPriceCents ?? 100_000_000));
     const targetBrands = [...new Set((options.targetBrands ?? []).map((brand) => brand.trim()).filter(Boolean))].slice(0, 10);
+    const priceType = options.priceType ?? DEFAULT_DEAL_PRICE_TYPE;
     const selection = {
       page: options.page ?? 0,
       domainId: config.domainId,
@@ -421,7 +433,10 @@ export class KeepaClient {
       excludeCategories: [...new Set(options.excludedCategoryIds ?? [])]
         .filter((value) => Number.isSafeInteger(value) && value > 0)
         .slice(0, 20),
-      priceTypes: [PRICE_INDEXES.buyBox],
+      // Keepa requires exactly one price type per deal request. The caller
+      // may deliberately scan Buy Box, FBA, or FBM-with-shipping in separate
+      // passes so the seller class is never mixed or guessed.
+      priceTypes: [priceType],
       deltaPercentRange: [options.minimumDropPercent ?? 30, 100],
       currentRange: [minPriceCents, maxPriceCents],
       isRangeEnabled: true,
@@ -430,14 +445,19 @@ export class KeepaClient {
       ...(targetBrands.length > 0 ? { brand: targetBrands } : {}),
     };
     const payload = await this.#request("/deal", { selection: JSON.stringify(selection) });
-    return normalizeDeals(payload);
+    return normalizeDeals(payload, priceType);
   }
 
-  async products(market: Market, asins: readonly string[]): Promise<KeepaProduct[]> {
+  async products(
+    market: Market,
+    asins: readonly string[],
+    options: { priceType?: KeepaDealPriceType } = {},
+  ): Promise<KeepaProduct[]> {
     const unique = [...new Set(asins.map((asin) => normalizedAsin(asin)).filter((asin): asin is string => asin !== null))];
     if (unique.length === 0) return [];
     if (unique.length > 100) throw new KeepaApiError("Keepa accepte au maximum 100 ASIN par lot.", "configuration");
     const observedAt = new Date().toISOString();
+    const priceType = options.priceType ?? DEFAULT_DEAL_PRICE_TYPE;
     const payload = await this.#request("/product", {
       domain: String(KEEPA_MARKETS[market].domainId),
       asin: unique.join(","),
@@ -449,15 +469,20 @@ export class KeepaClient {
     });
     const rows = Array.isArray(payload.products) ? payload.products : [];
     return rows
-      .map((row) => isRecord(row) ? normalizeProduct(row, market, observedAt) : null)
+      .map((row) => isRecord(row) ? normalizeProduct(row, market, observedAt, null, priceType) : null)
       .filter((product): product is KeepaProduct => product !== null);
   }
 
-  async productsByCodes(market: Market, codes: readonly string[]): Promise<KeepaProduct[]> {
+  async productsByCodes(
+    market: Market,
+    codes: readonly string[],
+    options: { priceType?: KeepaDealPriceType } = {},
+  ): Promise<KeepaProduct[]> {
     const unique = [...new Set(codes.map(normalizedGtin).filter((code): code is string => code !== null))];
     if (unique.length === 0) return [];
     if (unique.length > 100) throw new KeepaApiError("Keepa accepte au maximum 100 codes produit par lot.", "configuration");
     const observedAt = new Date().toISOString();
+    const priceType = options.priceType ?? DEFAULT_DEAL_PRICE_TYPE;
     const payload = await this.#request("/product", {
       domain: String(KEEPA_MARKETS[market].domainId),
       code: unique.join(","),
@@ -469,13 +494,25 @@ export class KeepaClient {
     });
     const rows = Array.isArray(payload.products) ? payload.products : [];
     return rows
-      .map((row) => isRecord(row) ? normalizeProduct(row, market, observedAt, unique.length === 1 ? unique[0] ?? null : null) : null)
+      .map((row) => isRecord(row) ? normalizeProduct(row, market, observedAt, unique.length === 1 ? unique[0] ?? null : null, priceType) : null)
       .filter((product): product is KeepaProduct => product !== null);
   }
 }
 
 export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapshot {
   const market = KEEPA_MARKETS[product.market];
+  const priceType = product.priceType ?? DEFAULT_DEAL_PRICE_TYPE;
+  const isBuyBox = priceType === DEFAULT_DEAL_PRICE_TYPE;
+  const includesShipping = priceType === PRICE_INDEXES.buyBox || priceType === PRICE_INDEXES.fbmShipping;
+  const seller = isBuyBox
+    ? product.buyBoxIsAmazon
+      ? "Amazon"
+      : product.buyBoxSellerId
+        ? `Vendeur tiers Amazon · ${product.buyBoxSellerId}`
+        : "Vendeur tiers Amazon"
+    : priceType === PRICE_INDEXES.fba
+      ? "Vendeur tiers Amazon · FBA"
+      : "Vendeur tiers Amazon · FBM";
   return {
     product: {
       productKey: `amazon:${product.market.toLowerCase()}:${product.asin}`,
@@ -490,22 +527,18 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
       url: `https://${market.host}/dp/${product.asin}`,
       imageUrl: product.imageUrl,
     },
-    // Keepa index 18 is already a landed Buy Box price. It is normalized as
-    // the public price plus zero residual shipping; no claim is made that the
-    // merchant itself labels delivery as free.
     price: { amountMinor: product.currentMinor, currency: market.currency },
-    shipping: { amountMinor: 0, currency: market.currency },
-    total: { amountMinor: product.currentMinor, currency: market.currency },
+    // BUY_BOX_SHIPPING (18) and FBM_SHIPPING (7) are landed prices. FBA (10)
+    // does not guarantee a destination shipping amount in the product API;
+    // leave it unknown instead of displaying a misleading free delivery.
+    shipping: includesShipping ? { amountMinor: 0, currency: market.currency } : null,
+    total: includesShipping ? { amountMinor: product.currentMinor, currency: market.currency } : null,
     referencePrice: product.referenceMinor === null
       ? null
       : { amountMinor: product.referenceMinor, currency: market.currency },
     referencePriceSource: product.referenceSource,
-    seller: product.buyBoxIsAmazon
-      ? "Amazon"
-      : product.buyBoxSellerId
-        ? `Vendeur tiers Amazon · ${product.buyBoxSellerId}`
-        : "Vendeur tiers Amazon",
-    sellerTrusted: product.buyBoxIsAmazon,
+    seller,
+    sellerTrusted: isBuyBox && product.buyBoxIsAmazon,
     condition: "new",
     availability: "in_stock",
     observedAt: product.observedAt,
@@ -515,7 +548,11 @@ export function keepaOffer(product: KeepaProduct, fixture = false): OfferSnapsho
     sellerSignals: {
       ratingPercent: null,
       reviewCount: null,
-      fulfillment: product.buyBoxIsAmazon ? "direct" : product.buyBoxIsFba ? "platform" : "merchant",
+      fulfillment: priceType === PRICE_INDEXES.fba || product.buyBoxIsFba
+        ? "platform"
+        : product.buyBoxIsAmazon
+          ? "direct"
+          : "merchant",
       country: null,
       warranty: null,
       returns: null,
@@ -558,6 +595,7 @@ export function verifyKeepaDeal(deal: KeepaDeal, product: KeepaProduct, fixture 
 export function verifyKeepaCodeProduct(product: KeepaProduct, fixture = false): VerifiedObservation {
   return verifyKeepaDeal({
     asin: product.asin,
+    priceType: product.priceType ?? DEFAULT_DEAL_PRICE_TYPE,
     currentMinor: product.currentMinor,
     lastUpdate: product.observedAt,
     rawDeltaPercent: null,
@@ -660,19 +698,36 @@ export async function scanKeepaMarket(
       ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(10, requestedMinimum), dateRange: 1 }]
       : []),
   ];
-  for (const query of queries) {
-    const deals = (await client.deals(market, query)).slice(0, options.limit ?? 50);
-    if (deals.length === 0) continue;
-    const products = await client.products(market, deals.map((deal) => deal.asin));
-    const byAsin = new Map(products
-      .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies)
-        && (!options.targetBrands?.length || isTargetAmazonBrand(product.brand, options.targetBrands)))
-      .map((product) => [product.asin, product]));
-    const observations = deals.flatMap((deal) => {
-      const product = byAsin.get(deal.asin);
-      return product ? [verifyKeepaDeal(deal, product, options.fixture ?? false)] : [];
-    });
-    if (observations.length > 0) return observations;
+  // Buy Box remains the first and most reliable pass. If it is empty, scan
+  // the two marketplace seller price types as a bounded fallback. This keeps
+  // seller offers visible while preserving the Apple/Samsung and category
+  // guards; it also avoids mixing price types in a single Keepa request.
+  const priceTypePasses: Array<{ priceType: KeepaDealPriceType; queries: typeof queries }> = [
+    { priceType: DEFAULT_DEAL_PRICE_TYPE, queries },
+    {
+      priceType: SELLER_DEAL_PRICE_TYPES[0],
+      queries: queries.filter((query, index) => index === 0 || index === 1 || index === 3 || index === 4),
+    },
+    {
+      priceType: SELLER_DEAL_PRICE_TYPES[1],
+      queries: queries.filter((query, index) => index === 0 || index === 1 || index === 3 || index === 4),
+    },
+  ];
+  for (const pass of priceTypePasses) {
+    for (const query of pass.queries) {
+      const deals = (await client.deals(market, { ...query, priceType: pass.priceType })).slice(0, options.limit ?? 50);
+      if (deals.length === 0) continue;
+      const products = await client.products(market, deals.map((deal) => deal.asin), { priceType: pass.priceType });
+      const byAsin = new Map(products
+        .filter((product) => !isExcludedAmazonProduct(product, excludedFamilies)
+          && (!options.targetBrands?.length || isTargetAmazonBrand(product.brand, options.targetBrands)))
+        .map((product) => [product.asin, product]));
+      const observations = deals.flatMap((deal) => {
+        const product = byAsin.get(deal.asin);
+        return product ? [verifyKeepaDeal(deal, product, options.fixture ?? false)] : [];
+      });
+      if (observations.length > 0) return observations;
+    }
   }
   return [];
 }
