@@ -48,7 +48,10 @@ export function buildAutomationPlan(actorId: string, retailUrls: readonly string
         page: 0,
         pageRotation: 12,
         minimumDropPercent: 30,
-        amazonBrands: ["Apple", "Samsung"],
+        // Keep the automatic radar broad inside its configured high-tech,
+        // informatique and maison segments. A UI/task can still opt into a
+        // narrow brand list when a user explicitly asks for one.
+        amazonBrands: ["*"],
         verifyAmazonPage: false,
         liveVerificationLimit: 0,
         processEanScans: true,
