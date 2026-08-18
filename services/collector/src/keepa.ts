@@ -640,8 +640,15 @@ export async function scanKeepaMarket(
   const queries = [
     dealOptions,
     ...(requestedMinimum > 20 ? [{ ...dealOptions, minimumDropPercent: 20 }] : []),
+    // Keepa's brand selector is useful but can be stricter than the product
+    // payload (for example, "Apple Computer" versus "Apple"). If the
+    // filtered query is empty, query the same recent deals without the API
+    // brand predicate and enforce Apple/Samsung locally from /product.
+    ...(options.targetBrands?.length
+      ? [{ ...dealOptions, targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum) }]
+      : []),
     ...((dealOptions.categoryIds?.length ?? 0) > 0
-      ? [{ ...dealOptions, categoryIds: [], minimumDropPercent: Math.min(20, requestedMinimum) }]
+      ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(20, requestedMinimum) }]
       : []),
   ];
   for (const query of queries) {
