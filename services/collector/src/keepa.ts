@@ -664,6 +664,7 @@ export async function scanKeepaMarket(
     maxPriceCents?: number;
     excludedFamilies?: readonly AmazonExcludedFamily[];
     targetBrands?: readonly string[];
+    strictCategoryScope?: boolean;
   } = {},
 ): Promise<VerifiedObservation[]> {
   const excludedFamilies = options.excludedFamilies ?? DEFAULT_AMAZON_EXCLUDED_FAMILIES;
@@ -694,7 +695,7 @@ export async function scanKeepaMarket(
     ...(options.targetBrands?.length
       ? [{ ...dealOptions, targetBrands: [], minimumDropPercent: Math.min(10, requestedMinimum), dateRange: 1 }]
       : []),
-    ...((dealOptions.categoryIds?.length ?? 0) > 0
+    ...(!options.strictCategoryScope && (dealOptions.categoryIds?.length ?? 0) > 0
       ? [{ ...dealOptions, categoryIds: [], targetBrands: [], minimumDropPercent: Math.min(10, requestedMinimum), dateRange: 1 }]
       : []),
   ];
