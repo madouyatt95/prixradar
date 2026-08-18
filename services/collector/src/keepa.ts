@@ -629,10 +629,25 @@ export async function scanKeepaMarket(
   } = {},
 ): Promise<VerifiedObservation[]> {
   const excludedFamilies = options.excludedFamilies ?? DEFAULT_AMAZON_EXCLUDED_FAMILIES;
-  const deals = (await client.deals(market, {
+  const dealOptions = {
     ...options,
     excludedCategoryIds: excludedCategoryIdsFor(market, excludedFamilies),
-  })).slice(0, options.limit ?? 50);
+  };
+  let deals = await client.deals(market, dealOptions);
+  // Keepa's deal endpoint is deliberately strict about the minimum drop and
+  // only considers products updated in its recent window. A category can
+  // therefore be empty even when the same Apple/Samsung catalogue contains
+  // a valid, slightly smaller drop. Retry once at 20% before reporting an
+  // empty segment. This keeps the brand/category guardrails while avoiding a
+  // permanently silent radar after a 35% segment happens to be empty.
+  const requestedMinimum = Number(options.minimumDropPercent ?? 30);
+  if (deals.length === 0 && requestedMinimum > 20) {
+    deals = await client.deals(market, {
+      ...dealOptions,
+      minimumDropPercent: 20,
+    });
+  }
+  deals = deals.slice(0, options.limit ?? 50);
   if (deals.length === 0) return [];
   const products = await client.products(market, deals.map((deal) => deal.asin));
   const byAsin = new Map(products
